@@ -106,32 +106,34 @@ export default function StashViewerTab() {
           <div
             className="stash-grid"
             style={{
-              gridTemplateColumns: `repeat(${grid}, 1fr)`,
-              gridTemplateRows: `repeat(${grid}, 1fr)`,
+              gridTemplateColumns: `repeat(${grid}, minmax(0, 1fr))`,
+              gridTemplateRows: `repeat(${grid}, minmax(0, 1fr))`,
             }}
           >
-            {Array.from({ length: grid * grid }).map((_, i) => {
-              const gx = i % grid;
-              const gy = Math.floor(i / grid);
-              const item = tab.items.find(it => gx >= it.x && gx < it.x + it.w && gy >= it.y && gy < it.y + it.h);
-
-              if (item && gx === item.x && gy === item.y) {
-                return (
-                  <StashCell
-                    key={item.id}
-                    item={item}
-                    gridSize={grid}
-                    style={{
-                      gridColumn: `${item.x + 1} / span ${item.w}`,
-                      gridRow: `${item.y + 1} / span ${item.h}`,
-                    }}
-                  />
-                );
-              }
-              if (item && (gx !== item.x || gy !== item.y)) return null;
-
-              return <div key={i} className="stash-empty-cell" />;
-            })}
+            {/* Empty cell background for every position */}
+            {Array.from({ length: grid * grid }).map((_, i) => (
+              <div
+                key={`e${i}`}
+                className="stash-empty-cell"
+                style={{
+                  gridColumn: (i % grid) + 1,
+                  gridRow: Math.floor(i / grid) + 1,
+                }}
+              />
+            ))}
+            {/* Items layered on top */}
+            {tab.items.map(item => (
+              <StashCell
+                key={item.id}
+                item={item}
+                gridSize={grid}
+                style={{
+                  gridColumn: `${item.x + 1} / span ${item.w}`,
+                  gridRow: `${item.y + 1} / span ${item.h}`,
+                  zIndex: 1,
+                }}
+              />
+            ))}
           </div>
 
           {/* Legend */}
