@@ -20,9 +20,16 @@
 - Refer to `docs/ops-runbook.md` for queue-based telemetry, checkpoint history, and failure patterns.
 
 ## ML Quick Start (Mirage)
-1. `.venv/bin/poe-ml train-loop --league Mirage --dataset-table poe_trade.ml_price_dataset_v1 --model-dir artifacts/ml/mirage_v1 --max-iterations 1`
+1. `.venv/bin/poe-ml train-loop --league Mirage --dataset-table poe_trade.ml_price_dataset_v1 --model-dir artifacts/ml/mirage_v1 --max-iterations 2 --max-wall-clock-seconds 1800 --no-improvement-patience 2 --min-mdape-improvement 0.005`
 2. `.venv/bin/poe-ml status --league Mirage --run latest`
-3. `.venv/bin/poe-ml predict-one --league Mirage --input-format poe-clipboard --stdin < tests/fixtures/ml/sample_clipboard_item.txt`
+3. `.venv/bin/poe-ml report --league Mirage --model-dir artifacts/ml/mirage_v1 --output artifacts/ml/mirage_v1/latest-report.json`
+4. `.venv/bin/poe-ml predict-one --league Mirage --input-format poe-clipboard --stdin < tests/fixtures/ml/sample_clipboard_item.txt`
+
+ML verdict vocabulary:
+- `promote`: candidate beats incumbent on MDAPE improvement, coverage floor, and protected cohort checks.
+- `hold`: candidate fails one or more promotion checks.
+- `stopped_no_improvement`: train-loop stopped because candidate-vs-incumbent deltas stayed below patience policy.
+- `stopped_budget`: train-loop stopped because iteration or wall-clock budget was exhausted.
 
 ## CLI surface
 - `.venv/bin/python -m poe_trade.cli service --name market_harvester -- --help` to see the market sync daemon arguments and polling knobs.
@@ -34,8 +41,9 @@
 - `.venv/bin/python -m poe_trade.cli research backtest --strategy bulk_essence --league Mirage --days 14` prints `run_id\tstrategy_id\tleague\tlookback_days\tstatus\topportunity_count\texpected_profit_chaos\texpected_roi\tconfidence\tsummary` with explicit `completed`, `no_data`, `no_opportunities`, or `failed` status.
 - `.venv/bin/python -m poe_trade.cli research backtest-all --league Mirage --days 14 --enabled-only` prints one summary row per enabled strategy using the same canonical header.
 - `make backtest-all BACKTEST_LEAGUE=Mirage BACKTEST_DAYS=14` runs one command that backtests every discovered strategy pack (omit `BACKTEST_FLAGS` for real writes, or add `BACKTEST_FLAGS=--dry-run` for a safe preflight).
-- `.venv/bin/poe-ml train-loop --league Mirage --dataset-table poe_trade.ml_price_dataset_v1 --model-dir artifacts/ml/mirage_v1 --max-iterations 1` runs one full ML rebuild/train/evaluate cycle.
-- `.venv/bin/poe-ml status --league Mirage --run latest` prints current stage/route progress, backend, workers, memory budget, and active model version.
+- `.venv/bin/poe-ml train-loop --league Mirage --dataset-table poe_trade.ml_price_dataset_v1 --model-dir artifacts/ml/mirage_v1 --max-iterations 2 --max-wall-clock-seconds 1800 --no-improvement-patience 2 --min-mdape-improvement 0.005` runs a bounded rebuild/train/evaluate loop and returns explicit stop reason.
+- `.venv/bin/poe-ml status --league Mirage --run latest` prints candidate-vs-incumbent verdict, deltas, stop reason, route hotspots, and active model version.
+- `.venv/bin/poe-ml report --league Mirage --model-dir artifacts/ml/mirage_v1 --output artifacts/ml/mirage_v1/latest-report.json` writes route metrics, hotspot summaries, outlier cleaning summary, and low-confidence reasons.
 - `.venv/bin/poe-ml predict-one --league Mirage --input-format poe-clipboard --stdin < tests/fixtures/ml/sample_clipboard_item.txt` prints routed interval pricing with confidence and sale probability percentages.
 - `.venv/bin/python -m poe_trade.cli scan once --league Mirage --dry-run` and `.venv/bin/python -m poe_trade.cli scan watch --league Mirage --max-runs 2 --dry-run` exercise the recommendation pipeline.
 - `.venv/bin/python -m poe_trade.cli scan plan --league Mirage --limit 20` runs one scan and prints actionable `strategy_id`, `search_hint`, `buy_plan`, `max_buy`, `exit_plan`, and confidence fields for quick execution.
