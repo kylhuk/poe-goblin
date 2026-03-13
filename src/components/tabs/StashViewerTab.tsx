@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { api } from '@/services/api';
 import type { StashTab, StashItem } from '@/types/api';
 import { cn } from '@/lib/utils';
 
-const GRID = 12;
+function getGridSize(type: StashTab['type']) {
+  return type === 'quad' ? 24 : 12;
+}
 
 export default function StashViewerTab() {
   const [tabs, setTabs] = useState<StashTab[]>([]);
@@ -12,6 +15,8 @@ export default function StashViewerTab() {
   useEffect(() => { api.getStashTabs().then(setTabs); }, []);
 
   const tab = tabs[activeTab];
+  const grid = tab ? getGridSize(tab.type) : 12;
+  const isQuad = tab?.type === 'quad';
 
   return (
     <div className="space-y-4">
@@ -28,6 +33,7 @@ export default function StashViewerTab() {
               )}
             >
               {t.name}
+              {t.type === 'quad' && <span className="ml-1 text-[9px] opacity-60">(Q)</span>}
             </button>
           ))}
         </div>
@@ -38,20 +44,22 @@ export default function StashViewerTab() {
           <CardContent className="p-4">
             <div
               className="grid gap-px bg-border/50 rounded overflow-hidden"
-              style={{ gridTemplateColumns: `repeat(${GRID}, 1fr)`, gridTemplateRows: `repeat(${GRID}, 1fr)` }}
+              style={{
+                gridTemplateColumns: `repeat(${grid}, 1fr)`,
+                gridTemplateRows: `repeat(${grid}, 1fr)`,
+              }}
             >
-              {/* Render empty cells */}
-              {Array.from({ length: GRID * GRID }).map((_, i) => {
-                const gx = i % GRID;
-                const gy = Math.floor(i / GRID);
+              {Array.from({ length: grid * grid }).map((_, i) => {
+                const gx = i % grid;
+                const gy = Math.floor(i / grid);
                 const item = tab.items.find(it => gx >= it.x && gx < it.x + it.w && gy >= it.y && gy < it.y + it.h);
 
-                // Only render occupied cell at item origin
                 if (item && gx === item.x && gy === item.y) {
                   return (
                     <StashCell
                       key={item.id}
                       item={item}
+                      isQuad={isQuad}
                       style={{
                         gridColumn: `${item.x + 1} / span ${item.w}`,
                         gridRow: `${item.y + 1} / span ${item.h}`,
@@ -59,10 +67,9 @@ export default function StashViewerTab() {
                     />
                   );
                 }
-                // Skip cells occupied by multi-cell items (not origin)
                 if (item && (gx !== item.x || gy !== item.y)) return null;
 
-                return <div key={i} className="stash-cell bg-background/50 min-h-[40px]" />;
+                return <div key={i} className={cn('bg-background/50', isQuad ? 'min-h-[20px]' : 'min-h-[40px]')} />;
               })}
             </div>
 
@@ -78,7 +85,7 @@ export default function StashViewerTab() {
   );
 }
 
-function StashCell({ item, style }: { item: StashItem; style: React.CSSProperties }) {
+function StashCell({ item, isQuad, style }: { item: StashItem; isQuad: boolean; style: React.CSSProperties }) {
   const healthColor = {
     good: 'bg-success/15 border-success/30 hover:bg-success/25',
     ok: 'bg-warning/15 border-warning/30 hover:bg-warning/25',
@@ -92,21 +99,64 @@ function StashCell({ item, style }: { item: StashItem; style: React.CSSPropertie
     unique: 'text-chaos',
   };
 
+  const rarityLabel = { normal: 'Normal', magic: 'Magic', rare: 'Rare', unique: 'Unique' };
+
   const delta = item.listedPrice ? item.estimatedValue - item.listedPrice : null;
+  const deltaPct = item.listedPrice ? ((delta! / item.listedPrice) * 100).toFixed(1) : null;
+  const cur = item.currency === 'div' ? 'div' : 'c';
+
+  const healthLabel = { good: 'Well Priced', ok: 'Could Be Better', bad: 'Mispriced' };
+  const healthDot = { good: 'bg-success', ok: 'bg-warning', bad: 'bg-destructive' };
 
   return (
-    <div
-      className={cn('stash-cell border flex-col p-1 cursor-pointer transition-colors min-h-[40px]', healthColor[item.priceHealth])}
-      style={style}
-      title={`${item.name}\nEst: ${item.estimatedValue} ${item.currency}\nListed: ${item.listedPrice ?? 'N/A'} ${item.currency}`}
-    >
-      <span className={cn('text-[10px] leading-tight text-center truncate w-full', rarityColor[item.rarity])}>{item.name}</span>
-      <span className="text-[9px] font-mono text-gold-bright">{item.estimatedValue}{item.currency === 'div' ? 'd' : 'c'}</span>
-      {item.listedPrice && (
-        <span className={cn('text-[8px] font-mono', delta && delta > 0 ? 'text-destructive' : 'text-success')}>
-          {item.listedPrice}{item.currency === 'div' ? 'd' : 'c'} listed
-        </span>
-      )}
-    </div>
+    <HoverCard openDelay={100} closeDelay={50}>
+      <HoverCardTrigger asChild>
+        <div
+          className={cn(
+            'border flex flex-col items-center justify-center p-0.5 cursor-pointer transition-colors',
+            healthColor[item.priceHealth],
+            isQuad ? 'min-h-[20px]' : 'min-h-[40px]'
+          )}
+          style={style}
+        >
+          <span className={cn('leading-tight text-center truncate w-full', rarityColor[item.rarity], isQuad ? 'text-[7px]' : 'text-[10px]')}>
+            {item.name}
+          </span>
+          <span className={cn('font-mono text-gold-bright', isQuad ? 'text-[6px]' : 'text-[9px]')}>
+            {item.estimatedValue}{cur}
+          </span>
+        </div>
+      </HoverCardTrigger>
+      <HoverCardContent side="right" className="w-56 p-3 space-y-2 bg-card border-border">
+        <div className="space-y-1">
+          <p className={cn('font-semibold text-sm', rarityColor[item.rarity])}>{item.name}</p>
+          <span className={cn('text-[10px] px-1.5 py-0.5 rounded border', rarityColor[item.rarity], 'border-current/20 opacity-80')}>
+            {rarityLabel[item.rarity]}
+          </span>
+        </div>
+        <div className="space-y-1 text-xs">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Estimated</span>
+            <span className="font-mono text-gold-bright">{item.estimatedValue} {cur}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Listed</span>
+            <span className="font-mono">{item.listedPrice != null ? `${item.listedPrice} ${cur}` : 'N/A'}</span>
+          </div>
+          {delta != null && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Delta</span>
+              <span className={cn('font-mono', delta > 0 ? 'text-success' : delta < 0 ? 'text-destructive' : 'text-muted-foreground')}>
+                {delta > 0 ? '+' : ''}{delta.toFixed(1)} {cur} ({deltaPct}%)
+              </span>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 pt-1 border-t border-border">
+          <span className={cn('w-2 h-2 rounded-full', healthDot[item.priceHealth])} />
+          <span className="text-xs text-muted-foreground">{healthLabel[item.priceHealth]}</span>
+        </div>
+      </HoverCardContent>
+    </HoverCard>
   );
 }

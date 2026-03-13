@@ -105,6 +105,21 @@ export const mockStashTabs: StashTab[] = [
       { id: 'i8', name: 'Prism Guardian', x: 5, y: 0, w: 2, h: 3, estimatedValue: 0.1, listedPrice: 0.08, currency: 'div', priceHealth: 'good', rarity: 'unique' },
     ],
   },
+  {
+    id: 'st2', name: 'Quad Dump', type: 'quad',
+    items: [
+      { id: 'q1', name: 'Divine Orb', x: 0, y: 0, w: 1, h: 1, estimatedValue: 1, listedPrice: 1, currency: 'div', priceHealth: 'good', rarity: 'normal' },
+      { id: 'q2', name: 'Void Battery', x: 3, y: 1, w: 1, h: 3, estimatedValue: 4.5, listedPrice: 3.8, currency: 'div', priceHealth: 'ok', rarity: 'unique' },
+      { id: 'q3', name: 'Inspired Learning', x: 8, y: 0, w: 1, h: 1, estimatedValue: 1.2, listedPrice: 2.0, currency: 'div', priceHealth: 'bad', rarity: 'unique' },
+      { id: 'q4', name: 'Aegis Aurora', x: 10, y: 5, w: 2, h: 2, estimatedValue: 6, listedPrice: 5.5, currency: 'div', priceHealth: 'good', rarity: 'unique' },
+      { id: 'q5', name: 'Brutal Restraint', x: 0, y: 10, w: 1, h: 1, estimatedValue: 3.5, listedPrice: null, currency: 'div', priceHealth: 'ok', rarity: 'unique' },
+      { id: 'q6', name: 'The Squire', x: 15, y: 15, w: 2, h: 3, estimatedValue: 55, listedPrice: 50, currency: 'div', priceHealth: 'good', rarity: 'unique' },
+      { id: 'q7', name: 'Chaos Orb x20', x: 20, y: 0, w: 1, h: 1, estimatedValue: 0.15, listedPrice: null, currency: 'div', priceHealth: 'ok', rarity: 'normal' },
+      { id: 'q8', name: 'Replica Dreamfeather', x: 5, y: 18, w: 1, h: 3, estimatedValue: 12, listedPrice: 9, currency: 'div', priceHealth: 'ok', rarity: 'unique' },
+      { id: 'q9', name: 'Enlighten Lvl 4', x: 18, y: 10, w: 1, h: 1, estimatedValue: 8, listedPrice: 7, currency: 'div', priceHealth: 'good', rarity: 'magic' },
+      { id: 'q10', name: 'Rare Astral Plate', x: 12, y: 20, w: 2, h: 2, estimatedValue: 15, listedPrice: 20, currency: 'div', priceHealth: 'bad', rarity: 'rare' },
+    ],
+  },
 ];
 
 export const mockMessages: AppMessage[] = [
