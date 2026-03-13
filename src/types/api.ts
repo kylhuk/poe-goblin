@@ -139,7 +139,7 @@ export interface PriceCheckResponse {
 }
 
 // ========== Stash Viewer ==========
-export type PriceHealth = 'good' | 'ok' | 'bad';
+export type PriceEvaluation = 'well_priced' | 'could_be_better' | 'mispriced';
 export interface StashItem {
   id: string;
   name: string;
@@ -147,12 +147,15 @@ export interface StashItem {
   y: number;
   w: number;
   h: number;
-  estimatedValue: number;
-  listedPrice: number | null;
-  currency: string;
-  priceHealth: PriceHealth;
-  rarity: 'normal' | 'magic' | 'rare' | 'unique';
   itemClass?: string;
+  rarity: 'normal' | 'magic' | 'rare' | 'unique';
+  listedPrice: number | null;
+  estimatedPrice: number;
+  estimatedPriceConfidence: number; // 0-100
+  priceDeltaChaos: number;
+  priceDeltaPercent: number;
+  priceEvaluation: PriceEvaluation;
+  currency: string;
   iconUrl?: string;
 }
 
