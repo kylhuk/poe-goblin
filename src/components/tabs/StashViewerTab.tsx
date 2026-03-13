@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { api } from '@/services/api';
 import type { StashTab, StashItem } from '@/types/api';
@@ -20,13 +19,27 @@ const ITEM_CLASS_ICONS: Record<string, LucideIcon> = {
   Helmet: HardHat,
   Blueprint: FileText,
   Amulet: Crown,
+  Belt: Crown,
 };
 
-const RARITY_BORDER: Record<string, string> = {
-  normal: 'border-l-muted-foreground',
-  magic: 'border-l-info',
-  rare: 'border-l-exalt',
-  unique: 'border-l-chaos',
+const RARITY_COLOR: Record<string, string> = {
+  normal: 'text-muted-foreground',
+  magic: 'text-info',
+  rare: 'text-exalt',
+  unique: 'text-chaos',
+};
+
+const RARITY_GLOW: Record<string, string> = {
+  normal: '',
+  magic: 'drop-shadow-[0_0_4px_hsl(210,60%,50%,0.4)]',
+  rare: 'drop-shadow-[0_0_4px_hsl(45,80%,60%,0.4)]',
+  unique: 'drop-shadow-[0_0_6px_hsl(35,90%,55%,0.5)]',
+};
+
+const HEALTH_DOT: Record<string, string> = {
+  good: 'bg-success',
+  ok: 'bg-warning',
+  bad: 'bg-destructive',
 };
 
 function getGridSize(type: StashTab['type']) {
@@ -40,131 +53,125 @@ export default function StashViewerTab() {
 
   const tab = tabs[activeTab];
   const grid = tab ? getGridSize(tab.type) : 12;
-  const isQuad = tab?.type === 'quad';
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-4">
-        <h2 className="text-lg font-semibold font-sans text-foreground">Stash Viewer</h2>
-        <div className="flex gap-1">
-          {tabs.map((t, i) => (
-            <button
-              key={t.id}
-              onClick={() => setActiveTab(i)}
-              className={cn(
-                'px-3 py-1 text-xs rounded border transition-colors',
-                i === activeTab ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
-              )}
-            >
-              {t.name}
-              {t.type === 'quad' && <span className="ml-1 text-[9px] opacity-60">(Q)</span>}
-            </button>
-          ))}
-        </div>
+    <div className="space-y-3">
+      {/* PoE-style tab bar */}
+      <div className="flex items-end gap-0">
+        {tabs.map((t, i) => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(i)}
+            className={cn(
+              'px-4 py-1.5 text-xs font-display tracking-wide border border-b-0 transition-all relative -mb-px',
+              i === activeTab
+                ? 'bg-gold-dim/30 text-gold-bright border-gold-dim z-10'
+                : 'bg-[hsl(220,14%,8%)] text-muted-foreground border-gold-dim/30 hover:text-gold hover:bg-gold-dim/10'
+            )}
+          >
+            {t.name}
+            {t.type === 'quad' && <span className="ml-1 text-[9px] opacity-50">(Q)</span>}
+          </button>
+        ))}
       </div>
 
+      {/* Stash grid */}
       {tab && (
-        <Card>
-          <CardContent className="p-4">
-            <div
-              className="grid gap-px bg-border/50 rounded overflow-hidden"
-              style={{
-                gridTemplateColumns: `repeat(${grid}, 1fr)`,
-                gridTemplateRows: `repeat(${grid}, 1fr)`,
-              }}
-            >
-              {Array.from({ length: grid * grid }).map((_, i) => {
-                const gx = i % grid;
-                const gy = Math.floor(i / grid);
-                const item = tab.items.find(it => gx >= it.x && gx < it.x + it.w && gy >= it.y && gy < it.y + it.h);
+        <div className="stash-frame">
+          <div
+            className="stash-grid"
+            style={{
+              gridTemplateColumns: `repeat(${grid}, 1fr)`,
+              gridTemplateRows: `repeat(${grid}, 1fr)`,
+            }}
+          >
+            {Array.from({ length: grid * grid }).map((_, i) => {
+              const gx = i % grid;
+              const gy = Math.floor(i / grid);
+              const item = tab.items.find(it => gx >= it.x && gx < it.x + it.w && gy >= it.y && gy < it.y + it.h);
 
-                if (item && gx === item.x && gy === item.y) {
-                  return (
-                    <StashCell
-                      key={item.id}
-                      item={item}
-                      isQuad={isQuad}
-                      style={{
-                        gridColumn: `${item.x + 1} / span ${item.w}`,
-                        gridRow: `${item.y + 1} / span ${item.h}`,
-                      }}
-                    />
-                  );
-                }
-                if (item && (gx !== item.x || gy !== item.y)) return null;
+              if (item && gx === item.x && gy === item.y) {
+                return (
+                  <StashCell
+                    key={item.id}
+                    item={item}
+                    gridSize={grid}
+                    style={{
+                      gridColumn: `${item.x + 1} / span ${item.w}`,
+                      gridRow: `${item.y + 1} / span ${item.h}`,
+                    }}
+                  />
+                );
+              }
+              if (item && (gx !== item.x || gy !== item.y)) return null;
 
-                return <div key={i} className={cn('bg-background/50', isQuad ? 'min-h-[20px]' : 'min-h-[40px]')} />;
-              })}
-            </div>
+              return <div key={i} className="stash-empty-cell" />;
+            })}
+          </div>
 
-            <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-success/30 border border-success/50" /> Well priced</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-warning/30 border border-warning/50" /> Could be better</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-destructive/30 border border-destructive/50" /> Mispriced</span>
-            </div>
-          </CardContent>
-        </Card>
+          {/* Legend */}
+          <div className="flex items-center gap-4 mt-2 px-1 text-[10px] text-muted-foreground">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-success" /> Well priced</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-warning" /> Could be better</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-destructive" /> Mispriced</span>
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
-function StashCell({ item, isQuad, style }: { item: StashItem; isQuad: boolean; style: React.CSSProperties }) {
-  const healthColor = {
-    good: 'bg-success/15 border-success/30 hover:bg-success/25',
-    ok: 'bg-warning/15 border-warning/30 hover:bg-warning/25',
-    bad: 'bg-destructive/15 border-destructive/30 hover:bg-destructive/25',
-  };
-
-  const rarityColor = {
-    normal: 'text-muted-foreground',
-    magic: 'text-info',
-    rare: 'text-exalt',
-    unique: 'text-chaos',
-  };
-
-  const rarityLabel = { normal: 'Normal', magic: 'Magic', rare: 'Rare', unique: 'Unique' };
+function StashCell({ item, gridSize, style }: { item: StashItem; gridSize: number; style: React.CSSProperties }) {
+  const isQuad = gridSize === 24;
+  const IconComp = item.itemClass ? ITEM_CLASS_ICONS[item.itemClass] : null;
+  const iconSize = isQuad ? 12 : 20;
 
   const delta = item.listedPrice ? item.estimatedValue - item.listedPrice : null;
   const deltaPct = item.listedPrice ? ((delta! / item.listedPrice) * 100).toFixed(1) : null;
   const cur = item.currency === 'div' ? 'div' : 'c';
 
+  const rarityLabel = { normal: 'Normal', magic: 'Magic', rare: 'Rare', unique: 'Unique' };
   const healthLabel = { good: 'Well Priced', ok: 'Could Be Better', bad: 'Mispriced' };
-  const healthDot = { good: 'bg-success', ok: 'bg-warning', bad: 'bg-destructive' };
-
-  const IconComp = item.itemClass ? ITEM_CLASS_ICONS[item.itemClass] : null;
 
   return (
-    <HoverCard openDelay={100} closeDelay={50}>
+    <HoverCard openDelay={80} closeDelay={50}>
       <HoverCardTrigger asChild>
         <div
-          className={cn(
-            'border border-l-2 flex flex-col items-center justify-center p-0.5 cursor-pointer transition-colors',
-            healthColor[item.priceHealth],
-            RARITY_BORDER[item.rarity] || '',
-            isQuad ? 'min-h-[20px]' : 'min-h-[40px]'
-          )}
+          className="stash-item-cell group"
           style={style}
         >
-          {IconComp && !isQuad && (
-            <IconComp size={12} className="text-muted-foreground/60 mb-0.5 shrink-0" />
+          {/* Price health dot */}
+          <span className={cn('absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full opacity-80', HEALTH_DOT[item.priceHealth])} />
+
+          {/* Icon */}
+          {IconComp && (
+            <IconComp
+              size={iconSize}
+              className={cn(
+                'transition-all',
+                RARITY_COLOR[item.rarity],
+                RARITY_GLOW[item.rarity],
+                'opacity-70 group-hover:opacity-100'
+              )}
+            />
           )}
-          <span className={cn('leading-tight text-center truncate w-full', rarityColor[item.rarity], isQuad ? 'text-[7px]' : 'text-[10px]')}>
-            {item.name}
-          </span>
-          <span className={cn('font-mono text-gold-bright', isQuad ? 'text-[6px]' : 'text-[9px]')}>
-            {item.estimatedValue}{cur}
-          </span>
+
+          {/* Tiny price in corner */}
+          {!isQuad && (
+            <span className="absolute bottom-0.5 left-0.5 text-[7px] font-mono text-gold-bright/60 group-hover:text-gold-bright/90">
+              {item.estimatedValue}{cur}
+            </span>
+          )}
         </div>
       </HoverCardTrigger>
-      <HoverCardContent side="right" className="w-56 p-3 space-y-2 bg-card border-border">
+      <HoverCardContent side="right" className="w-56 p-3 space-y-2 bg-card border-gold-dim/40">
         <div className="space-y-1">
           <div className="flex items-center gap-1.5">
-            {IconComp && <IconComp size={14} className={rarityColor[item.rarity]} />}
-            <p className={cn('font-semibold text-sm', rarityColor[item.rarity])}>{item.name}</p>
+            {IconComp && <IconComp size={14} className={RARITY_COLOR[item.rarity]} />}
+            <p className={cn('font-semibold text-sm', RARITY_COLOR[item.rarity])}>{item.name}</p>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className={cn('text-[10px] px-1.5 py-0.5 rounded border', rarityColor[item.rarity], 'border-current/20 opacity-80')}>
+            <span className={cn('text-[10px] px-1.5 py-0.5 rounded border', RARITY_COLOR[item.rarity], 'border-current/20 opacity-80')}>
               {rarityLabel[item.rarity]}
             </span>
             {item.itemClass && (
@@ -191,7 +198,7 @@ function StashCell({ item, isQuad, style }: { item: StashItem; isQuad: boolean; 
           )}
         </div>
         <div className="flex items-center gap-1.5 pt-1 border-t border-border">
-          <span className={cn('w-2 h-2 rounded-full', healthDot[item.priceHealth])} />
+          <span className={cn('w-2 h-2 rounded-full', HEALTH_DOT[item.priceHealth])} />
           <span className="text-xs text-muted-foreground">{healthLabel[item.priceHealth]}</span>
         </div>
       </HoverCardContent>

@@ -140,8 +140,45 @@
   box-shadow: 0 0 12px -2px hsl(0 70% 50% / 0.3);
 }
 
-/* Stash grid cell */
-.stash-cell {
-  @apply border border-border/50 flex items-center justify-center text-xs relative;
+/* PoE Stash Frame */
+.stash-frame {
+  max-width: 700px;
+}
+
+.stash-grid {
+  display: grid;
+  gap: 1px;
+  background: hsl(40 40% 30% / 0.35);
+  border: 2px solid hsl(var(--gold-dim));
   aspect-ratio: 1;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.stash-empty-cell {
+  background: hsl(220 15% 6%);
+  position: relative;
+}
+
+.stash-empty-cell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, hsl(220 12% 10%) 0%, hsl(220 15% 6%) 70%);
+  opacity: 0.6;
+}
+
+.stash-item-cell {
+  background: hsl(220 15% 7%);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.stash-item-cell:hover {
+  background: hsl(220 12% 12%);
 }
