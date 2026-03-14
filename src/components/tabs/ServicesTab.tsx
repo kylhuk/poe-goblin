@@ -8,7 +8,17 @@ import { Play, Square, RotateCcw, PlayCircle, StopCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { RenderState } from '@/components/shared/RenderState';
 
-export default function ServicesTab() {
+import { forwardRef, useCallback, useEffect, useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { StatusDot, Freshness } from '@/components/shared/StatusIndicators';
+import { api } from '@/services/api';
+import type { Service } from '@/types/api';
+import { Play, Square, RotateCcw, PlayCircle, StopCircle } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { RenderState } from '@/components/shared/RenderState';
+
+const ServicesTab = forwardRef<HTMLDivElement, Record<string, never>>(function ServicesTab(_props, ref) {
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
