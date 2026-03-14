@@ -26,13 +26,18 @@ type ContractPayload = {
   primary_league?: string;
 };
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL as string | undefined;
+const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
+
 let cachedPrimaryLeague: string | null = null;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+  const url = API_BASE ? `${API_BASE}${path}` : path;
+  const response = await fetch(url, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}),
       ...(init?.headers || {}),
     },
   });
