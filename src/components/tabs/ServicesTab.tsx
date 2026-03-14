@@ -1,13 +1,3 @@
-import { useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { StatusDot, Freshness } from '@/components/shared/StatusIndicators';
-import { api } from '@/services/api';
-import type { Service } from '@/types/api';
-import { Play, Square, RotateCcw, PlayCircle, StopCircle } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { RenderState } from '@/components/shared/RenderState';
-
 import { forwardRef, useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
