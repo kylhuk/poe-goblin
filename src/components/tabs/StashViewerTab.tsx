@@ -111,7 +111,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
               'px-4 py-1.5 text-xs font-display tracking-wide border border-b-0 transition-all relative -mb-px',
               i === activeTab
                 ? 'bg-gold-dim/30 text-gold-bright border-gold-dim z-10'
-                : 'bg-[hsl(220,14%,8%)] text-muted-foreground border-gold-dim/30 hover:text-gold hover:bg-gold-dim/10'
+                : 'bg-card text-muted-foreground border-gold-dim/30 hover:text-gold hover:bg-gold-dim/10'
             )}
           >
             {t.name}
