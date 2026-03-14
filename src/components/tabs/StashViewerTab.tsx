@@ -99,7 +99,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
   const grid = tab ? getGridSize(tab.type) : 12;
 
   return (
-    <div className="space-y-3" data-testid="panel-stash-root">
+    <div ref={ref} className="space-y-3" data-testid="panel-stash-root">
       {/* PoE-style tab bar */}
       <div className="flex items-end gap-0">
         {tabs.map((t, i) => (
