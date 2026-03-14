@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useState } from 'react';
+import React, { forwardRef, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusDot, Freshness } from '@/components/shared/StatusIndicators';
 import { RenderState } from '@/components/shared/RenderState';
@@ -84,6 +84,7 @@ const DashboardTab = forwardRef<HTMLDivElement, Record<string, never>>(function 
 
 DashboardTab.displayName = 'DashboardTab';
 export default DashboardTab;
+
 function SummaryCard({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: string; accent?: string }) {
   return (
     <Card className={accent === 'destructive' ? 'glow-destructive' : accent === 'warning' ? 'glow-gold' : ''}>
