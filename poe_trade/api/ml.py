@@ -87,11 +87,15 @@ def fetch_automation_status(client: ClickHouseClient, *, league: str) -> dict[st
         f"WHERE league = {_quote(league)} ORDER BY updated_at DESC LIMIT 1 FORMAT JSONEachRow",
     )
     latest = history_rows[0] if history_rows else {}
+    active_model_version = _opt_model_version(latest.get("active_model_version"))
+    if active_model_version is None:
+        active_model_version = _opt_model_version(
+            status_payload.get("active_model_version")
+        )
     return {
         "league": league,
         "status": status_payload.get("status"),
-        "activeModelVersion": latest.get("active_model_version")
-        or status_payload.get("active_model_version"),
+        "activeModelVersion": active_model_version,
         "latestRun": {
             "runId": latest.get("run_id"),
             "status": latest.get("status"),
@@ -123,7 +127,9 @@ def fetch_automation_history(
                 "runId": row.get("run_id"),
                 "status": row.get("status"),
                 "stopReason": row.get("stop_reason"),
-                "activeModelVersion": row.get("active_model_version"),
+                "activeModelVersion": _opt_model_version(
+                    row.get("active_model_version")
+                ),
                 "tuningConfigId": row.get("tuning_config_id"),
                 "evalRunId": row.get("eval_run_id"),
                 "updatedAt": str(row.get("updated_at") or "").replace(" ", "T") + "Z"
@@ -155,7 +161,7 @@ def map_status_payload(*, league: str, payload: dict[str, Any]) -> dict[str, Any
         "status": _opt_str(payload.get("status")),
         "promotion_verdict": _opt_str(payload.get("promotion_verdict")),
         "stop_reason": _opt_str(payload.get("stop_reason")),
-        "active_model_version": _opt_str(payload.get("active_model_version")),
+        "active_model_version": _opt_model_version(payload.get("active_model_version")),
         "latest_avg_mdape": _opt_float(payload.get("latest_avg_mdape")),
         "latest_avg_interval_coverage": _opt_float(
             payload.get("latest_avg_interval_coverage")
@@ -194,6 +200,18 @@ def _opt_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _opt_model_version(value: Any) -> str | None:
+    normalized = _opt_str(value)
+    if normalized is None:
+        return None
+    compact = normalized.strip()
+    if not compact:
+        return None
+    if compact.lower() in {"none", "null", "no_model"}:
+        return None
+    return compact
 
 
 def _as_dict(value: Any) -> dict[str, Any]:

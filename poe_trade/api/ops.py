@@ -166,8 +166,9 @@ def analytics_ingestion(client: ClickHouseClient) -> dict[str, Any]:
 def analytics_scanner(client: ClickHouseClient) -> dict[str, Any]:
     rows = _safe_json_rows(
         client,
-        "SELECT status, count() AS count FROM poe_trade.scanner_recommendations "
-        "GROUP BY status ORDER BY status FORMAT JSONEachRow",
+        "SELECT strategy_id, count() AS recommendation_count "
+        "FROM poe_trade.scanner_recommendations "
+        "GROUP BY strategy_id ORDER BY strategy_id FORMAT JSONEachRow",
     )
     return {"rows": rows}
 
@@ -242,12 +243,27 @@ def analytics_alerts(client: ClickHouseClient) -> dict[str, Any]:
 
 
 def analytics_backtests(client: ClickHouseClient) -> dict[str, Any]:
-    rows = _safe_json_rows(
+    summary_rows = _safe_json_rows(
         client,
         "SELECT status, count() AS count FROM poe_trade.research_backtest_summary "
         "GROUP BY status ORDER BY status FORMAT JSONEachRow",
     )
-    return {"rows": rows}
+    detail_rows = _safe_json_rows(
+        client,
+        "SELECT status, count() AS count FROM poe_trade.research_backtest_detail "
+        "GROUP BY status ORDER BY status FORMAT JSONEachRow",
+    )
+    summary_total = sum(int(row.get("count") or 0) for row in summary_rows)
+    detail_total = sum(int(row.get("count") or 0) for row in detail_rows)
+    return {
+        "rows": summary_rows,
+        "summaryRows": summary_rows,
+        "detailRows": detail_rows,
+        "totals": {
+            "summary": summary_total,
+            "detail": detail_total,
+        },
+    }
 
 
 def analytics_ml(client: ClickHouseClient, *, league: str) -> dict[str, Any]:
@@ -255,7 +271,24 @@ def analytics_ml(client: ClickHouseClient, *, league: str) -> dict[str, Any]:
 
 
 def analytics_report(client: ClickHouseClient, *, league: str) -> dict[str, Any]:
-    return {"report": daily_report(client, league=league)}
+    report = daily_report(client, league=league)
+    observed_rows = [
+        _as_int(report.get("recommendations")),
+        _as_int(report.get("alerts")),
+        _as_int(report.get("journal_events")),
+        _as_int(report.get("journal_positions")),
+        _as_int(report.get("backtest_summary_rows")),
+        _as_int(report.get("backtest_detail_rows")),
+        _as_int(report.get("gold_currency_ref_hour_rows")),
+        _as_int(report.get("gold_listing_ref_hour_rows")),
+        _as_int(report.get("gold_liquidity_ref_hour_rows")),
+        _as_int(report.get("gold_bulk_premium_hour_rows")),
+        _as_int(report.get("gold_set_ref_hour_rows")),
+    ]
+    return {
+        "status": "ok" if any(observed_rows) else "empty",
+        "report": report,
+    }
 
 
 def price_check_payload(
@@ -296,3 +329,16 @@ def _safe_json_rows(client: ClickHouseClient, query: str) -> list[dict[str, Any]
     if not payload:
         return []
     return [json.loads(line) for line in payload.splitlines() if line.strip()]
+
+
+def _as_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0

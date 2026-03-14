@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any
 
 from ..db import ClickHouseClient, ClickHouseClientError
 
@@ -21,8 +20,8 @@ def _format_ts(value: datetime | None) -> str | None:
 
 class StatusReporter:
     def __init__(self, client: ClickHouseClient, source: str) -> None:
-        self._client = client
-        self._source = source
+        self._client: ClickHouseClient = client
+        self._source: str = source
 
     def report(
         self,
@@ -40,7 +39,7 @@ class StatusReporter:
         error_count: int = 0,
         stalled_since: datetime | None = None,
     ) -> None:
-        row: dict[str, Any] = {
+        row: dict[str, object] = {
             "queue_key": queue_key,
             "feed_kind": feed_kind,
             "contract_version": contract_version,
@@ -63,6 +62,11 @@ class StatusReporter:
             f"{json.dumps(row)}"
         )
         try:
-            self._client.execute(query)
+            _ = self._client.execute(query)
         except ClickHouseClientError as exc:  # pragma: no cover - depends on ClickHouse
-            logger.error("Failed to write ingest status: %s", exc)
+            if getattr(exc, "retryable", False):
+                logger.warning("Transient failure writing ingest status: %s", exc)
+            else:
+                logger.error("Failed to write ingest status: %s", exc)
+        except Exception as exc:
+            logger.exception("Unexpected failure writing ingest status: %s", exc)

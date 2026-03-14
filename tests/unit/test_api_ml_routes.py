@@ -295,3 +295,116 @@ def test_ml_automation_routes_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert status_response.status == 200
     assert history_response.status == 200
+
+
+def test_fetch_automation_status_keeps_hold_state_without_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        api_ml,
+        "fetch_status",
+        lambda _client, *, league: {
+            "league": league,
+            "status": "failed_gates",
+            "promotion_verdict": "hold",
+            "active_model_version": "none",
+            "route_hotspots": [],
+        },
+    )
+    monkeypatch.setattr(
+        api_ml,
+        "_query_rows",
+        lambda _client, _query: [
+            {
+                "run_id": "run-1",
+                "status": "failed_gates",
+                "stop_reason": "hold_no_material_improvement",
+                "active_model_version": "none",
+                "updated_at": "2026-03-14 10:00:00",
+            }
+        ],
+    )
+
+    payload = api_ml.fetch_automation_status(
+        ClickHouseClient(endpoint="http://ch"),
+        league="Mirage",
+    )
+
+    assert payload["status"] == "failed_gates"
+    assert payload["promotionVerdict"] == "hold"
+    assert payload["activeModelVersion"] is None
+    assert payload["latestRun"]["status"] == "failed_gates"
+
+
+def test_fetch_automation_history_normalizes_no_active_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        api_ml,
+        "_query_rows",
+        lambda _client, _query: [
+            {
+                "run_id": "run-2",
+                "status": "stopped_budget",
+                "stop_reason": "iteration_budget_exhausted",
+                "active_model_version": "none",
+                "tuning_config_id": "cfg-1",
+                "eval_run_id": "eval-1",
+                "updated_at": "2026-03-14 11:00:00",
+            }
+        ],
+    )
+
+    payload = api_ml.fetch_automation_history(
+        ClickHouseClient(endpoint="http://ch"),
+        league="Mirage",
+    )
+
+    assert payload["history"][0]["status"] == "stopped_budget"
+    assert payload["history"][0]["activeModelVersion"] is None
+
+
+def test_ml_automation_status_backend_failure_sanitized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.fetch_automation_status",
+        lambda _client, *, league: (_ for _ in ()).throw(
+            api_ml.BackendUnavailable("backend offline")
+        ),
+    )
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+
+    with pytest.raises(ApiError, match="backend unavailable") as exc:
+        app.handle(
+            method="GET",
+            raw_path="/api/v1/ml/leagues/Mirage/automation/status",
+            headers=_auth_headers(),
+            body_reader=BytesIO(b""),
+        )
+
+    assert exc.value.status == 503
+    assert exc.value.code == "backend_unavailable"
+
+
+def test_ml_automation_history_backend_failure_sanitized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.fetch_automation_history",
+        lambda _client, *, league: (_ for _ in ()).throw(
+            api_ml.BackendUnavailable("backend offline")
+        ),
+    )
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+
+    with pytest.raises(ApiError, match="backend unavailable") as exc:
+        app.handle(
+            method="GET",
+            raw_path="/api/v1/ml/leagues/Mirage/automation/history",
+            headers=_auth_headers(),
+            body_reader=BytesIO(b""),
+        )
+
+    assert exc.value.status == 503
+    assert exc.value.code == "backend_unavailable"

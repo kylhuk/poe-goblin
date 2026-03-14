@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
@@ -41,11 +42,15 @@ class AccountStashHarvester:
         status: StatusReporter,
         *,
         service_name: str = "account_stash_harvester",
+        account_name: str = "",
+        request_headers: Mapping[str, str] | None = None,
     ) -> None:
         self._client = client
         self._clickhouse = clickhouse
         self._status = status
         self._service_name = service_name
+        self._account_name = account_name
+        self._request_headers = dict(request_headers or {})
 
     def run(
         self,
@@ -69,7 +74,11 @@ class AccountStashHarvester:
         status_text = "success"
         error_msg: str | None = None
         try:
-            tabs_payload = self._client.request("GET", stash_endpoint(realm, league))
+            tabs_payload = self._client.request(
+                "GET",
+                stash_endpoint(realm, league),
+                headers=self._request_headers,
+            )
             tabs = _tab_rows_from_payload(tabs_payload)
             snapshots = self._fetch_tab_snapshots(realm=realm, league=league, tabs=tabs)
             if not dry_run:
@@ -113,7 +122,9 @@ class AccountStashHarvester:
             if not tab_id:
                 continue
             payload = self._client.request(
-                "GET", stash_endpoint(realm, league, tab_id=tab_id)
+                "GET",
+                stash_endpoint(realm, league, tab_id=tab_id),
+                headers=self._request_headers,
             )
             snapshot_payload = {
                 "tab": tab,
@@ -125,6 +136,7 @@ class AccountStashHarvester:
                     "captured_at": captured_at,
                     "realm": realm,
                     "league": league,
+                    "account_name": self._account_name,
                     "tab_id": tab_id,
                     "next_change_id": str(payload.get("next_change_id") or ""),
                     "payload_json": json.dumps(snapshot_payload, ensure_ascii=False),
@@ -138,7 +150,7 @@ class AccountStashHarvester:
         payload = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows)
         query = (
             "INSERT INTO poe_trade.raw_account_stash_snapshot "
-            "(snapshot_id, captured_at, realm, league, tab_id, next_change_id, payload_json)\n"
+            "(snapshot_id, captured_at, realm, league, account_name, tab_id, next_change_id, payload_json)\n"
             "FORMAT JSONEachRow\n"
             f"{payload}"
         )
@@ -154,7 +166,8 @@ class AccountStashHarvester:
                 if isinstance(payload.get("payload"), dict)
                 else {}
             )
-            items = body.get("items") if isinstance(body.get("items"), list) else []
+            raw_items = body.get("items")
+            items = raw_items if isinstance(raw_items, list) else []
             tab_name = str(tab.get("n") or tab.get("name") or "")
             tab_type = str(tab.get("type") or "normal")
             for item in items:
@@ -169,6 +182,7 @@ class AccountStashHarvester:
                         "observed_at": row.get("captured_at"),
                         "realm": row.get("realm"),
                         "league": row.get("league"),
+                        "account_name": row.get("account_name"),
                         "tab_id": row.get("tab_id"),
                         "tab_name": tab_name,
                         "tab_type": tab_type,
@@ -195,7 +209,7 @@ class AccountStashHarvester:
         payload = "\n".join(json.dumps(row, ensure_ascii=False) for row in flat_rows)
         query = (
             "INSERT INTO poe_trade.silver_account_stash_items "
-            "(observed_at, realm, league, tab_id, tab_name, tab_type, item_id, item_name, item_class, rarity, x, y, w, h, listed_price, estimated_price, estimated_price_confidence, currency, icon_url, payload_json)\n"
+            "(observed_at, realm, league, account_name, tab_id, tab_name, tab_type, item_id, item_name, item_class, rarity, x, y, w, h, listed_price, estimated_price, estimated_price_confidence, currency, icon_url, payload_json)\n"
             "FORMAT JSONEachRow\n"
             f"{payload}"
         )

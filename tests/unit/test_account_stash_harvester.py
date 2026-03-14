@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
 from poe_trade.db import ClickHouseClient
@@ -18,8 +19,11 @@ class _StubClient(PoeClient):
         super().__init__(
             "https://api.pathofexile.com", RateLimitPolicy(0, 0.1, 1.0, 0.0), "ua", 1.0
         )
+        self.calls: list[tuple[str, str, Mapping[str, str] | None]] = []
 
     def request(self, method, path, params=None, data=None, headers=None):
+        copied_headers = dict(headers) if isinstance(headers, dict) else headers
+        self.calls.append((method, path, copied_headers))
         if path.endswith("/Mirage"):
             return [{"id": "t1", "n": "Trade 1", "type": "normal"}]
         return {
@@ -106,5 +110,40 @@ def test_harvest_writes_raw_and_flat_rows() -> None:
 
     assert len(clickhouse.queries) == 2
     assert "raw_account_stash_snapshot" in clickhouse.queries[0]
+    assert "account_name" in clickhouse.queries[0]
     assert "silver_account_stash_items" in clickhouse.queries[1]
+    assert "account_name" in clickhouse.queries[1]
     assert status.calls[0]["status"] == "success"
+
+
+def test_harvest_writes_account_name_in_rows() -> None:
+    client = _StubClient()
+    clickhouse = _StubClickHouse()
+    status = _StubStatus(clickhouse)
+    harvester = AccountStashHarvester(
+        client, clickhouse, status, account_name="qa-exile"
+    )
+
+    harvester.run(realm="pc", league="Mirage", interval=0.0, dry_run=False, once=True)
+
+    assert len(clickhouse.queries) == 2
+    assert '"account_name": "qa-exile"' in clickhouse.queries[0]
+    assert '"account_name": "qa-exile"' in clickhouse.queries[1]
+
+
+def test_harvest_uses_server_side_cookie_header() -> None:
+    client = _StubClient()
+    clickhouse = _StubClickHouse()
+    status = _StubStatus(clickhouse)
+    harvester = AccountStashHarvester(
+        client,
+        clickhouse,
+        status,
+        request_headers={"Cookie": "POESESSID=POESESSID-123"},
+    )
+
+    harvester.run(realm="pc", league="Mirage", interval=0.0, dry_run=True, once=True)
+
+    assert len(client.calls) == 2
+    assert client.calls[0][2] == {"Cookie": "POESESSID=POESESSID-123"}
+    assert client.calls[1][2] == {"Cookie": "POESESSID=POESESSID-123"}

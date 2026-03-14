@@ -4,9 +4,11 @@ import argparse
 import logging
 import time
 from collections.abc import Sequence
+from datetime import datetime, timezone
 
 from poe_trade.config import settings as config_settings
-from poe_trade.db import ClickHouseClient
+from poe_trade.db import ClickHouseClient, ClickHouseClientError
+from poe_trade.ingestion import StatusReporter
 from poe_trade.strategy import scanner
 
 SERVICE_NAME = "scanner_worker"
@@ -32,23 +34,47 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     _configure_logging()
     cfg = config_settings.get_settings()
-    league = args.league or (
+    league: str = args.league or (
         cfg.api_league_allowlist[0] if cfg.api_league_allowlist else ""
     )
-    interval = args.interval_seconds or float(cfg.scan_minutes) * 60.0
+    interval_seconds_arg = args.interval_seconds
+    interval: float = (
+        float(interval_seconds_arg)
+        if interval_seconds_arg is not None
+        else float(cfg.scan_minutes) * 60.0
+    )
+    once_mode = bool(args.once)
+    dry_run = bool(args.dry_run)
     client = ClickHouseClient.from_env(cfg.clickhouse_url)
+    status = StatusReporter(client, SERVICE_NAME)
+    logger = logging.getLogger(__name__)
 
     while True:
-        run_id = scanner.run_scan_once(
-            client, league=league, dry_run=bool(args.dry_run)
+        try:
+            run_id = scanner.run_scan_once(client, league=league, dry_run=dry_run)
+        except ClickHouseClientError as exc:
+            if getattr(exc, "retryable", False):
+                logger.warning("Transient scanner cycle failure: %s", exc)
+                if once_mode:
+                    return 1
+                time.sleep(max(interval, 1.0))
+                continue
+            raise
+
+        status.report(
+            queue_key="scanner:worker",
+            feed_kind="scanner",
+            contract_version=1,
+            league=league,
+            realm="pc",
+            cursor=run_id,
+            next_change_id=run_id,
+            last_ingest_at=datetime.now(timezone.utc),
+            request_rate=1.0,
+            status="running",
         )
-        _ = client.execute(
-            "INSERT INTO poe_trade.poe_ingest_status "
-            "(queue_key, feed_kind, contract_version, league, realm, source, last_cursor, next_change_id, last_ingest_at, request_rate, error_count, stalled_since, last_error, status) VALUES "
-            f"('scanner:worker','scanner',1,'{league}','pc','scanner_worker','{run_id}','{run_id}',now64(3),1.0,0,NULL,'','running')"
-        )
-        logging.getLogger(__name__).info("scanner cycle completed run_id=%s", run_id)
-        if args.once:
+        logger.info("scanner cycle completed run_id=%s", run_id)
+        if once_mode:
             return 0
         time.sleep(max(interval, 1.0))
 

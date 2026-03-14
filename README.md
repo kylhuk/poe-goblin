@@ -10,16 +10,18 @@
 4. `.venv/bin/pip install -e .`
 5. `python -m poe_trade.cli --help` to inspect the CLI router and available service names.
 6. `docker compose config` to validate the ClickHouse + ingestion topology.
-7. `make up` to start ClickHouse, schema_migrator, and market_harvester in one command.
+7. `make up` to start the core product stack (ClickHouse, schema_migrator, market_harvester, scanner_worker, ml_trainer, and api) in one command.
 
 ## After Docker is running
 - `docker compose ps` to confirm the core services are healthy.
-- `docker compose logs --follow clickhouse schema_migrator market_harvester` to tail the ingestion logs.
+- `docker compose logs --follow clickhouse schema_migrator market_harvester scanner_worker ml_trainer api` to tail the logs.
 - `docker compose exec clickhouse clickhouse-client --query "SELECT 1"` to verify ClickHouse accepts connections.
 - `make down` to stop every container while keeping the ClickHouse data volume intact for the next `make up`.
+- `docker compose up --detach account_stash_harvester` to start the optional, credential-gated private stash sync.
 - Refer to `docs/ops-runbook.md` for queue-based telemetry, checkpoint history, and failure patterns.
 
 ## ML Quick Start (Mirage)
+`ml_trainer` runs by default in the background to handle autonomous training. For manual control or one-shot jobs:
 1. `.venv/bin/poe-ml train-loop --league Mirage --dataset-table poe_trade.ml_price_dataset_v1 --model-dir artifacts/ml/mirage_v1 --max-iterations 2 --max-wall-clock-seconds 1800 --no-improvement-patience 2 --min-mdape-improvement 0.005`
 2. `.venv/bin/poe-ml status --league Mirage --run latest`
 3. `.venv/bin/poe-ml report --league Mirage --model-dir artifacts/ml/mirage_v1 --output artifacts/ml/mirage_v1/latest-report.json`
@@ -32,8 +34,8 @@ ML verdict vocabulary:
 - `stopped_budget`: train-loop stopped because iteration or wall-clock budget was exhausted.
 
 ## Protected API Foundation
-The API service now exposes authenticated ML, Ops read models, and guarded service actions.
-Set these exact env vars before starting the API service:
+The API service is started by default with `make up` and exposes authenticated ML, Ops read models, and guarded service actions.
+Set these exact env vars in `.env` before starting:
 - `POE_API_BIND_HOST` (default `127.0.0.1`)
 - `POE_API_BIND_PORT` (default `8080`)
 - `POE_API_OPERATOR_TOKEN` (required)
@@ -41,7 +43,7 @@ Set these exact env vars before starting the API service:
 - `POE_API_MAX_BODY_BYTES` (default `32768`)
 - `POE_API_LEAGUE_ALLOWLIST` (default `Mirage`)
 
-Start the service:
+Manual start (for debugging):
 - `POE_API_OPERATOR_TOKEN=phase1-token POE_API_CORS_ORIGINS=https://app.example.com .venv/bin/python -m poe_trade.cli service --name api -- --host 127.0.0.1 --port 8080`
 
 Verify routes:

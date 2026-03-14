@@ -1,4 +1,5 @@
 import importlib
+from types import SimpleNamespace
 
 
 class _RecordingClient:
@@ -58,3 +59,42 @@ def test_run_scan_watch_runs_multiple_cycles(monkeypatch) -> None:
 
     assert run_ids == ["scan-1", "scan-2", "scan-3"]
     assert calls == [("Mirage", True), ("Mirage", True), ("Mirage", True)]
+
+
+def test_run_scan_once_preserves_source_recommendation_fields_with_fallbacks(
+    monkeypatch, tmp_path
+) -> None:
+    scanner = importlib.import_module("poe_trade.strategy.scanner")
+    client = _RecordingClient()
+    discover_sql = tmp_path / "discover.sql"
+    discover_sql.write_text("SELECT 1", encoding="utf-8")
+    pack = SimpleNamespace(
+        enabled=True,
+        strategy_id="demo_strategy",
+        execution_venue="manual_trade",
+        discover_sql_path=discover_sql,
+    )
+    monkeypatch.setattr(scanner, "list_strategy_packs", lambda: [pack])
+
+    scanner.run_scan_once(client, league="Mirage", dry_run=False)
+
+    assert len(client.queries) == 2
+    insert_query = client.queries[0]
+    assert (
+        "WITH formatRowNoNewline('JSONEachRow', source.*) AS source_row_json"
+        in insert_query
+    )
+    assert "if(JSONHas(source_row_json, 'why_it_fired')" in insert_query
+    assert "'discovered by demo_strategy') AS why_it_fired" in insert_query
+    assert "if(JSONHas(source_row_json, 'buy_plan')" in insert_query
+    assert "'buy candidate') AS buy_plan" in insert_query
+    assert "if(JSONHas(source_row_json, 'max_buy')" in insert_query
+    assert "if(JSONHas(source_row_json, 'transform_plan')" in insert_query
+    assert "if(JSONHas(source_row_json, 'exit_plan')" in insert_query
+    assert "'review and sell') AS exit_plan" in insert_query
+    assert "if(JSONHas(source_row_json, 'expected_profit_chaos')" in insert_query
+    assert "if(JSONHas(source_row_json, 'expected_roi')" in insert_query
+    assert "if(JSONHas(source_row_json, 'expected_hold_time')" in insert_query
+    assert "'unknown') AS expected_hold_time" in insert_query
+    assert "if(JSONHas(source_row_json, 'confidence')" in insert_query
+    assert "source_row_json AS evidence_snapshot" in insert_query

@@ -4,6 +4,8 @@ import base64
 import hashlib
 import json
 import secrets
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -51,6 +53,102 @@ def _state_path(settings: Settings) -> Path:
 
 def _sessions_path(settings: Settings) -> Path:
     return _state_dir(settings) / "sessions.json"
+
+
+def credential_state_path(settings: Settings) -> Path:
+    return _state_dir(settings) / "credential-state.json"
+
+
+def load_credential_state(settings: Settings) -> dict[str, Any]:
+    payload = _load_json(credential_state_path(settings))
+    account_name = payload.get("account_name")
+    poe_session_id = payload.get("poe_session_id")
+    status = payload.get("status")
+    updated_at = payload.get("updated_at")
+    if not isinstance(account_name, str):
+        account_name = ""
+    if not isinstance(poe_session_id, str):
+        poe_session_id = ""
+    if not isinstance(status, str):
+        status = "unknown"
+    if not isinstance(updated_at, str):
+        updated_at = _iso(_now())
+    return {
+        "account_name": account_name,
+        "poe_session_id": poe_session_id,
+        "status": status,
+        "updated_at": updated_at,
+    }
+
+
+def save_credential_state(
+    settings: Settings,
+    *,
+    account_name: str,
+    status: str,
+    poe_session_id: str = "",
+) -> dict[str, Any]:
+    payload = {
+        "account_name": account_name,
+        "poe_session_id": poe_session_id.strip(),
+        "status": status,
+        "updated_at": _iso(_now()),
+    }
+    _save_json(credential_state_path(settings), payload)
+    return payload
+
+
+def clear_credential_state(settings: Settings) -> dict[str, Any]:
+    return save_credential_state(
+        settings,
+        account_name="",
+        poe_session_id="",
+        status="logged_out",
+    )
+
+
+def resolve_account_name(settings: Settings, *, poe_session_id: str) -> str:
+    trimmed_session_id = poe_session_id.strip()
+    if not trimmed_session_id:
+        raise ValueError("poeSessionId is required")
+    request_headers = {
+        "Accept": "application/json",
+        "Cookie": f"POESESSID={trimmed_session_id}",
+        "User-Agent": settings.poe_user_agent,
+    }
+    urls = (
+        f"{settings.poe_api_base_url.rstrip('/')}/account",
+        "https://www.pathofexile.com/character-window/get-account-name",
+    )
+    for url in urls:
+        request = urllib.request.Request(url, headers=request_headers, method="GET")
+        try:
+            with urllib.request.urlopen(
+                request, timeout=settings.poe_request_timeout
+            ) as resp:
+                body = resp.read().decode("utf-8", errors="strict")
+        except (UnicodeDecodeError, urllib.error.URLError):
+            continue
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            continue
+        account_name = _extract_account_name(payload)
+        if account_name:
+            return account_name
+    raise ValueError("unable to resolve account name")
+
+
+def _extract_account_name(payload: Any) -> str | None:
+    if isinstance(payload, dict):
+        for key in ("accountName", "account_name", "name"):
+            candidate = payload.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        nested = payload.get("account")
+        if isinstance(nested, dict):
+            return _extract_account_name(nested)
+    return None
 
 
 @dataclass(frozen=True)

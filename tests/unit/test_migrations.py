@@ -214,3 +214,18 @@ def test_ensure_metadata_table_executes_create_database_and_table() -> None:
         "CREATE TABLE IF NOT EXISTS poe_trade.poe_schema_migrations"
         in client.queries[1]
     )
+
+
+def test_account_stash_account_scope_migration_is_additive() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0035_account_stash_account_scope.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE poe_trade.raw_account_stash_snapshot" in sql
+    assert "ALTER TABLE poe_trade.silver_account_stash_items" in sql
+    assert "ADD COLUMN IF NOT EXISTS account_name String DEFAULT ''" in sql

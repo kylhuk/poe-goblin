@@ -14,10 +14,13 @@ from poe_trade.db import ClickHouseClient
 from .auth import cors_headers, parse_bearer_token, validate_bearer_token
 from .auth_session import (
     authorize_redirect,
+    clear_credential_state,
     begin_login,
     clear_session,
     create_session,
     get_session,
+    resolve_account_name,
+    save_credential_state,
     validate_state,
 )
 from .ml import (
@@ -124,7 +127,7 @@ class ApiApp:
         )
         self.router.add(
             "/api/v1/auth/session",
-            ("GET", "OPTIONS"),
+            ("GET", "POST", "OPTIONS"),
             self._auth_session,
         )
         self.router.add(
@@ -519,7 +522,7 @@ class ApiApp:
             cookie_name=self.settings.auth_cookie_name,
         )
         session = get_session(self.settings, session_id=session_cookie)
-        if session is None:
+        if session is None or str(session.get("status") or "") == "disconnected":
             raise ApiError(
                 status=401,
                 code="auth_required",
@@ -531,9 +534,21 @@ class ApiApp:
                 code="session_expired",
                 message="session expired",
             )
+        account_name = str(session.get("account_name") or "")
+        if not account_name:
+            raise ApiError(
+                status=401,
+                code="auth_required",
+                message="session required",
+            )
         try:
             return json_response(
-                fetch_stash_tabs(self.client, league=league, realm=realm)
+                fetch_stash_tabs(
+                    self.client,
+                    league=league,
+                    realm=realm,
+                    account_name=account_name,
+                )
             )
         except StashBackendUnavailable:
             raise ApiError(
@@ -613,6 +628,8 @@ class ApiApp:
         )
 
     def _auth_session(self, context: Mapping[str, object]) -> Response:
+        if str(context.get("method") or "") == "POST":
+            return self._auth_session_bootstrap(context)
         session_id = _session_cookie_from_headers(
             _headers_from_context(context),
             cookie_name=self.settings.auth_cookie_name,
@@ -621,12 +638,18 @@ class ApiApp:
         if session is None:
             return json_response({"status": "disconnected", "accountName": None})
         if str(session.get("status") or "") == "session_expired":
+            clear_session(self.settings, session_id=session_id)
+            clear_cookie = _session_clear_cookie(
+                self.settings.auth_cookie_name,
+                secure=self.settings.auth_cookie_secure,
+            )
             return json_response(
                 {
                     "status": "session_expired",
                     "accountName": str(session.get("account_name") or ""),
                     "expiresAt": session.get("expires_at"),
-                }
+                },
+                headers={"Set-Cookie": clear_cookie},
             )
         return json_response(
             {
@@ -637,12 +660,67 @@ class ApiApp:
             }
         )
 
+    def _auth_session_bootstrap(self, context: Mapping[str, object]) -> Response:
+        cors = _cors_from_context(context)
+        try:
+            body = _read_json_body(
+                _headers_from_context(context),
+                _body_reader_from_context(context),
+                max_body_bytes=self.settings.api_max_body_bytes,
+            )
+        except ApiError as exc:
+            if not exc.headers:
+                exc.headers = dict(cors)
+            raise
+        poe_session_id = body.get("poeSessionId")
+        if not isinstance(poe_session_id, str) or not poe_session_id.strip():
+            raise ApiError(
+                status=400,
+                code="invalid_input",
+                message="invalid input",
+                headers=cors,
+            )
+        try:
+            account_name = resolve_account_name(
+                self.settings,
+                poe_session_id=poe_session_id,
+            )
+        except ValueError:
+            raise ApiError(
+                status=400,
+                code="invalid_input",
+                message="invalid input",
+                headers=cors,
+            ) from None
+        _ = save_credential_state(
+            self.settings,
+            account_name=account_name,
+            poe_session_id=poe_session_id,
+            status="bootstrap_connected",
+        )
+        session = create_session(self.settings, account_name=account_name)
+        cookie = _session_set_cookie(
+            self.settings.auth_cookie_name,
+            str(session.get("session_id") or ""),
+            secure=self.settings.auth_cookie_secure,
+        )
+        return json_response(
+            {
+                "status": "connected",
+                "accountName": str(session.get("account_name") or ""),
+                "expiresAt": session.get("expires_at"),
+                "scope": session.get("scope") or [],
+            },
+            headers={"Set-Cookie": cookie},
+        )
+
     def _auth_logout(self, context: Mapping[str, object]) -> Response:
         session_id = _session_cookie_from_headers(
             _headers_from_context(context),
             cookie_name=self.settings.auth_cookie_name,
         )
         clear_session(self.settings, session_id=session_id)
+        _ = clear_credential_state(self.settings)
         clear_cookie = _session_clear_cookie(
             self.settings.auth_cookie_name,
             secure=self.settings.auth_cookie_secure,

@@ -41,7 +41,8 @@ def stash_status_payload(
             "itemCount": 0,
             "session": None,
         }
-    if str(session.get("status") or "") == "session_expired":
+    session_status = str(session.get("status") or "")
+    if session_status == "session_expired":
         return {
             "status": "session_expired",
             "connected": False,
@@ -52,11 +53,32 @@ def stash_status_payload(
                 "expiresAt": str(session.get("expires_at") or ""),
             },
         }
+    if session_status != "connected":
+        return {
+            "status": "disconnected",
+            "connected": False,
+            "tabCount": 0,
+            "itemCount": 0,
+            "session": None,
+        }
 
+    raw_account_name = str(session.get("account_name") or "")
+    if not raw_account_name:
+        return {
+            "status": "disconnected",
+            "connected": False,
+            "tabCount": 0,
+            "itemCount": 0,
+            "session": None,
+        }
+    account_name = _escape_sql_literal(raw_account_name)
     query = (
         "SELECT countDistinct(tab_id) AS tabs, count() AS snapshots "
         "FROM poe_trade.raw_account_stash_snapshot "
-        f"WHERE league = '{league}' AND realm = '{realm}' FORMAT JSONEachRow"
+        f"WHERE league = '{_escape_sql_literal(league)}' "
+        f"AND realm = '{_escape_sql_literal(realm)}' "
+        f"AND account_name = '{account_name}' "
+        "FORMAT JSONEachRow"
     )
     try:
         payload = client.execute(query).strip()
@@ -74,7 +96,7 @@ def stash_status_payload(
         "tabCount": tabs,
         "itemCount": snapshots,
         "session": {
-            "accountName": str(session.get("account_name") or ""),
+            "accountName": raw_account_name,
             "expiresAt": str(session.get("expires_at") or ""),
         },
     }
@@ -85,11 +107,15 @@ def fetch_stash_tabs(
     *,
     league: str,
     realm: str,
+    account_name: str = "",
 ) -> dict[str, Any]:
+    escaped_account = _escape_sql_literal(account_name)
     query = (
         "SELECT tab_id, argMax(payload_json, captured_at) AS payload_json "
         "FROM poe_trade.raw_account_stash_snapshot "
-        f"WHERE league = '{league}' AND realm = '{realm}' "
+        f"WHERE league = '{_escape_sql_literal(league)}' "
+        f"AND realm = '{_escape_sql_literal(realm)}' "
+        f"AND account_name = '{escaped_account}' "
         "GROUP BY tab_id ORDER BY tab_id FORMAT JSONEachRow"
     )
     try:
@@ -193,3 +219,7 @@ def _rarity_from_frame_type(frame_type: Any) -> str:
     if isinstance(frame_type, int):
         return mapping.get(frame_type, "normal")
     return "normal"
+
+
+def _escape_sql_literal(value: str) -> str:
+    return value.replace("'", "''")

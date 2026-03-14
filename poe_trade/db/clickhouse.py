@@ -4,17 +4,33 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 logger = logging.getLogger(__name__)
 
 
 class ClickHouseClientError(RuntimeError):
     """Raised when ClickHouse requests fail."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = False,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.retryable: bool = retryable
+        self.status_code: int | None = status_code
+
+
+def _is_retryable_http_status(status_code: int) -> bool:
+    return status_code in {408, 425, 429, 500, 502, 503, 504}
 
 
 @dataclass(frozen=True)
@@ -61,7 +77,12 @@ class ClickHouseClient:
         logger.debug("ClickHouse -> %s", url)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                text = response.read().decode("utf-8")
+                response_body = response.read()
+                text = (
+                    response_body.decode("utf-8")
+                    if isinstance(response_body, bytes)
+                    else str(response_body)
+                )
                 logger.debug("ClickHouse response length=%d", len(text))
                 return text
         except (
@@ -69,10 +90,20 @@ class ClickHouseClient:
         ) as exc:  # pragma: no cover - depends on ClickHouse
             msg = exc.read().decode("utf-8", errors="ignore")
             logger.error("ClickHouse HTTPError %s: %s", exc.code, msg)
-            raise ClickHouseClientError(msg) from exc
+            raise ClickHouseClientError(
+                msg or f"HTTP {exc.code}",
+                retryable=_is_retryable_http_status(exc.code),
+                status_code=exc.code,
+            ) from exc
         except urllib.error.URLError as exc:  # pragma: no cover - network
             logger.error("ClickHouse URLError: %s", exc)
-            raise ClickHouseClientError(str(exc)) from exc
+            raise ClickHouseClientError(str(exc), retryable=True) from exc
+        except (TimeoutError, socket.timeout) as exc:  # pragma: no cover - network
+            logger.error("ClickHouse timeout: %s", exc)
+            raise ClickHouseClientError(str(exc), retryable=True) from exc
+        except OSError as exc:  # pragma: no cover - network
+            logger.error("ClickHouse socket error: %s", exc)
+            raise ClickHouseClientError(str(exc), retryable=True) from exc
 
     def _build_url(self, params: Mapping[str, str]) -> str:
         cleaned = self.endpoint.rstrip("/")

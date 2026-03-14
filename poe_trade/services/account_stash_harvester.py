@@ -4,6 +4,7 @@ import argparse
 import logging
 from collections.abc import Sequence
 
+from poe_trade.api.auth_session import load_credential_state
 from poe_trade.config import settings as config_settings
 from poe_trade.db import ClickHouseClient
 from poe_trade.ingestion.account_stash_harvester import AccountStashHarvester
@@ -42,11 +43,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             "%s disabled via POE_ENABLE_ACCOUNT_STASH=false", SERVICE_NAME
         )
         return 0
-    if not cfg.account_stash_access_token:
-        logging.getLogger(__name__).error(
-            "POE_ACCOUNT_STASH_ACCESS_TOKEN is required when account stash is enabled"
+    credential_state = load_credential_state(cfg)
+    poe_session_id = str(credential_state.get("poe_session_id") or "").strip()
+    account_name = str(credential_state.get("account_name") or "").strip()
+    if not poe_session_id:
+        logging.getLogger(__name__).info(
+            "%s no-op: temporary credential missing (status=%s)",
+            SERVICE_NAME,
+            str(credential_state.get("status") or "unknown"),
         )
-        return 1
+        return 0
 
     policy = RateLimitPolicy(
         cfg.rate_limit_max_retries,
@@ -57,11 +63,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     client = PoeClient(
         cfg.poe_api_base_url, policy, cfg.poe_user_agent, cfg.poe_request_timeout
     )
-    client.set_bearer_token(cfg.account_stash_access_token)
     clickhouse = ClickHouseClient.from_env(cfg.clickhouse_url)
     status = StatusReporter(clickhouse, SERVICE_NAME)
     harvester = AccountStashHarvester(
-        client, clickhouse, status, service_name=SERVICE_NAME
+        client,
+        clickhouse,
+        status,
+        service_name=SERVICE_NAME,
+        account_name=account_name,
+        request_headers={"Cookie": f"POESESSID={poe_session_id}"},
     )
     harvester.run(
         realm=args.realm or cfg.account_stash_realm,
