@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusDot, Freshness } from '@/components/shared/StatusIndicators';
+import { RenderState } from '@/components/shared/RenderState';
 import { api } from '@/services/api';
 import type { Service, AppMessage } from '@/types/api';
 import { Activity, AlertTriangle, TrendingUp, Server } from 'lucide-react';
@@ -28,7 +29,7 @@ export default function DashboardTab() {
   const topOpportunity = criticals[0]?.suggestedAction || 'No critical opportunities';
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="panel-dashboard-root">
       {/* Summary row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <SummaryCard icon={<Server className="h-5 w-5 text-primary" />} label="Services Running" value={`${running}/${services.length}`} />
@@ -44,9 +45,9 @@ export default function DashboardTab() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-3">
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <RenderState kind="degraded" message={error} />}
             {services.map(s => (
-              <div key={s.id} className="flex items-center gap-2 bg-secondary/50 rounded px-3 py-2 text-sm">
+              <div key={s.id} data-testid={`service-${s.id}`} className="flex items-center gap-2 bg-secondary/50 rounded px-3 py-2 text-sm">
                 <StatusDot status={s.status} />
                 <span className="text-foreground">{s.name}</span>
                 <Freshness iso={s.lastCrawl} />
@@ -74,7 +75,7 @@ export default function DashboardTab() {
               </div>
             </div>
           ))}
-          {criticals.length === 0 && <p className="text-muted-foreground text-sm">No critical opportunities right now.</p>}
+          {criticals.length === 0 && <RenderState kind="empty" message="No critical opportunities right now" />}
         </CardContent>
       </Card>
     </div>

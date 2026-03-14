@@ -1,17 +1,23 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
-const API_BASE = 'https://api.poe.lama-lan.ch';
-const STORAGE_KEY = 'poe_auth_user';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
 
 export interface AuthUser {
   accountName: string;
-  token: string;
+}
+
+interface SessionPayload {
+  status: 'connected' | 'disconnected' | 'session_expired';
+  accountName?: string | null;
+  expiresAt?: string | null;
 }
 
 interface AuthContextValue {
   user: AuthUser | null;
   login: () => void;
   logout: () => void;
+  refreshSession: () => Promise<void>;
+  sessionState: 'connected' | 'disconnected' | 'session_expired';
   isLoading: boolean;
 }
 
@@ -19,79 +25,74 @@ const AuthContext = createContext<AuthContextValue>({
   user: null,
   login: () => {},
   logout: () => {},
+  refreshSession: async () => {},
+  sessionState: 'disconnected',
   isLoading: true,
 });
 
 export const useAuth = () => useContext(AuthContext);
 
-export function getStoredToken(): string | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as AuthUser;
-    return parsed.token || null;
-  } catch {
-    return null;
+async function fetchSession(): Promise<SessionPayload> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/session`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    return { status: 'disconnected' };
   }
+  return (await response.json()) as SessionPayload;
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [sessionState, setSessionState] = useState<'connected' | 'disconnected' | 'session_expired'>('disconnected');
   const [isLoading, setIsLoading] = useState(true);
 
-  // Hydrate from localStorage on mount
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as AuthUser;
-        if (parsed.token && parsed.accountName) {
-          setUser(parsed);
-        }
-      }
-    } catch {
-      localStorage.removeItem(STORAGE_KEY);
+  const refreshSession = useCallback(async () => {
+    const payload = await fetchSession();
+    if (payload.status === 'connected' && payload.accountName) {
+      setUser({ accountName: payload.accountName });
+      setSessionState('connected');
+      return;
     }
-    setIsLoading(false);
+    setUser(null);
+    setSessionState(payload.status);
   }, []);
 
-  // Listen for postMessage from popup callback
+  useEffect(() => {
+    refreshSession().finally(() => setIsLoading(false));
+  }, [refreshSession]);
+
   useEffect(() => {
     const handler = (event: MessageEvent) => {
-      if (event.data?.type === 'poe_auth_callback') {
-        const { accountName, token } = event.data as { type: string; accountName: string; token: string };
-        if (token && accountName) {
-          const authUser: AuthUser = { accountName, token };
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(authUser));
-          setUser(authUser);
-        }
+      if (event.data?.type === 'poe_auth_callback_complete') {
+        void refreshSession();
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, []);
+  }, [refreshSession]);
 
   const login = useCallback(() => {
-    const callbackUrl = `${window.location.origin}/auth/callback`;
-    const authUrl = `${API_BASE}/api/v1/auth/login?redirect_uri=${encodeURIComponent(callbackUrl)}`;
-    const width = 500;
-    const height = 700;
+    const authUrl = `${API_BASE}/api/v1/auth/login`;
+    const width = 520;
+    const height = 720;
     const left = window.screenX + (window.innerWidth - width) / 2;
     const top = window.screenY + (window.innerHeight - height) / 2;
-    window.open(
-      authUrl,
-      'poe_auth_popup',
-      `width=${width},height=${height},left=${left},top=${top},popup=yes`
-    );
+    window.open(authUrl, 'poe_auth_popup', `width=${width},height=${height},left=${left},top=${top},popup=yes`);
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
-    setUser(null);
+    fetch(`${API_BASE}/api/v1/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    }).finally(() => {
+      setUser(null);
+      setSessionState('disconnected');
+    });
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, login, logout, refreshSession, sessionState, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

@@ -6,6 +6,7 @@ import { ConfidenceBadge, CurrencyValue } from '@/components/shared/StatusIndica
 import { api } from '@/services/api';
 import type { PriceCheckResponse } from '@/types/api';
 import { Search } from 'lucide-react';
+import { RenderState } from '@/components/shared/RenderState';
 
 export default function PriceCheckTab() {
   const [text, setText] = useState('');
@@ -14,7 +15,10 @@ export default function PriceCheckTab() {
   const [error, setError] = useState<string | null>(null);
 
   const check = async () => {
-    if (!text.trim()) return;
+    if (!text.trim()) {
+      setError('Please paste item text first');
+      return;
+    }
     setLoading(true);
     try {
       const r = await api.priceCheck({ itemText: text });
@@ -28,21 +32,22 @@ export default function PriceCheckTab() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-2xl mx-auto space-y-6" data-testid="panel-pricecheck-root">
       <div className="space-y-3">
         <h2 className="text-lg font-semibold font-sans text-foreground">Price Check</h2>
         <p className="text-xs text-muted-foreground">Paste item text from PoE (Ctrl+C on item) and submit for price prediction.</p>
         <Textarea
+          data-testid="pricecheck-input"
           value={text}
           onChange={e => setText(e.target.value)}
           placeholder={`Rarity: Rare\nGrim Bane\nHubris Circlet\n--------\nQuality: +20%\n+2 to Level of Socketed Minion Gems\n+93 to maximum Life\n...`}
           className="min-h-[160px] font-mono text-xs"
         />
-        <Button onClick={check} disabled={loading} className="gap-2 w-full sm:w-auto">
+        <Button data-testid="pricecheck-submit" onClick={check} disabled={loading} className="gap-2 w-full sm:w-auto">
           <Search className="h-4 w-4" />
           {loading ? 'Checking...' : 'Price Check'}
         </Button>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <RenderState kind="invalid_input" message={error} />}
       </div>
 
       {result && (

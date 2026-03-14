@@ -171,6 +171,38 @@ export interface StashTab {
   items: StashItem[];
 }
 
+export interface StashStatus {
+  status: 'connected_populated' | 'connected_empty' | 'disconnected' | 'session_expired' | 'feature_unavailable';
+  connected: boolean;
+  tabCount: number;
+  itemCount: number;
+  session: { accountName: string; expiresAt: string } | null;
+}
+
+export interface ScannerSummary {
+  status: 'ok' | 'empty';
+  lastRunAt: string | null;
+  recommendationCount: number;
+}
+
+export interface ScannerRecommendation {
+  scannerRunId: string;
+  strategyId: string;
+  league: string;
+  itemOrMarketKey: string;
+  whyItFired: string;
+  buyPlan: string;
+  maxBuy: number | null;
+  transformPlan: string;
+  exitPlan: string;
+  executionVenue: string;
+  expectedProfitChaos: number | null;
+  expectedRoi: number | null;
+  expectedHoldTime: string;
+  confidence: number | null;
+  recordedAt: string | null;
+}
+
 // ========== Messages ==========
 export type MessageSeverity = 'info' | 'warning' | 'critical';
 export interface AppMessage {
@@ -184,6 +216,13 @@ export interface AppMessage {
 
 // ========== API Service Interface ==========
 export interface ApiService {
+  getScannerSummary(): Promise<ScannerSummary>;
+  getScannerRecommendations(): Promise<ScannerRecommendation[]>;
+  ackAlert(alertId: string): Promise<void>;
+  getStashStatus(): Promise<StashStatus>;
+  getMlAutomationStatus(): Promise<Record<string, unknown>>;
+  getMlAutomationHistory(): Promise<Record<string, unknown>>;
+
   getServices(): Promise<Service[]>;
   startService(id: string): Promise<void>;
   stopService(id: string): Promise<void>;

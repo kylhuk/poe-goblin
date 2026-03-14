@@ -24,34 +24,34 @@ const Index = () => {
 
       {/* Main content */}
       <main className="container px-4 py-4">
-        <Tabs defaultValue="dashboard" className="space-y-4">
+        <Tabs defaultValue="dashboard" className="space-y-4" data-testid="panel-shell-root">
           <TabsList className="w-full justify-start h-auto flex-wrap gap-1 bg-card border border-border p-1">
-            <TabsTrigger value="dashboard" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <TabsTrigger data-testid="tab-dashboard" value="dashboard" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <LayoutDashboard className="h-3.5 w-3.5" /> Dashboard
             </TabsTrigger>
-            <TabsTrigger value="services" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <TabsTrigger data-testid="tab-services" value="services" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Server className="h-3.5 w-3.5" /> Services
             </TabsTrigger>
-            <TabsTrigger value="analytics" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <TabsTrigger data-testid="tab-analytics" value="analytics" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <BarChart3 className="h-3.5 w-3.5" /> Analytics
             </TabsTrigger>
-            <TabsTrigger value="pricecheck" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <TabsTrigger data-testid="tab-pricecheck" value="pricecheck" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Search className="h-3.5 w-3.5" /> Price Check
             </TabsTrigger>
-            <TabsTrigger value="stash" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <TabsTrigger data-testid="tab-stash" value="stash" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Grid3X3 className="h-3.5 w-3.5" /> Stash Viewer
             </TabsTrigger>
-            <TabsTrigger value="messages" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <TabsTrigger data-testid="tab-messages" value="messages" className="gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <MessageSquare className="h-3.5 w-3.5" /> Messages
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="dashboard"><DashboardTab /></TabsContent>
-          <TabsContent value="services"><ServicesTab /></TabsContent>
-          <TabsContent value="analytics"><AnalyticsTab /></TabsContent>
-          <TabsContent value="pricecheck"><PriceCheckTab /></TabsContent>
-          <TabsContent value="stash"><StashViewerTab /></TabsContent>
-          <TabsContent value="messages"><MessagesTab /></TabsContent>
+          <TabsContent data-testid="panel-dashboard" value="dashboard"><DashboardTab /></TabsContent>
+          <TabsContent data-testid="panel-services" value="services"><ServicesTab /></TabsContent>
+          <TabsContent data-testid="panel-analytics" value="analytics"><AnalyticsTab /></TabsContent>
+          <TabsContent data-testid="panel-pricecheck" value="pricecheck"><PriceCheckTab /></TabsContent>
+          <TabsContent data-testid="panel-stash" value="stash"><StashViewerTab /></TabsContent>
+          <TabsContent data-testid="panel-messages" value="messages"><MessagesTab /></TabsContent>
         </Tabs>
       </main>
     </div>

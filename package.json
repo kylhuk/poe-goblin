@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "qa:dev": "VITE_API_BASE_URL=http://127.0.0.1:18080 vite --host 127.0.0.1 --port 4173 --strictPort",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:inventory": "vitest run src/test/scenarioInventory.test.ts && node scripts/validate-scenario-inventory.mjs && node scripts/validate-scenario-inventory-negative.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

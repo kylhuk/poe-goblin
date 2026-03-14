@@ -13,24 +13,24 @@ export default function AnalyticsTab() {
   return (
     <Tabs defaultValue="fairvalue" className="space-y-4">
       <TabsList className="flex-wrap h-auto gap-1 bg-secondary/50 p-1">
-        <TabsTrigger value="fairvalue" className="text-xs">Ingestion</TabsTrigger>
-        <TabsTrigger value="stale" className="text-xs">Scanner</TabsTrigger>
-        <TabsTrigger value="gem" className="text-xs">Alerts</TabsTrigger>
-        <TabsTrigger value="heist" className="text-xs">Backtests</TabsTrigger>
-        <TabsTrigger value="shipment" className="text-xs">ML</TabsTrigger>
-        <TabsTrigger value="gold" className="text-xs">Reports</TabsTrigger>
-        <TabsTrigger value="session" className="text-xs">Session</TabsTrigger>
-        <TabsTrigger value="gear" className="text-xs">Diagnostics</TabsTrigger>
+        <TabsTrigger data-testid="analytics-tab-fairvalue" value="fairvalue" className="text-xs">Ingestion</TabsTrigger>
+        <TabsTrigger data-testid="analytics-tab-stale" value="stale" className="text-xs">Scanner</TabsTrigger>
+        <TabsTrigger data-testid="analytics-tab-gem" value="gem" className="text-xs">Alerts</TabsTrigger>
+        <TabsTrigger data-testid="analytics-tab-heist" value="heist" className="text-xs">Backtests</TabsTrigger>
+        <TabsTrigger data-testid="analytics-tab-shipment" value="shipment" className="text-xs">ML</TabsTrigger>
+        <TabsTrigger data-testid="analytics-tab-gold" value="gold" className="text-xs">Reports</TabsTrigger>
+        <TabsTrigger data-testid="analytics-tab-session" value="session" className="text-xs">Session</TabsTrigger>
+        <TabsTrigger data-testid="analytics-tab-gear" value="gear" className="text-xs">Diagnostics</TabsTrigger>
       </TabsList>
 
-      <TabsContent value="fairvalue"><FairValuePanel /></TabsContent>
-      <TabsContent value="stale"><StaleListingPanel /></TabsContent>
-      <TabsContent value="gem"><GemValuePanel /></TabsContent>
-      <TabsContent value="heist"><HeistRouterPanel /></TabsContent>
-      <TabsContent value="shipment"><ShipmentPanel /></TabsContent>
-      <TabsContent value="gold"><GoldShadowPanel /></TabsContent>
-      <TabsContent value="session"><SessionPanel /></TabsContent>
-      <TabsContent value="gear"><GearSwapPanel /></TabsContent>
+      <TabsContent data-testid="analytics-panel-fairvalue" value="fairvalue"><FairValuePanel /></TabsContent>
+      <TabsContent data-testid="analytics-panel-stale" value="stale"><StaleListingPanel /></TabsContent>
+      <TabsContent data-testid="analytics-panel-gem" value="gem"><GemValuePanel /></TabsContent>
+      <TabsContent data-testid="analytics-panel-heist" value="heist"><HeistRouterPanel /></TabsContent>
+      <TabsContent data-testid="analytics-panel-shipment" value="shipment"><ShipmentPanel /></TabsContent>
+      <TabsContent data-testid="analytics-panel-gold" value="gold"><GoldShadowPanel /></TabsContent>
+      <TabsContent data-testid="analytics-panel-session" value="session"><SessionPanel /></TabsContent>
+      <TabsContent data-testid="analytics-panel-gear" value="gear"><GearSwapPanel /></TabsContent>
     </Tabs>
   );
 }
@@ -181,7 +181,9 @@ function HeistRouterPanel() {
 
 function ShipmentPanel() {
   const [s, setS] = useState<ShipmentRecommendation | null>(null);
+  const [automation, setAutomation] = useState<Record<string, unknown> | null>(null);
   useEffect(() => { api.getShipmentRecommendation().then(setS).catch(() => setS(null)); }, []);
+  useEffect(() => { api.getMlAutomationStatus().then(setAutomation).catch(() => setAutomation(null)); }, []);
   if (!s) return null;
 
   return (
@@ -208,6 +210,12 @@ function ShipmentPanel() {
         <div className="text-xs bg-primary/10 border border-primary/20 rounded p-2 text-foreground">
           💡 {s.whyThisWon}
         </div>
+        {automation && (
+          <div className="text-xs bg-secondary/40 border border-border rounded p-2" data-testid="ml-automation-card">
+            <p>Status: {String(automation.status || 'unknown')}</p>
+            <p>Promotion: {String(automation.promotionVerdict || 'n/a')}</p>
+          </div>
+        )}
         <Freshness iso={s.updatedAt} />
       </CardContent>
     </Card>

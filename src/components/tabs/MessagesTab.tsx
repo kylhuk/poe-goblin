@@ -5,6 +5,7 @@ import { api } from '@/services/api';
 import type { AppMessage, MessageSeverity } from '@/types/api';
 import { cn } from '@/lib/utils';
 import { Filter } from 'lucide-react';
+import { RenderState } from '@/components/shared/RenderState';
 
 const severityStyles: Record<MessageSeverity, string> = {
   critical: 'border-l-destructive bg-destructive/5',
@@ -40,8 +41,14 @@ export default function MessagesTab() {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const acknowledge = async (id: string) => {
+    await api.ackAlert(id);
+    const rows = await api.getMessages();
+    setMessages(rows);
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="panel-messages-root">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-lg font-semibold font-sans text-foreground">Messages & Alerts</h2>
         <div className="flex items-center gap-1">
@@ -61,9 +68,9 @@ export default function MessagesTab() {
       </div>
 
       <div className="space-y-2">
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <RenderState kind="degraded" message={error} />}
         {filtered.map(m => (
-          <Card key={m.id} className={cn('border-l-4', severityStyles[m.severity])}>
+          <Card key={m.id} data-testid={`message-${m.id}`} className={cn('border-l-4', severityStyles[m.severity])}>
             <CardContent className="p-3">
               <div className="flex items-start gap-3">
                 <span className={cn('mt-1.5 h-2 w-2 rounded-full shrink-0', severityDot[m.severity])} />
@@ -75,12 +82,23 @@ export default function MessagesTab() {
                   </div>
                   <p className="text-sm text-foreground">{m.message}</p>
                   <p className="text-xs text-primary mt-1">→ {m.suggestedAction}</p>
+                  {m.severity === 'critical' && (
+                    <Button
+                      data-testid={`message-${m.id}-ack`}
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 h-7 text-xs"
+                      onClick={() => acknowledge(m.id)}
+                    >
+                      Acknowledge
+                    </Button>
+                  )}
                 </div>
               </div>
             </CardContent>
           </Card>
         ))}
-        {filtered.length === 0 && <p className="text-muted-foreground text-sm text-center py-8">No messages matching filter.</p>}
+        {filtered.length === 0 && <RenderState kind="empty" message="No messages matching filter" />}
       </div>
     </div>
   );

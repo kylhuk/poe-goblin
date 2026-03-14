@@ -10,6 +10,7 @@ import {
   Coins, Diamond, CircleDot, FlaskConical, Sword, ShieldHalf,
   FileText, Shirt, HardHat, Crown, ChevronDown, Copy, type LucideIcon,
 } from 'lucide-react';
+import { RenderState } from '@/components/shared/RenderState';
 
 const ITEM_CLASS_ICONS: Record<string, LucideIcon> = {
   Currency: Coins, Gem: Diamond, Jewel: CircleDot, Flask: FlaskConical,
@@ -72,17 +73,25 @@ const API_SCHEMA = `{
 
 export default function StashViewerTab() {
   const [tabs, setTabs] = useState<StashTab[]>([]);
+  const [status, setStatus] = useState<string>('loading');
   const [activeTab, setActiveTab] = useState(0);
   const [schemaOpen, setSchemaOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    api.getStashTabs()
-      .then((rows) => {
-        setTabs(rows);
+    api.getStashStatus()
+      .then(async (stashStatus) => {
+        setStatus(stashStatus.status);
+        if (stashStatus.connected) {
+          const rows = await api.getStashTabs();
+          setTabs(rows);
+        } else {
+          setTabs([]);
+        }
         setError(null);
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : 'Stash feature unavailable');
+        setStatus('degraded');
       });
   }, []);
 
@@ -90,11 +99,12 @@ export default function StashViewerTab() {
   const grid = tab ? getGridSize(tab.type) : 12;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-testid="panel-stash-root">
       {/* PoE-style tab bar */}
       <div className="flex items-end gap-0">
         {tabs.map((t, i) => (
           <button
+            data-testid={`stash-tab-${t.id}`}
             key={t.id}
             onClick={() => setActiveTab(i)}
             className={cn(
@@ -111,10 +121,13 @@ export default function StashViewerTab() {
       </div>
 
       {/* Stash grid */}
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      {!error && tabs.length === 0 && <p className="text-sm text-muted-foreground">No stash tabs available.</p>}
+      {error && <RenderState kind="degraded" message={error} />}
+      {!error && status === 'disconnected' && <RenderState kind="disconnected" message="Connect account to view stash" />}
+      {!error && status === 'session_expired' && <RenderState kind="session_expired" message="Session expired, login again" />}
+      {!error && status === 'feature_unavailable' && <RenderState kind="feature_unavailable" message="Stash feature unavailable" />}
+      {!error && tabs.length === 0 && status === 'connected_empty' && <RenderState kind="empty" message="Connected but stash is empty" />}
       {tab && (
-        <div className="stash-frame">
+        <div className="stash-frame" data-testid="stash-panel-grid">
           <div
             className="stash-grid"
             style={{

@@ -6,6 +6,7 @@ import { api } from '@/services/api';
 import type { Service } from '@/types/api';
 import { Play, Square, RotateCcw, PlayCircle, StopCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { RenderState } from '@/components/shared/RenderState';
 
 export default function ServicesTab() {
   const [services, setServices] = useState<Service[]>([]);
@@ -45,7 +46,7 @@ export default function ServicesTab() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="panel-services-root">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold font-sans text-foreground">Services</h2>
         <div className="flex gap-2">
@@ -59,9 +60,9 @@ export default function ServicesTab() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        {services.map(s => (
-          <Card key={s.id} className={s.status === 'error' ? 'glow-destructive' : ''}>
+          {error && <RenderState kind="degraded" message={error} />}
+          {services.map(s => (
+          <Card key={s.id} data-testid={`service-${s.id}`} className={s.status === 'error' ? 'glow-destructive' : ''}>
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -93,13 +94,13 @@ export default function ServicesTab() {
               </div>
               {s.containerInfo && <p className="text-xs text-muted-foreground font-mono mb-3">📦 {s.containerInfo}</p>}
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="gap-1" disabled={s.status === 'running' || loading[s.id] || !s.allowedActions?.includes('start')} onClick={() => act(s.id, 'start')}>
+                <Button data-testid={`service-${s.id}-start`} size="sm" variant="outline" className="gap-1" disabled={s.status === 'running' || loading[s.id] || !s.allowedActions?.includes('start')} onClick={() => act(s.id, 'start')}>
                   <Play className="h-3 w-3" /> Start
                 </Button>
-                <Button size="sm" variant="outline" className="gap-1" disabled={s.status === 'stopped' || loading[s.id] || !s.allowedActions?.includes('stop')} onClick={() => act(s.id, 'stop')}>
+                <Button data-testid={`service-${s.id}-stop`} size="sm" variant="outline" className="gap-1" disabled={s.status === 'stopped' || loading[s.id] || !s.allowedActions?.includes('stop')} onClick={() => act(s.id, 'stop')}>
                   <Square className="h-3 w-3" /> Stop
                 </Button>
-                <Button size="sm" variant="outline" className="gap-1" disabled={loading[s.id] || !s.allowedActions?.includes('restart')} onClick={() => act(s.id, 'restart')}>
+                <Button data-testid={`service-${s.id}-restart`} size="sm" variant="outline" className="gap-1" disabled={loading[s.id] || !s.allowedActions?.includes('restart')} onClick={() => act(s.id, 'restart')}>
                   <RotateCcw className="h-3 w-3" /> Restart
                 </Button>
               </div>

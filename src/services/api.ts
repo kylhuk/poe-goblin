@@ -11,10 +11,12 @@ import type {
   Service,
   SessionRecommendation,
   ShipmentRecommendation,
+  StashStatus,
+  ScannerRecommendation,
+  ScannerSummary,
   StaleListingOpp,
   StashTab,
 } from '@/types/api';
-import { getStoredToken } from '@/services/auth';
 
 type ApiErrorPayload = {
   error?: {
@@ -27,20 +29,19 @@ type ContractPayload = {
   primary_league?: string;
 };
 
-const API_BASE = 'https://api.poe.lama-lan.ch';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
 const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
 
 let cachedPrimaryLeague: string | null = null;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = API_BASE ? `${API_BASE}${path}` : path;
-  const userToken = getStoredToken();
-  const authToken = userToken || API_KEY;
   const response = await fetch(url, {
     ...init,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}),
       ...(init?.headers || {}),
     },
   });
@@ -71,6 +72,36 @@ async function primaryLeague(): Promise<string> {
 }
 
 export const api: ApiService = {
+  async getScannerSummary() {
+    return request<ScannerSummary>('/api/v1/ops/scanner/summary');
+  },
+
+  async getScannerRecommendations() {
+    const payload = await request<{ recommendations: ScannerRecommendation[] }>('/api/v1/ops/scanner/recommendations');
+    return payload.recommendations;
+  },
+
+  async ackAlert(alertId: string) {
+    await request<{ alertId: string; status: string }>(`/api/v1/ops/alerts/${encodeURIComponent(alertId)}/ack`, {
+      method: 'POST',
+    });
+  },
+
+  async getStashStatus() {
+    const league = await primaryLeague();
+    return request<StashStatus>(`/api/v1/stash/status?league=${encodeURIComponent(league)}&realm=pc`);
+  },
+
+  async getMlAutomationStatus() {
+    const league = await primaryLeague();
+    return request<Record<string, unknown>>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/automation/status`);
+  },
+
+  async getMlAutomationHistory() {
+    const league = await primaryLeague();
+    return request<Record<string, unknown>>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/automation/history`);
+  },
+
   async getServices() {
     const payload = await request<{ services: Service[] }>('/api/v1/ops/services');
     return payload.services;
@@ -113,22 +144,20 @@ export const api: ApiService = {
   },
 
   async getStaleListings() {
-    const payload = await request<{ rows: Array<Record<string, unknown>> }>(
-      '/api/v1/ops/analytics/scanner'
-    );
-    return payload.rows.map((row, index) => ({
+    const recommendations = await this.getScannerRecommendations();
+    return recommendations.map((row, index) => ({
       id: `scanner-${index}`,
-      itemName: String(row.status || 'scanner'),
-      askPrice: Number(row.count || 0),
-      fairValue: Number(row.count || 0),
+      itemName: String(row.itemOrMarketKey || 'scanner'),
+      askPrice: Number(row.maxBuy || 0),
+      fairValue: Number(row.expectedProfitChaos || 0),
       discountPct: 0,
-      firstSeen: new Date().toISOString(),
+      firstSeen: String(row.recordedAt || new Date().toISOString()),
       repricingCount: 0,
       sellerDormancyScore: 0,
-      expectedNetMargin: 0,
-      expectedSaleTime: 'n/a',
+      expectedNetMargin: Number(row.expectedProfitChaos || 0),
+      expectedSaleTime: String(row.expectedHoldTime || 'n/a'),
       route: 'public relist',
-      grade: 'yellow',
+      grade: Number(row.expectedProfitChaos || 0) > 0 ? 'green' : 'yellow',
     })) as StaleListingOpp[];
   },
 

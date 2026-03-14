@@ -1,0 +1,12 @@
+{
+  "scenarios": [
+    {"id": "tab-dashboard-desktop", "classification": "route-backed", "artifact": ".sisyphus/evidence/product/task-2-scenario-inventory/tab-dashboard-desktop.png"},
+    {"id": "tab-services-desktop", "classification": "route-backed", "artifact": ".sisyphus/evidence/product/task-2-scenario-inventory/tab-services-desktop.png"},
+    {"id": "tab-analytics-desktop", "classification": "route-backed", "artifact": ".sisyphus/evidence/product/task-2-scenario-inventory/tab-analytics-desktop.png"},
+    {"id": "tab-pricecheck-invalid", "classification": "route-backed", "artifact": ".sisyphus/evidence/product/task-2-scenario-inventory/tab-pricecheck-invalid.html"},
+    {"id": "tab-stash-disconnected", "classification": "route-backed", "artifact": ".sisyphus/evidence/product/task-2-scenario-inventory/tab-stash-disconnected.png"},
+    {"id": "tab-messages-ack", "classification": "route-backed", "artifact": ".sisyphus/evidence/product/task-2-scenario-inventory/tab-messages-ack.html"},
+    {"id": "auth-login-popup", "classification": "route-backed", "artifact": ".sisyphus/evidence/product/task-2-scenario-inventory/auth-login-popup.html"},
+    {"id": "ml-automation-status", "classification": "automation-backed", "artifact": ".sisyphus/evidence/product/task-2-scenario-inventory/ml-automation-status.json"}
+  ]
+}
