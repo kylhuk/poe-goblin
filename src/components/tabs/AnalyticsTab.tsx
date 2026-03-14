@@ -47,7 +47,7 @@ function FairValuePanel() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {items.map(item => (
-        <Card key={item.id}>
+        <Card key={item.id} className="card-game">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-sans">{item.itemName}</CardTitle>

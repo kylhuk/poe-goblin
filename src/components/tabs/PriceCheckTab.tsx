@@ -7,12 +7,14 @@ import { api } from '@/services/api';
 import type { PriceCheckResponse } from '@/types/api';
 import { Search } from 'lucide-react';
 import { RenderState } from '@/components/shared/RenderState';
+import { useMouseGlow } from '@/hooks/useMouseGlow';
 
 const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function PriceCheckTab(_props, ref) {
   const [text, setText] = useState('');
   const [result, setResult] = useState<PriceCheckResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mouseGlow = useMouseGlow();
 
   const check = async () => {
     if (!text.trim()) {
@@ -41,9 +43,9 @@ const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function
           value={text}
           onChange={e => setText(e.target.value)}
           placeholder={`Rarity: Rare\nGrim Bane\nHubris Circlet\n--------\nQuality: +20%\n+2 to Level of Socketed Minion Gems\n+93 to maximum Life\n...`}
-          className="min-h-[160px] font-mono text-xs"
+          className="min-h-[160px] font-mono text-xs focus:shadow-[0_0_12px_-3px_hsl(38,55%,42%,0.3)] transition-shadow"
         />
-        <Button data-testid="pricecheck-submit" onClick={check} disabled={loading} className="gap-2 w-full sm:w-auto">
+        <Button data-testid="pricecheck-submit" onClick={check} disabled={loading} className="gap-2 w-full sm:w-auto btn-game">
           <Search className="h-4 w-4" />
           {loading ? 'Checking...' : 'Price Check'}
         </Button>
@@ -51,7 +53,7 @@ const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function
       </div>
 
       {result && (
-        <Card className="glow-gold">
+        <Card className="glow-gold card-game animate-scale-fade-in" onMouseMove={mouseGlow}>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-sans">Prediction</CardTitle>
@@ -60,7 +62,7 @@ const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="text-center py-4">
-              <p className="text-3xl font-mono text-gold-bright font-semibold">
+              <p className="text-3xl font-mono font-semibold gold-shimmer-text">
                 {result.predictedValue} <span className="text-lg text-muted-foreground">{result.currency}</span>
               </p>
               {result.interval && (
@@ -82,7 +84,7 @@ const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function
               <p className="text-xs text-muted-foreground mb-2">Comparable Items</p>
               <div className="space-y-2">
                 {result.comparables.map((c, i) => (
-                  <div key={i} className="flex items-center justify-between bg-secondary/50 rounded p-2 text-xs">
+                  <div key={i} className="flex items-center justify-between bg-secondary/50 rounded p-2 text-xs transition-colors hover:bg-secondary">
                     <span className="text-foreground">{c.name}</span>
                     <CurrencyValue value={c.price} currency={c.currency} />
                   </div>

@@ -7,12 +7,14 @@ import type { Service } from '@/types/api';
 import { Play, Square, RotateCcw, PlayCircle, StopCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { RenderState } from '@/components/shared/RenderState';
+import { useMouseGlow } from '@/hooks/useMouseGlow';
 
 const ServicesTab = forwardRef<HTMLDivElement, Record<string, never>>(function ServicesTab(_props, ref) {
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+  const mouseGlow = useMouseGlow();
 
   const load = useCallback(() => api.getServices().then((next) => {
     setServices(next);
@@ -55,10 +57,10 @@ const ServicesTab = forwardRef<HTMLDivElement, Record<string, never>>(function S
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold font-sans text-foreground">Services</h2>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => services.forEach(s => s.status !== 'running' && s.allowedActions?.includes('start') && act(s.id, 'start'))}>
+          <Button size="sm" variant="outline" className="gap-1.5 btn-game" onClick={() => services.forEach(s => s.status !== 'running' && s.allowedActions?.includes('start') && act(s.id, 'start'))}>
             <PlayCircle className="h-4 w-4" /> Start All
           </Button>
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => services.forEach(s => s.status === 'running' && s.allowedActions?.includes('stop') && act(s.id, 'stop'))}>
+          <Button size="sm" variant="outline" className="gap-1.5 btn-game" onClick={() => services.forEach(s => s.status === 'running' && s.allowedActions?.includes('stop') && act(s.id, 'stop'))}>
             <StopCircle className="h-4 w-4" /> Stop All
           </Button>
         </div>
@@ -67,7 +69,7 @@ const ServicesTab = forwardRef<HTMLDivElement, Record<string, never>>(function S
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {error && <RenderState kind="degraded" message={error} />}
           {services.map(s => (
-          <Card key={s.id} data-testid={`service-${s.id}`} className={s.status === 'error' ? 'glow-destructive' : ''}>
+          <Card key={s.id} data-testid={`service-${s.id}`} className={`card-game ${s.status === 'error' ? 'glow-destructive' : ''}`} onMouseMove={mouseGlow}>
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -99,13 +101,13 @@ const ServicesTab = forwardRef<HTMLDivElement, Record<string, never>>(function S
               </div>
               {s.containerInfo && <p className="text-xs text-muted-foreground font-mono mb-3">📦 {s.containerInfo}</p>}
               <div className="flex gap-2">
-                <Button data-testid={`service-${s.id}-start`} size="sm" variant="outline" className="gap-1" disabled={s.status === 'running' || loading[s.id] || !s.allowedActions?.includes('start')} onClick={() => act(s.id, 'start')}>
+                <Button data-testid={`service-${s.id}-start`} size="sm" variant="outline" className="gap-1 btn-game" disabled={s.status === 'running' || loading[s.id] || !s.allowedActions?.includes('start')} onClick={() => act(s.id, 'start')}>
                   <Play className="h-3 w-3" /> Start
                 </Button>
-                <Button data-testid={`service-${s.id}-stop`} size="sm" variant="outline" className="gap-1" disabled={s.status === 'stopped' || loading[s.id] || !s.allowedActions?.includes('stop')} onClick={() => act(s.id, 'stop')}>
+                <Button data-testid={`service-${s.id}-stop`} size="sm" variant="outline" className="gap-1 btn-game" disabled={s.status === 'stopped' || loading[s.id] || !s.allowedActions?.includes('stop')} onClick={() => act(s.id, 'stop')}>
                   <Square className="h-3 w-3" /> Stop
                 </Button>
-                <Button data-testid={`service-${s.id}-restart`} size="sm" variant="outline" className="gap-1" disabled={loading[s.id] || !s.allowedActions?.includes('restart')} onClick={() => act(s.id, 'restart')}>
+                <Button data-testid={`service-${s.id}-restart`} size="sm" variant="outline" className="gap-1 btn-game" disabled={loading[s.id] || !s.allowedActions?.includes('restart')} onClick={() => act(s.id, 'restart')}>
                   <RotateCcw className="h-3 w-3" /> Restart
                 </Button>
               </div>

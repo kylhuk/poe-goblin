@@ -188,7 +188,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
             >
               <Copy className="h-3 w-3" /> Copy
             </Button>
-            <pre className="bg-[hsl(220,14%,6%)] border border-gold-dim/20 rounded p-4 text-[11px] font-mono text-muted-foreground overflow-x-auto whitespace-pre">
+            <pre className="bg-background border border-gold-dim/20 rounded p-4 text-[11px] font-mono text-muted-foreground overflow-x-auto whitespace-pre">
               {API_SCHEMA}
             </pre>
           </div>

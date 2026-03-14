@@ -6,6 +6,7 @@ import type { AppMessage, MessageSeverity } from '@/types/api';
 import { cn } from '@/lib/utils';
 import { Filter } from 'lucide-react';
 import { RenderState } from '@/components/shared/RenderState';
+import { useMouseGlow } from '@/hooks/useMouseGlow';
 
 const severityStyles: Record<MessageSeverity, string> = {
   critical: 'border-l-destructive bg-destructive/5',
@@ -14,7 +15,7 @@ const severityStyles: Record<MessageSeverity, string> = {
 };
 
 const severityDot: Record<MessageSeverity, string> = {
-  critical: 'bg-destructive',
+  critical: 'bg-destructive status-glow-error',
   warning: 'bg-warning',
   info: 'bg-info',
 };
@@ -23,6 +24,7 @@ const MessagesTab = forwardRef<HTMLDivElement, Record<string, never>>(function M
   const [messages, setMessages] = useState<AppMessage[]>([]);
   const [filter, setFilter] = useState<MessageSeverity | 'all'>('all');
   const [error, setError] = useState<string | null>(null);
+  const mouseGlow = useMouseGlow();
 
   const load = useCallback(() => {
     api.getMessages()
@@ -67,7 +69,7 @@ const MessagesTab = forwardRef<HTMLDivElement, Record<string, never>>(function M
               key={f}
               size="sm"
               variant={filter === f ? 'default' : 'outline'}
-              className="text-xs capitalize h-7"
+              className="text-xs capitalize h-7 btn-game"
               onClick={() => setFilter(f)}
             >
               {f}
@@ -79,7 +81,7 @@ const MessagesTab = forwardRef<HTMLDivElement, Record<string, never>>(function M
       <div className="space-y-2">
         {error && <RenderState kind="degraded" message={error} />}
         {filtered.map(m => (
-          <Card key={m.id} data-testid={`message-${m.id}`} className={cn('border-l-4', severityStyles[m.severity])}>
+          <Card key={m.id} data-testid={`message-${m.id}`} className={cn('border-l-4 card-game', severityStyles[m.severity])} onMouseMove={mouseGlow}>
             <CardContent className="p-3">
               <div className="flex items-start gap-3">
                 <span className={cn('mt-1.5 h-2 w-2 rounded-full shrink-0', severityDot[m.severity])} />
@@ -96,7 +98,7 @@ const MessagesTab = forwardRef<HTMLDivElement, Record<string, never>>(function M
                       data-testid={`message-${m.id}-ack`}
                       size="sm"
                       variant="outline"
-                      className="mt-2 h-7 text-xs"
+                      className="mt-2 h-7 text-xs btn-game"
                       onClick={() => acknowledge(m.id)}
                     >
                       Acknowledge

@@ -21,7 +21,7 @@ export default function ApiErrorPanel() {
         <Button variant="ghost" size="icon" className="relative h-8 w-8" aria-label="API error log">
           <Terminal className="h-4 w-4 text-muted-foreground" />
           {hasErrors && (
-            <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-destructive" />
+            <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-destructive error-badge-glow" />
           )}
         </Button>
       </SheetTrigger>
