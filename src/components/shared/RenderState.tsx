@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { forwardRef, type ReactNode } from 'react';
 import { AlertTriangle, CircleOff, Loader2, ShieldAlert, Unplug } from 'lucide-react';
 
 type RenderStateKind =
@@ -36,14 +36,17 @@ const ICONS: Record<RenderStateKind, ReactNode> = {
   invalid_input: <AlertTriangle className="h-4 w-4" />,
 };
 
-export function RenderState({ kind, message }: { kind: RenderStateKind; message?: string }) {
-  return (
+export const RenderState = forwardRef<HTMLDivElement, { kind: RenderStateKind; message?: string }>(
+  ({ kind, message }, ref) => (
     <div
+      ref={ref}
       data-testid={`state-${kind}`}
       className="rounded border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground flex items-center gap-2"
     >
       {ICONS[kind]}
       <span>{message || LABELS[kind]}</span>
     </div>
-  );
-}
+  )
+);
+
+RenderState.displayName = 'RenderState';

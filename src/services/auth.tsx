@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
+import { API_BASE } from './config';
 
 export interface AuthUser {
   accountName: string;

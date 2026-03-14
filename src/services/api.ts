@@ -29,7 +29,7 @@ type ContractPayload = {
   primary_league?: string;
 };
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
+import { API_BASE } from './config';
 const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
 
 let cachedPrimaryLeague: string | null = null;
