@@ -4,9 +4,9 @@ export function StatusDot({ status }: { status: string }) {
   return (
     <span className={cn(
       'inline-block h-2.5 w-2.5 rounded-full',
-      status === 'running' && 'bg-success',
+      status === 'running' && 'bg-success status-glow-running',
       status === 'stopped' && 'bg-muted-foreground',
-      status === 'error' && 'bg-destructive animate-pulse',
+      status === 'error' && 'bg-destructive status-glow-error',
       status === 'starting' && 'bg-warning animate-pulse-gold',
       status === 'stopping' && 'bg-warning',
     )} />

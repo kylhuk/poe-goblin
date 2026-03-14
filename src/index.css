@@ -6,92 +6,135 @@
 
 @layer base {
   :root {
-    --background: 220 15% 8%;
-    --foreground: 40 20% 85%;
+    --background: 25 10% 5%;
+    --foreground: 35 15% 75%;
 
-    --card: 220 14% 11%;
-    --card-foreground: 40 20% 85%;
+    --card: 25 8% 8%;
+    --card-foreground: 35 15% 75%;
 
-    --popover: 220 14% 11%;
-    --popover-foreground: 40 20% 85%;
+    --popover: 25 8% 8%;
+    --popover-foreground: 35 15% 75%;
 
-    --primary: 40 60% 50%;
-    --primary-foreground: 220 15% 8%;
+    --primary: 38 55% 42%;
+    --primary-foreground: 25 10% 5%;
 
-    --secondary: 220 12% 16%;
-    --secondary-foreground: 40 20% 85%;
+    --secondary: 30 8% 12%;
+    --secondary-foreground: 35 15% 75%;
 
-    --muted: 220 12% 14%;
-    --muted-foreground: 220 10% 50%;
+    --muted: 30 8% 10%;
+    --muted-foreground: 30 8% 45%;
 
-    --accent: 40 60% 50%;
-    --accent-foreground: 220 15% 8%;
+    --accent: 38 55% 42%;
+    --accent-foreground: 25 10% 5%;
 
-    --destructive: 0 70% 50%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: 0 65% 45%;
+    --destructive-foreground: 0 0% 95%;
 
-    --success: 140 60% 40%;
-    --success-foreground: 0 0% 98%;
+    --success: 140 50% 35%;
+    --success-foreground: 0 0% 95%;
 
-    --warning: 35 90% 55%;
-    --warning-foreground: 220 15% 8%;
+    --warning: 35 80% 50%;
+    --warning-foreground: 25 10% 5%;
 
-    --info: 210 60% 50%;
-    --info-foreground: 0 0% 98%;
+    --info: 210 50% 45%;
+    --info-foreground: 0 0% 95%;
 
-    --border: 220 12% 18%;
-    --input: 220 12% 18%;
-    --ring: 40 60% 50%;
+    --border: 35 15% 16%;
+    --input: 35 15% 16%;
+    --ring: 38 55% 42%;
 
     --radius: 0.375rem;
 
-    --gold: 40 60% 50%;
-    --gold-dim: 40 40% 30%;
-    --gold-bright: 40 80% 65%;
-    --chaos: 35 90% 55%;
-    --divine: 210 60% 60%;
-    --exalt: 45 80% 60%;
-    --mirror: 280 50% 60%;
+    --gold: 38 55% 42%;
+    --gold-dim: 35 35% 22%;
+    --gold-bright: 38 70% 58%;
+    --chaos: 35 80% 50%;
+    --divine: 210 50% 55%;
+    --exalt: 45 70% 55%;
+    --mirror: 280 45% 55%;
 
-    --sidebar-background: 220 15% 6%;
-    --sidebar-foreground: 40 20% 85%;
-    --sidebar-primary: 40 60% 50%;
-    --sidebar-primary-foreground: 220 15% 8%;
-    --sidebar-accent: 220 12% 14%;
-    --sidebar-accent-foreground: 40 20% 85%;
-    --sidebar-border: 220 12% 18%;
-    --sidebar-ring: 40 60% 50%;
+    --sidebar-background: 25 10% 4%;
+    --sidebar-foreground: 35 15% 75%;
+    --sidebar-primary: 38 55% 42%;
+    --sidebar-primary-foreground: 25 10% 5%;
+    --sidebar-accent: 30 8% 10%;
+    --sidebar-accent-foreground: 35 15% 75%;
+    --sidebar-border: 35 15% 16%;
+    --sidebar-ring: 38 55% 42%;
   }
 
   .dark {
-    --background: 220 15% 8%;
-    --foreground: 40 20% 85%;
-    --card: 220 14% 11%;
-    --card-foreground: 40 20% 85%;
-    --popover: 220 14% 11%;
-    --popover-foreground: 40 20% 85%;
-    --primary: 40 60% 50%;
-    --primary-foreground: 220 15% 8%;
-    --secondary: 220 12% 16%;
-    --secondary-foreground: 40 20% 85%;
-    --muted: 220 12% 14%;
-    --muted-foreground: 220 10% 50%;
-    --accent: 40 60% 50%;
-    --accent-foreground: 220 15% 8%;
-    --destructive: 0 70% 50%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 220 12% 18%;
-    --input: 220 12% 18%;
-    --ring: 40 60% 50%;
-    --sidebar-background: 220 15% 6%;
-    --sidebar-foreground: 40 20% 85%;
-    --sidebar-primary: 40 60% 50%;
-    --sidebar-primary-foreground: 220 15% 8%;
-    --sidebar-accent: 220 12% 14%;
-    --sidebar-accent-foreground: 40 20% 85%;
-    --sidebar-border: 220 12% 18%;
-    --sidebar-ring: 40 60% 50%;
+    --background: 25 10% 5%;
+    --foreground: 35 15% 75%;
+    --card: 25 8% 8%;
+    --card-foreground: 35 15% 75%;
+    --popover: 25 8% 8%;
+    --popover-foreground: 35 15% 75%;
+    --primary: 38 55% 42%;
+    --primary-foreground: 25 10% 5%;
+    --secondary: 30 8% 12%;
+    --secondary-foreground: 35 15% 75%;
+    --muted: 30 8% 10%;
+    --muted-foreground: 30 8% 45%;
+    --accent: 38 55% 42%;
+    --accent-foreground: 25 10% 5%;
+    --destructive: 0 65% 45%;
+    --destructive-foreground: 0 0% 95%;
+    --border: 35 15% 16%;
+    --input: 35 15% 16%;
+    --ring: 38 55% 42%;
+    --sidebar-background: 25 10% 4%;
+    --sidebar-foreground: 35 15% 75%;
+    --sidebar-primary: 38 55% 42%;
+    --sidebar-primary-foreground: 25 10% 5%;
+    --sidebar-accent: 30 8% 10%;
+    --sidebar-accent-foreground: 35 15% 75%;
+    --sidebar-border: 35 15% 16%;
+    --sidebar-ring: 38 55% 42%;
   }
+}
+
+/* ── Keyframes ─────────────────────────────────── */
+
+@keyframes shimmer-gold {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+
+@keyframes ambient-pulse {
+  0%, 100% { opacity: 0.85; }
+  50%      { opacity: 1; }
+}
+
+@keyframes float-up {
+  0%   { transform: translateY(0) scale(1); opacity: 0.6; }
+  50%  { opacity: 1; }
+  100% { transform: translateY(-100vh) scale(0.3); opacity: 0; }
+}
+
+@keyframes border-glow-sweep {
+  0%, 100% { border-color: hsl(35 35% 22%); box-shadow: 0 0 0 0 transparent; }
+  50%      { border-color: hsl(38 70% 58%); box-shadow: 0 0 20px -5px hsl(38 55% 42% / 0.25); }
+}
+
+@keyframes status-pulse-green {
+  0%, 100% { box-shadow: 0 0 3px hsl(140 50% 35%), 0 0 6px hsl(140 50% 35% / 0.4); }
+  50%      { box-shadow: 0 0 6px hsl(140 50% 35%), 0 0 12px hsl(140 50% 35% / 0.6); }
+}
+
+@keyframes status-pulse-red {
+  0%, 100% { box-shadow: 0 0 3px hsl(0 65% 45%), 0 0 6px hsl(0 65% 45% / 0.4); }
+  50%      { box-shadow: 0 0 6px hsl(0 65% 45%), 0 0 14px hsl(0 65% 45% / 0.7); }
+}
+
+@keyframes error-badge-pulse {
+  0%, 100% { box-shadow: 0 0 4px hsl(0 65% 45% / 0.5); }
+  50%      { box-shadow: 0 0 12px hsl(0 65% 45% / 0.8); }
+}
+
+@keyframes scale-fade-in {
+  0%   { transform: scale(0.95); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 @layer base {
@@ -113,34 +156,191 @@
   }
 }
 
-/* PoE-inspired scrollbar */
+/* ── Ambient Floating Particles ───────────────── */
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: transparent;
+  animation: float-up 18s linear infinite;
+  box-shadow:
+    120px 90vh 2px hsl(38 55% 42% / 0.3),
+    340px 95vh 1.5px hsl(38 70% 58% / 0.25),
+    560px 88vh 2px hsl(38 55% 42% / 0.2),
+    780px 92vh 1px hsl(38 70% 58% / 0.35),
+    950px 96vh 2px hsl(38 55% 42% / 0.2),
+    200px 85vh 1.5px hsl(38 70% 58% / 0.3),
+    1100px 91vh 1px hsl(38 55% 42% / 0.25),
+    450px 97vh 2px hsl(38 70% 58% / 0.2);
+}
+
+/* ── Vignette ─────────────────────────────────── */
+
+.vignette {
+  position: relative;
+}
+
+.vignette::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  background: radial-gradient(ellipse at center, transparent 55%, hsl(25 10% 3% / 0.7) 100%);
+}
+
+/* ── Card Game Effect ─────────────────────────── */
+
+.card-game {
+  --mx: 50%;
+  --my: 50%;
+  position: relative;
+  transition: transform 0.25s ease, box-shadow 0.35s ease, border-color 0.35s ease;
+  overflow: hidden;
+}
+
+.card-game::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(350px circle at var(--mx) var(--my), hsl(38 55% 42% / 0.07), transparent);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 1;
+}
+
+.card-game:hover {
+  transform: scale(1.015);
+  border-color: hsl(38 55% 42% / 0.5);
+  box-shadow:
+    0 0 20px -5px hsl(38 55% 42% / 0.2),
+    0 4px 24px -8px hsl(25 10% 0% / 0.5);
+}
+
+.card-game:hover::before {
+  opacity: 1;
+}
+
+/* ── Button Game Effect ───────────────────────── */
+
+.btn-game {
+  transition: transform 0.2s ease, box-shadow 0.3s ease, text-shadow 0.3s ease;
+}
+
+.btn-game:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 16px -4px hsl(38 55% 42% / 0.35);
+  text-shadow: 0 0 8px hsl(38 70% 58% / 0.4);
+}
+
+/* ── Tab Game Effect ──────────────────────────── */
+
+.tab-game {
+  position: relative;
+}
+
+.tab-game::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 80%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, hsl(38 70% 58%), transparent);
+  transform: translateX(-50%) scaleX(0);
+  transition: transform 0.3s ease;
+}
+
+.tab-game:hover::after,
+.tab-game[data-state="active"]::after {
+  transform: translateX(-50%) scaleX(1);
+}
+
+/* ── Gold Shimmer Text ────────────────────────── */
+
+.gold-shimmer-text {
+  background: linear-gradient(90deg, hsl(35 15% 75%) 35%, hsl(38 70% 58%) 50%, hsl(35 15% 75%) 65%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer-gold 4s ease-in-out infinite;
+}
+
+/* ── Header Glow ──────────────────────────────── */
+
+.header-glow {
+  position: relative;
+}
+
+.header-glow::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, hsl(38 55% 42% / 0.6), hsl(38 70% 58% / 0.4), hsl(38 55% 42% / 0.6), transparent);
+  animation: ambient-pulse 4s ease-in-out infinite;
+}
+
+/* ── Status Glow ──────────────────────────────── */
+
+.status-glow-running {
+  animation: status-pulse-green 2s ease-in-out infinite;
+}
+
+.status-glow-error {
+  animation: status-pulse-red 1.5s ease-in-out infinite;
+}
+
+/* ── Error Badge Pulse ────────────────────────── */
+
+.error-badge-glow {
+  animation: error-badge-pulse 2s ease-in-out infinite;
+}
+
+/* ── Scale Fade In ────────────────────────────── */
+
+.animate-scale-fade-in {
+  animation: scale-fade-in 0.4s ease-out both;
+}
+
+/* ── PoE-inspired scrollbar ───────────────────── */
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: hsl(220 15% 8%);
+  background: hsl(25 10% 5%);
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(220 12% 22%);
+  background: hsl(35 15% 18%);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(40 60% 50%);
+  background: hsl(38 55% 42%);
 }
 
-/* Glow utility */
+/* ── Glow utility ─────────────────────────────── */
+
 .glow-gold {
-  box-shadow: 0 0 12px -2px hsl(40 60% 50% / 0.3);
+  box-shadow: 0 0 12px -2px hsl(38 55% 42% / 0.3);
 }
 .glow-success {
-  box-shadow: 0 0 12px -2px hsl(140 60% 40% / 0.3);
+  box-shadow: 0 0 12px -2px hsl(140 50% 35% / 0.3);
 }
 .glow-destructive {
-  box-shadow: 0 0 12px -2px hsl(0 70% 50% / 0.3);
+  box-shadow: 0 0 12px -2px hsl(0 65% 45% / 0.3);
 }
 
-/* PoE Stash Frame */
+/* ── PoE Stash Frame ──────────────────────────── */
+
 .stash-frame {
   max-width: 695px;
 }
@@ -148,7 +348,7 @@
 .stash-grid {
   display: grid;
   gap: 1px;
-  background: hsl(40 40% 30% / 0.35);
+  background: hsl(35 35% 22% / 0.35);
   border: 2px solid hsl(var(--gold-dim));
   aspect-ratio: 1;
   border-radius: 2px;
@@ -156,7 +356,7 @@
 }
 
 .stash-empty-cell {
-  background: hsl(220 15% 6%);
+  background: hsl(25 10% 4%);
   position: relative;
 }
 
@@ -164,7 +364,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at center, hsl(220 12% 10%) 0%, hsl(220 15% 6%) 70%);
+  background: radial-gradient(circle at center, hsl(30 8% 8%) 0%, hsl(25 10% 4%) 70%);
   opacity: 0.6;
 }
 
@@ -175,9 +375,21 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: filter 0.15s ease;
+  transition: filter 0.15s ease, transform 0.15s ease;
 }
 
 .stash-item-cell:hover {
-  filter: brightness(1.3);
+  filter: brightness(1.35);
+  transform: scale(1.06);
+  z-index: 2;
+}
+
+/* ── Gear spin on hover ───────────────────────── */
+
+.gear-spin {
+  transition: transform 0.4s ease;
+}
+
+.gear-spin:hover {
+  transform: rotate(90deg);
 }

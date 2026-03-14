@@ -56,11 +56,11 @@ const UserMenu = () => {
       )}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8" data-testid="settings-trigger">
+          <Button variant="ghost" size="icon" className="h-8 w-8 gear-spin" data-testid="settings-trigger">
             <Settings className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="end" className="w-72 space-y-3">
+        <PopoverContent align="end" className="w-72 space-y-3 border-primary/30 animate-scale-fade-in">
           <div className="flex items-center gap-2 text-xs">
             {connected ? (
               <><CheckCircle2 className="h-3.5 w-3.5 text-primary" /><span className="text-muted-foreground">Connected as <strong className="text-foreground">{user.accountName}</strong></span></>
@@ -78,7 +78,7 @@ const UserMenu = () => {
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 placeholder="Paste your POESESSID"
-                className="pr-8 text-xs h-8 font-mono"
+                className="pr-8 text-xs h-8 font-mono focus:shadow-[0_0_12px_-3px_hsl(38,55%,42%,0.3)]"
               />
               <button
                 type="button"
@@ -91,10 +91,10 @@ const UserMenu = () => {
           </div>
 
           <div className="flex gap-2">
-            <Button size="sm" className="flex-1 gap-1 text-xs h-7" onClick={handleSave} disabled={!value.trim()}>
+            <Button size="sm" className="flex-1 gap-1 text-xs h-7 btn-game" onClick={handleSave} disabled={!value.trim()}>
               <Save className="h-3 w-3" /> Save
             </Button>
-            <Button size="sm" variant="destructive" className="gap-1 text-xs h-7" onClick={handleClear}>
+            <Button size="sm" variant="destructive" className="gap-1 text-xs h-7 btn-game" onClick={handleClear}>
               <Trash2 className="h-3 w-3" /> Clear
             </Button>
           </div>
