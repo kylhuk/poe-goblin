@@ -8,6 +8,12 @@ import Index from "./pages/Index.tsx";
 import AuthCallback from "./pages/AuthCallback.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
+console.log('[DEBUG-APP] Sonner:', typeof Sonner);
+console.log('[DEBUG-APP] Toaster:', typeof Toaster);
+console.log('[DEBUG-APP] AuthProvider:', typeof AuthProvider);
+console.log('[DEBUG-APP] Index:', typeof Index);
+console.log('[DEBUG-APP] AuthCallback:', typeof AuthCallback);
+
 const queryClient = new QueryClient();
 
 const App = () => (
