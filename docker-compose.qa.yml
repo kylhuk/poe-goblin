@@ -1,0 +1,54 @@
+services:
+  clickhouse:
+    ports:
+      - "18123:8123"
+      - "19000:9000"
+
+  market_harvester:
+    environment:
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
+      POE_REALMS: pc
+      POE_LEAGUES: Mirage
+      POE_ENABLE_PSAPI: "false"
+      POE_ENABLE_CXAPI: "false"
+
+  account_stash_harvester:
+    environment:
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
+      POE_ENABLE_ACCOUNT_STASH: "true"
+      POE_ACCOUNT_STASH_REALM: pc
+      POE_ACCOUNT_STASH_LEAGUE: Mirage
+      POE_ACCOUNT_STASH_ACCOUNT_NAME: qa-exile
+      POE_ACCOUNT_STASH_ACCESS_TOKEN: qa-seeded-token
+
+  scanner_worker:
+    environment:
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
+      POE_SCAN_MINUTES: "1"
+
+  ml_trainer:
+    environment:
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
+      POE_ML_AUTOMATION_ENABLED: "true"
+      POE_ML_AUTOMATION_LEAGUE: Mirage
+      POE_ML_AUTOMATION_INTERVAL_SECONDS: "120"
+      POE_ML_AUTOMATION_MAX_ITERATIONS: "1"
+      POE_ML_AUTOMATION_MAX_WALL_CLOCK_SECONDS: "180"
+      POE_ML_AUTOMATION_NO_IMPROVEMENT_PATIENCE: "1"
+      POE_ML_AUTOMATION_MIN_MDAPE_IMPROVEMENT: "0.001"
+
+  api:
+    ports:
+      - "18080:8080"
+    environment:
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
+      POE_ENABLE_ACCOUNT_STASH: "true"
+      POE_ACCOUNT_STASH_REALM: pc
+      POE_ACCOUNT_STASH_LEAGUE: Mirage
+      POE_API_CORS_ORIGINS: http://127.0.0.1:4173
+      POE_API_TRUSTED_ORIGIN_BYPASS: "true"
+      POE_API_OPERATOR_TOKEN: qa-operator-token
+    volumes:
+      - ./.state/qa:/app/.state/qa
+    networks:
+      - default

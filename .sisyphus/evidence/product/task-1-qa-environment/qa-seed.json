@@ -1,0 +1,15 @@
+{
+  "clickhouse_endpoint": "http://127.0.0.1:18123",
+  "league": "Mirage",
+  "realm": "pc",
+  "seeded_at": "2026-03-14T10:39:21.849577Z",
+  "summary": {
+    "ml_promotion_audits": 1,
+    "ml_train_runs": 1,
+    "scanner_alerts": 2,
+    "scanner_recommendations": 2,
+    "simulated_auth_session": ".sisyphus/state/qa/auth-session.json",
+    "stash_items": 3,
+    "stash_tabs": 2
+  }
+}

@@ -262,3 +262,36 @@ def test_predict_one_backend_failure_sanitized(
         )
     assert exc.value.status == 503
     assert exc.value.code == "backend_unavailable"
+
+
+def test_ml_automation_routes_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.fetch_automation_status",
+        lambda _client, *, league: {
+            "league": league,
+            "status": "completed",
+            "latestRun": None,
+            "activeModelVersion": None,
+            "promotionVerdict": None,
+            "routeHotspots": [],
+        },
+    )
+    monkeypatch.setattr(
+        "poe_trade.api.app.fetch_automation_history",
+        lambda _client, *, league: {"league": league, "history": []},
+    )
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+    status_response = app.handle(
+        method="GET",
+        raw_path="/api/v1/ml/leagues/Mirage/automation/status",
+        headers=_auth_headers(),
+        body_reader=BytesIO(b""),
+    )
+    history_response = app.handle(
+        method="GET",
+        raw_path="/api/v1/ml/leagues/Mirage/automation/history",
+        headers=_auth_headers(),
+        body_reader=BytesIO(b""),
+    )
+    assert status_response.status == 200
+    assert history_response.status == 200

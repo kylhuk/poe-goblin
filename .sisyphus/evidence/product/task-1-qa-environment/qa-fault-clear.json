@@ -1,0 +1,10 @@
+{
+  "fault_applied": null,
+  "faults": {
+    "api_unavailable": false,
+    "scanner_degraded": false,
+    "service_action_failure": false,
+    "stash_empty": false
+  },
+  "recorded_at": "2026-03-14T10:27:15.006826Z"
+}

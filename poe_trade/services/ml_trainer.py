@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import time
+from collections.abc import Sequence
+from pathlib import Path
+
+from poe_trade.config import settings as config_settings
+from poe_trade.db import ClickHouseClient
+from poe_trade.ml import workflows
+
+SERVICE_NAME = "ml_trainer"
+
+
+def _configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+
+def _write_status(payload: dict[str, object]) -> None:
+    status_path = Path(".sisyphus/state/qa/ml-trainer-last-run.json")
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = status_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog=SERVICE_NAME, description="Run autonomous ML trainer service"
+    )
+    _ = parser.add_argument("--league", default=None)
+    _ = parser.add_argument("--dataset-table", default="poe_trade.ml_price_dataset_v1")
+    _ = parser.add_argument("--model-dir", default="artifacts/ml/mirage_v1")
+    _ = parser.add_argument("--once", action="store_true")
+    _ = parser.add_argument("--interval-seconds", type=int, default=None)
+    args = parser.parse_args(argv)
+
+    _configure_logging()
+    cfg = config_settings.get_settings()
+    if not cfg.ml_automation_enabled:
+        logging.getLogger(__name__).info("%s disabled", SERVICE_NAME)
+        return 0
+    league = args.league or cfg.ml_automation_league
+    interval = args.interval_seconds or cfg.ml_automation_interval_seconds
+    client = ClickHouseClient.from_env(cfg.clickhouse_url)
+
+    while True:
+        result = workflows.train_loop(
+            client,
+            league=league,
+            dataset_table=str(args.dataset_table),
+            model_dir=str(args.model_dir),
+            max_iterations=cfg.ml_automation_max_iterations,
+            max_wall_clock_seconds=cfg.ml_automation_max_wall_clock_seconds,
+            no_improvement_patience=cfg.ml_automation_no_improvement_patience,
+            min_mdape_improvement=cfg.ml_automation_min_mdape_improvement,
+            resume=False,
+        )
+        _write_status({"league": league, "result": result})
+        logging.getLogger(__name__).info(
+            "ml trainer cycle status=%s stop_reason=%s",
+            result.get("status"),
+            result.get("stop_reason"),
+        )
+        if args.once:
+            return 0
+        time.sleep(max(interval, 1))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -20,6 +20,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - default
 
   schema_migrator:
     build: .
@@ -30,10 +32,13 @@ services:
     environment:
       POE_CLICKHOUSE_USER: ${CH_USER:-poe_ingest}
       POE_CLICKHOUSE_PASSWORD: ${CH_PASSWORD:-poe_ingest}
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
     depends_on:
       clickhouse:
         condition: service_healthy
     restart: "no"
+    networks:
+      - default
 
   market_harvester:
     build: .
@@ -45,8 +50,12 @@ services:
         condition: service_completed_successfully
     env_file:
       - .env
+    environment:
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
     volumes:
       - ./.state:/app/.state
+    networks:
+      - default
 
   account_stash_harvester:
     build: .
@@ -58,8 +67,73 @@ services:
         condition: service_completed_successfully
     env_file:
       - .env
+    environment:
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
     volumes:
       - ./.state:/app/.state
+    networks:
+      - default
+
+  scanner_worker:
+    build: .
+    command: ["service", "--name", "scanner_worker"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      schema_migrator:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
+    volumes:
+      - ./.state:/app/.state
+    networks:
+      - default
+
+  ml_trainer:
+    build: .
+    command: ["service", "--name", "ml_trainer"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      schema_migrator:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
+    volumes:
+      - ./.state:/app/.state
+      - ./artifacts:/app/artifacts
+    networks:
+      - default
+
+  api:
+    build: .
+    command: ["service", "--name", "api"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      schema_migrator:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      POE_API_BIND_HOST: "0.0.0.0"
+      POE_API_BIND_PORT: "8080"
+      POE_API_CORS_ORIGINS: ${POE_API_CORS_ORIGINS:-https://poe.lama-lan.ch}
+      POE_API_TRUSTED_ORIGIN_BYPASS: "true"
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
+    networks:
+      - default
+      - lama-lan_backend
+    restart: unless-stopped
 
 volumes:
   clickhouse_data:
+
+networks:
+  default:
+  lama-lan_backend:
+    external: true

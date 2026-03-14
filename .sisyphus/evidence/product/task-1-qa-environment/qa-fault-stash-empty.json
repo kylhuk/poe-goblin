@@ -1,0 +1,13 @@
+{
+  "fault_applied": "stash_empty",
+  "faults": {
+    "api_unavailable": false,
+    "scanner_degraded": false,
+    "service_action_failure": false,
+    "stash_empty": true
+  },
+  "recorded_at": "2026-03-14T09:49:55.405775Z",
+  "side_effects": {
+    "stash_rows": 0
+  }
+}

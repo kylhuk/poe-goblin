@@ -178,6 +178,7 @@ class Settings:
     api_bind_port: int
     api_operator_token: str
     api_cors_origins: tuple[str, ...]
+    api_trusted_origin_bypass: bool
     api_max_body_bytes: int
     api_league_allowlist: tuple[str, ...]
     enable_account_stash: bool
@@ -185,6 +186,22 @@ class Settings:
     account_stash_realm: str
     account_stash_league: str
     account_stash_poll_interval: float
+    auth_state_dir: str
+    auth_cookie_name: str
+    auth_cookie_secure: bool
+    poe_account_oauth_authorize_url: str
+    poe_account_oauth_token_url: str
+    poe_account_oauth_revoke_url: str
+    poe_account_oauth_scope: str
+    poe_account_redirect_uri: str
+    poe_account_frontend_complete_uri: str
+    ml_automation_league: str
+    ml_automation_enabled: bool
+    ml_automation_interval_seconds: int
+    ml_automation_max_iterations: int
+    ml_automation_max_wall_clock_seconds: int
+    ml_automation_no_improvement_patience: int
+    ml_automation_min_mdape_improvement: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -312,6 +329,10 @@ class Settings:
             api_cors_origins=_parse_env_list(
                 "POE_API_CORS_ORIGINS", list(constants.DEFAULT_API_CORS_ORIGINS)
             ),
+            api_trusted_origin_bypass=_parse_env_bool(
+                "POE_API_TRUSTED_ORIGIN_BYPASS",
+                constants.DEFAULT_API_TRUSTED_ORIGIN_BYPASS,
+            ),
             api_max_body_bytes=_parse_env_int(
                 "POE_API_MAX_BODY_BYTES", constants.DEFAULT_API_MAX_BODY_BYTES
             ),
@@ -333,6 +354,64 @@ class Settings:
             account_stash_poll_interval=_parse_env_float(
                 "POE_ACCOUNT_STASH_POLL_INTERVAL",
                 constants.DEFAULT_ACCOUNT_STASH_POLL_INTERVAL,
+            ),
+            auth_state_dir=_get_env_str(
+                "POE_AUTH_STATE_DIR", constants.DEFAULT_AUTH_STATE_DIR
+            ),
+            auth_cookie_name=_get_env_str(
+                "POE_AUTH_COOKIE_NAME", constants.DEFAULT_AUTH_COOKIE_NAME
+            ),
+            auth_cookie_secure=_parse_env_bool(
+                "POE_AUTH_COOKIE_SECURE", constants.DEFAULT_AUTH_COOKIE_SECURE
+            ),
+            poe_account_oauth_authorize_url=_get_env_str(
+                "POE_ACCOUNT_OAUTH_AUTHORIZE_URL",
+                constants.DEFAULT_POE_ACCOUNT_OAUTH_AUTHORIZE_URL,
+            ),
+            poe_account_oauth_token_url=_get_env_str(
+                "POE_ACCOUNT_OAUTH_TOKEN_URL",
+                constants.DEFAULT_POE_ACCOUNT_OAUTH_TOKEN_URL,
+            ),
+            poe_account_oauth_revoke_url=_get_env_str(
+                "POE_ACCOUNT_OAUTH_REVOKE_URL",
+                constants.DEFAULT_POE_ACCOUNT_OAUTH_REVOKE_URL,
+            ),
+            poe_account_oauth_scope=_get_env_str(
+                "POE_ACCOUNT_OAUTH_SCOPE",
+                constants.DEFAULT_POE_ACCOUNT_OAUTH_SCOPE,
+            ),
+            poe_account_redirect_uri=_get_env_str(
+                "POE_ACCOUNT_REDIRECT_URI", constants.DEFAULT_POE_ACCOUNT_REDIRECT_URI
+            ),
+            poe_account_frontend_complete_uri=_get_env_str(
+                "POE_ACCOUNT_FRONTEND_COMPLETE_URI",
+                constants.DEFAULT_POE_ACCOUNT_FRONTEND_COMPLETE_URI,
+            ),
+            ml_automation_league=_get_env_str(
+                "POE_ML_AUTOMATION_LEAGUE", constants.DEFAULT_ML_AUTOMATION_LEAGUE
+            ),
+            ml_automation_enabled=_parse_env_bool(
+                "POE_ML_AUTOMATION_ENABLED", constants.DEFAULT_ML_AUTOMATION_ENABLED
+            ),
+            ml_automation_interval_seconds=_parse_env_int(
+                "POE_ML_AUTOMATION_INTERVAL_SECONDS",
+                constants.DEFAULT_ML_AUTOMATION_INTERVAL_SECONDS,
+            ),
+            ml_automation_max_iterations=_parse_env_int(
+                "POE_ML_AUTOMATION_MAX_ITERATIONS",
+                constants.DEFAULT_ML_AUTOMATION_MAX_ITERATIONS,
+            ),
+            ml_automation_max_wall_clock_seconds=_parse_env_int(
+                "POE_ML_AUTOMATION_MAX_WALL_CLOCK_SECONDS",
+                constants.DEFAULT_ML_AUTOMATION_MAX_WALL_CLOCK_SECONDS,
+            ),
+            ml_automation_no_improvement_patience=_parse_env_int(
+                "POE_ML_AUTOMATION_NO_IMPROVEMENT_PATIENCE",
+                constants.DEFAULT_ML_AUTOMATION_NO_IMPROVEMENT_PATIENCE,
+            ),
+            ml_automation_min_mdape_improvement=_parse_env_float(
+                "POE_ML_AUTOMATION_MIN_MDAPE_IMPROVEMENT",
+                constants.DEFAULT_ML_AUTOMATION_MIN_MDAPE_IMPROVEMENT,
             ),
         )
 

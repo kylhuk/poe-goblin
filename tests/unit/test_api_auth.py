@@ -12,12 +12,13 @@ from poe_trade.config.settings import Settings
 from poe_trade.db import ClickHouseClient
 
 
-def _settings() -> Settings:
+def _settings(*, trusted_origin_bypass: bool = False) -> Settings:
     env = {
         "POE_API_OPERATOR_TOKEN": "phase1-token",
         "POE_API_CORS_ORIGINS": "https://app.example.com",
         "POE_API_MAX_BODY_BYTES": "32768",
         "POE_API_LEAGUE_ALLOWLIST": "Mirage",
+        "POE_API_TRUSTED_ORIGIN_BYPASS": "true" if trusted_origin_bypass else "false",
     }
     with mock.patch.dict(os.environ, env, clear=True):
         return Settings.from_env()
@@ -82,3 +83,66 @@ def test_ops_routes_require_bearer_token() -> None:
         )
     assert exc.value.code == "auth_required"
     assert exc.value.status == 401
+
+
+def test_ops_routes_allow_trusted_origin_without_bearer_when_enabled() -> None:
+    app = ApiApp(
+        _settings(trusted_origin_bypass=True),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+    response = app.handle(
+        method="GET",
+        raw_path="/api/v1/ops/contract",
+        headers={
+            "Origin": "https://app.example.com",
+            "Referer": "https://app.example.com/",
+        },
+        body_reader=BytesIO(b""),
+    )
+    assert response.status == 200
+
+
+def test_ops_routes_require_bearer_when_trusted_bypass_missing_referer() -> None:
+    app = ApiApp(
+        _settings(trusted_origin_bypass=True),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+    with pytest.raises(ApiError, match="bearer token required") as exc:
+        app.handle(
+            method="GET",
+            raw_path="/api/v1/ops/services",
+            headers={"Origin": "https://app.example.com"},
+            body_reader=BytesIO(b""),
+        )
+    assert exc.value.code == "auth_required"
+    assert exc.value.status == 401
+
+
+def test_ops_routes_require_bearer_when_referer_host_is_spoofed() -> None:
+    app = ApiApp(
+        _settings(trusted_origin_bypass=True),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+    with pytest.raises(ApiError, match="bearer token required") as exc:
+        app.handle(
+            method="GET",
+            raw_path="/api/v1/ops/services",
+            headers={
+                "Origin": "https://app.example.com",
+                "Referer": "https://app.example.com.evil/",
+            },
+            body_reader=BytesIO(b""),
+        )
+    assert exc.value.code == "auth_required"
+    assert exc.value.status == 401
+
+
+def test_auth_session_route_is_public_and_returns_disconnected() -> None:
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+    response = app.handle(
+        method="GET",
+        raw_path="/api/v1/auth/session",
+        headers={"Origin": "https://app.example.com"},
+        body_reader=BytesIO(b""),
+    )
+    assert response.status == 200

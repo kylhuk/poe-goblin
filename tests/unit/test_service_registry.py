@@ -5,6 +5,8 @@ def test_ingestion_service_registry_names() -> None:
     assert constants.SERVICE_NAMES == [
         "market_harvester",
         "account_stash_harvester",
+        "scanner_worker",
+        "ml_trainer",
         "api",
     ]
 

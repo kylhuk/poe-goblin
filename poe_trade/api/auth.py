@@ -26,4 +26,5 @@ def cors_headers(origin: str, allowed_methods: tuple[str, ...]) -> dict[str, str
         "Vary": "Origin",
         "Access-Control-Allow-Methods": ", ".join(allowed_methods),
         "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        "Access-Control-Allow-Credentials": "true",
     }

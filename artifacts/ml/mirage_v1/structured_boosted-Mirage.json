@@ -5,44 +5,11 @@
   },
   "comps_table": "poe_trade.ml_comps_v1",
   "dataset_table": "poe_trade.ml_price_dataset_v1",
-  "family_counts": [
-    {
-      "family": "logbook",
-      "rows": 325
-    },
-    {
-      "family": "map",
-      "rows": 1345
-    },
-    {
-      "family": "essence",
-      "rows": 2120
-    },
-    {
-      "family": "scarab",
-      "rows": 1743
-    },
-    {
-      "family": "fossil",
-      "rows": 788
-    },
-    {
-      "family": "flask",
-      "rows": 17460
-    },
-    {
-      "family": "other",
-      "rows": 655090
-    },
-    {
-      "family": "cluster_jewel",
-      "rows": 16912
-    }
-  ],
-  "fit_round": 29624,
+  "family_counts": [],
+  "fit_round": 29637,
   "league": "Mirage",
   "objective": "catboost_multi_quantile",
   "route": "structured_boosted",
-  "trained_at": "2026-03-13 05:40:46",
+  "trained_at": "2026-03-14 10:41:16",
   "warm_start_from": "artifacts/ml/mirage_v1/structured_boosted-Mirage.json"
 }

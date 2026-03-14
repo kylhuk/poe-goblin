@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from poe_trade.config.settings import Settings
@@ -22,6 +23,8 @@ def contract_payload(settings: Settings) -> dict[str, Any]:
             "ml_contract": "/api/v1/ml/contract",
             "ml_status": "/api/v1/ml/leagues/{league}/status",
             "ml_predict_one": "/api/v1/ml/leagues/{league}/predict-one",
+            "ml_automation_status": "/api/v1/ml/leagues/{league}/automation/status",
+            "ml_automation_history": "/api/v1/ml/leagues/{league}/automation/history",
         },
         "non_goals": [
             "no_train_loop_route",
@@ -72,6 +75,63 @@ def fetch_predict_one(
             raw.get("price_recommendation_eligible", False)
         ),
         "fallback_reason": str(raw.get("fallback_reason") or ""),
+    }
+
+
+def fetch_automation_status(client: ClickHouseClient, *, league: str) -> dict[str, Any]:
+    status_payload = fetch_status(client, league=league)
+    history_rows = _query_rows(
+        client,
+        "SELECT run_id, status, stop_reason, active_model_version, updated_at "
+        "FROM poe_trade.ml_train_runs "
+        f"WHERE league = {_quote(league)} ORDER BY updated_at DESC LIMIT 1 FORMAT JSONEachRow",
+    )
+    latest = history_rows[0] if history_rows else {}
+    return {
+        "league": league,
+        "status": status_payload.get("status"),
+        "activeModelVersion": latest.get("active_model_version")
+        or status_payload.get("active_model_version"),
+        "latestRun": {
+            "runId": latest.get("run_id"),
+            "status": latest.get("status"),
+            "stopReason": latest.get("stop_reason"),
+            "updatedAt": str(latest.get("updated_at") or "").replace(" ", "T") + "Z"
+            if latest.get("updated_at")
+            else None,
+        }
+        if latest
+        else None,
+        "promotionVerdict": status_payload.get("promotion_verdict"),
+        "routeHotspots": status_payload.get("route_hotspots") or [],
+    }
+
+
+def fetch_automation_history(
+    client: ClickHouseClient, *, league: str, limit: int = 20
+) -> dict[str, Any]:
+    rows = _query_rows(
+        client,
+        "SELECT run_id, status, stop_reason, active_model_version, tuning_config_id, eval_run_id, updated_at "
+        "FROM poe_trade.ml_train_runs "
+        f"WHERE league = {_quote(league)} ORDER BY updated_at DESC LIMIT {max(1, limit)} FORMAT JSONEachRow",
+    )
+    return {
+        "league": league,
+        "history": [
+            {
+                "runId": row.get("run_id"),
+                "status": row.get("status"),
+                "stopReason": row.get("stop_reason"),
+                "activeModelVersion": row.get("active_model_version"),
+                "tuningConfigId": row.get("tuning_config_id"),
+                "evalRunId": row.get("eval_run_id"),
+                "updatedAt": str(row.get("updated_at") or "").replace(" ", "T") + "Z"
+                if row.get("updated_at")
+                else None,
+            }
+            for row in rows
+        ],
     }
 
 
@@ -146,3 +206,23 @@ def _as_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
     return []
+
+
+def _query_rows(client: ClickHouseClient, query: str) -> list[dict[str, Any]]:
+    try:
+        payload = client.execute(query).strip()
+    except ClickHouseClientError as exc:
+        raise BackendUnavailable("status backend unavailable") from exc
+    if not payload:
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in payload.splitlines():
+        parsed = json.loads(line)
+        if isinstance(parsed, dict):
+            rows.append(parsed)
+    return rows
+
+
+def _quote(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{escaped}'"

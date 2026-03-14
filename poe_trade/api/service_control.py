@@ -79,6 +79,24 @@ def service_registry() -> tuple[ServiceDefinition, ...]:
             actions=_ALLOWED_ACTIONS,
         ),
         ServiceDefinition(
+            id="scanner_worker",
+            name="Scanner Worker",
+            description="Recommendation scanner background worker",
+            type="worker",
+            container="scanner_worker",
+            controllable=True,
+            actions=_ALLOWED_ACTIONS,
+        ),
+        ServiceDefinition(
+            id="ml_trainer",
+            name="ML Trainer",
+            description="Autonomous ML train/evaluate/promote worker",
+            type="worker",
+            container="ml_trainer",
+            controllable=True,
+            actions=_ALLOWED_ACTIONS,
+        ),
+        ServiceDefinition(
             id="api",
             name="API",
             description="Protected backend API service",
@@ -164,6 +182,34 @@ def _snapshot_for_service(
             uptime=None,
             last_crawl=_latest_ingest_iso(client, queue_prefix="account_stash:"),
             rows_in_db=_latest_account_stash_row_count(client),
+            container_info=service.container,
+            type=service.type,
+            allowed_actions=service.actions,
+        )
+    if service.id == "scanner_worker":
+        status = _ingest_status(client, queue_prefix="scanner:")
+        return ServiceSnapshot(
+            id=service.id,
+            name=service.name,
+            description=service.description,
+            status=status,
+            uptime=None,
+            last_crawl=_latest_ingest_iso(client, queue_prefix="scanner:"),
+            rows_in_db=_latest_scanner_row_count(client),
+            container_info=service.container,
+            type=service.type,
+            allowed_actions=service.actions,
+        )
+    if service.id == "ml_trainer":
+        status = _ml_trainer_status(client)
+        return ServiceSnapshot(
+            id=service.id,
+            name=service.name,
+            description=service.description,
+            status=status,
+            uptime=None,
+            last_crawl=_latest_ml_train_iso(client),
+            rows_in_db=_latest_ml_train_count(client),
             container_info=service.container,
             type=service.type,
             allowed_actions=service.actions,
@@ -266,6 +312,72 @@ def _latest_account_stash_row_count(client: ClickHouseClient) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _latest_scanner_row_count(client: ClickHouseClient) -> int | None:
+    query = (
+        "SELECT count() AS rows FROM poe_trade.scanner_recommendations "
+        "FORMAT JSONEachRow"
+    )
+    try:
+        payload = client.execute(query).strip()
+    except ClickHouseClientError:
+        return None
+    if not payload:
+        return None
+    row = json.loads(payload.splitlines()[0])
+    value = row.get("rows")
+    if value is None:
+        return None
+    return int(value)
+
+
+def _latest_ml_train_iso(client: ClickHouseClient) -> str | None:
+    query = (
+        "SELECT max(updated_at) AS ts FROM poe_trade.ml_train_runs FORMAT JSONEachRow"
+    )
+    try:
+        payload = client.execute(query).strip()
+    except ClickHouseClientError:
+        return None
+    if not payload:
+        return None
+    row = json.loads(payload.splitlines()[0])
+    raw = row.get("ts")
+    if raw is None:
+        return None
+    return str(raw).replace(" ", "T") + "Z"
+
+
+def _latest_ml_train_count(client: ClickHouseClient) -> int | None:
+    query = "SELECT count() AS rows FROM poe_trade.ml_train_runs FORMAT JSONEachRow"
+    try:
+        payload = client.execute(query).strip()
+    except ClickHouseClientError:
+        return None
+    if not payload:
+        return None
+    row = json.loads(payload.splitlines()[0])
+    value = row.get("rows")
+    if value is None:
+        return None
+    return int(value)
+
+
+def _ml_trainer_status(client: ClickHouseClient) -> ServiceStatus:
+    last = _latest_ml_train_iso(client)
+    if not last:
+        return "stopped"
+    try:
+        dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+    except ValueError:
+        return "error"
+    age_seconds = (datetime.now(timezone.utc) - dt).total_seconds()
+    if age_seconds <= 900:
+        return "running"
+    if age_seconds <= 3600:
+        return "stopping"
+    return "stopped"
 
 
 def _run_compose_action(service: ServiceDefinition, action: ServiceAction) -> None:

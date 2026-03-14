@@ -1,0 +1,11 @@
+{
+  "fault_applied": "service_action_failure",
+  "faults": {
+    "api_unavailable": false,
+    "scanner_degraded": false,
+    "service_action_failure": true,
+    "stash_empty": false
+  },
+  "recorded_at": "2026-03-14T09:49:55.566811Z",
+  "side_effects": {}
+}

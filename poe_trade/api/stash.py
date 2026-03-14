@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 from poe_trade.db import ClickHouseClient
 from poe_trade.db.clickhouse import ClickHouseClientError
@@ -15,6 +15,69 @@ _PRICE_NOTE_PATTERN = re.compile(
 
 class StashBackendUnavailable(RuntimeError):
     pass
+
+
+def stash_status_payload(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    realm: str,
+    enable_account_stash: bool,
+    session: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not enable_account_stash:
+        return {
+            "status": "feature_unavailable",
+            "connected": False,
+            "tabCount": 0,
+            "itemCount": 0,
+            "session": None,
+        }
+    if session is None:
+        return {
+            "status": "disconnected",
+            "connected": False,
+            "tabCount": 0,
+            "itemCount": 0,
+            "session": None,
+        }
+    if str(session.get("status") or "") == "session_expired":
+        return {
+            "status": "session_expired",
+            "connected": False,
+            "tabCount": 0,
+            "itemCount": 0,
+            "session": {
+                "accountName": str(session.get("account_name") or ""),
+                "expiresAt": str(session.get("expires_at") or ""),
+            },
+        }
+
+    query = (
+        "SELECT countDistinct(tab_id) AS tabs, count() AS snapshots "
+        "FROM poe_trade.raw_account_stash_snapshot "
+        f"WHERE league = '{league}' AND realm = '{realm}' FORMAT JSONEachRow"
+    )
+    try:
+        payload = client.execute(query).strip()
+    except ClickHouseClientError as exc:
+        raise StashBackendUnavailable("stash status backend unavailable") from exc
+    tabs = 0
+    snapshots = 0
+    if payload:
+        row = json.loads(payload.splitlines()[0])
+        tabs = int(row.get("tabs") or 0)
+        snapshots = int(row.get("snapshots") or 0)
+    return {
+        "status": "connected_populated" if snapshots > 0 else "connected_empty",
+        "connected": True,
+        "tabCount": tabs,
+        "itemCount": snapshots,
+        "session": {
+            "accountName": str(session.get("account_name") or ""),
+            "expiresAt": str(session.get("expires_at") or ""),
+        },
+    }
 
 
 def fetch_stash_tabs(
@@ -38,28 +101,31 @@ def fetch_stash_tabs(
 
     tabs: list[dict[str, Any]] = []
     for line in payload.splitlines():
-        row = json.loads(line)
-        stash_payload = json.loads(str(row.get("payload_json") or "{}"))
-        tab_meta = (
-            stash_payload.get("tab")
-            if isinstance(stash_payload.get("tab"), dict)
-            else {}
+        row_obj = json.loads(line)
+        row = cast(dict[str, object], row_obj if isinstance(row_obj, dict) else {})
+        stash_obj = json.loads(str(row.get("payload_json") or "{}"))
+        stash_payload = cast(
+            dict[str, object], stash_obj if isinstance(stash_obj, dict) else {}
         )
-        body = (
-            stash_payload.get("payload")
-            if isinstance(stash_payload.get("payload"), dict)
-            else {}
+        tab_node = stash_payload.get("tab")
+        tab_meta = cast(
+            dict[str, object], tab_node if isinstance(tab_node, dict) else {}
         )
-        items_raw = body.get("items") if isinstance(body.get("items"), list) else []
+        payload_node = stash_payload.get("payload")
+        body = cast(
+            dict[str, object], payload_node if isinstance(payload_node, dict) else {}
+        )
+        raw_items = body.get("items")
+        items_raw: list[dict[str, object]]
+        if isinstance(raw_items, list):
+            items_raw = [item for item in raw_items if isinstance(item, dict)]
+        else:
+            items_raw = []
         tab_name = str(
             tab_meta.get("n") or tab_meta.get("name") or row.get("tab_id") or ""
         )
         tab_type = _normalize_tab_type(str(tab_meta.get("type") or "normal"))
-        items = [
-            _to_api_item(item, tab_name=tab_name)
-            for item in items_raw
-            if isinstance(item, dict)
-        ]
+        items = [_to_api_item(item, tab_name=tab_name) for item in items_raw]
         tabs.append(
             {
                 "id": str(row.get("tab_id") or ""),

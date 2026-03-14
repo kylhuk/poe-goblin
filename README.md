@@ -69,6 +69,15 @@ Current non-goals:
 - Run Vite: `npm run dev` (binds to `http://127.0.0.1:5173`)
 - Vite proxies `/api` and `/healthz` to `http://127.0.0.1:8080` by default.
 
+## Disposable QA profile
+- `cp .env.qa.example .env.qa` once (or let `make qa-up` create it).
+- `make qa-up` starts disposable QA infra (`docker-compose.yml` + `docker-compose.qa.yml`).
+- `make qa-seed` writes deterministic scanner/stash/ML/session fixtures and evidence JSON.
+- `make qa-fault-scanner`, `make qa-fault-stash-empty`, `make qa-fault-api-unavailable`, `make qa-fault-service-action-failure` trigger reproducible fault profiles.
+- `make qa-fault-clear` resets fault flags.
+- `make qa-frontend` starts Playwright-target frontend runtime on `http://127.0.0.1:4173`.
+- `make qa-down` tears down the QA stack.
+
 ## CLI surface
 - `.venv/bin/python -m poe_trade.cli service --name market_harvester -- --help` to see the market sync daemon arguments and polling knobs.
 - `market_harvester --realm <name> --once` runs one daemon cycle directly if you prefer bypassing the CLI router.

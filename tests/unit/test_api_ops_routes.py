@@ -164,6 +164,19 @@ def test_stash_route_returns_empty_when_enabled(
         "poe_trade.api.app.fetch_stash_tabs",
         lambda _client, *, league, realm: {"stashTabs": []},
     )
+    monkeypatch.setattr(
+        "poe_trade.api.app.get_session",
+        lambda _settings, *, session_id: (
+            {
+                "session_id": session_id,
+                "status": "connected",
+                "account_name": "qa-exile",
+                "expires_at": "2099-01-01T00:00:00Z",
+            }
+            if session_id
+            else None
+        ),
+    )
     app = ApiApp(
         _settings_with_stash_enabled(),
         clickhouse_client=ClickHouseClient(endpoint="http://ch"),
@@ -171,9 +184,43 @@ def test_stash_route_returns_empty_when_enabled(
     response = app.handle(
         method="GET",
         raw_path="/api/v1/stash/tabs?league=Mirage&realm=pc",
-        headers=_auth_headers(),
+        headers={**_auth_headers(), "Cookie": "poe_session=test-session"},
         body_reader=BytesIO(b""),
     )
     body = json.loads(response.body.decode("utf-8"))
     assert response.status == 200
     assert body == {"stashTabs": []}
+
+
+def test_scanner_summary_route_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.scanner_summary_payload",
+        lambda _client: {"status": "ok", "lastRunAt": None, "recommendationCount": 0},
+    )
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+    response = app.handle(
+        method="GET",
+        raw_path="/api/v1/ops/scanner/summary",
+        headers=_auth_headers(),
+        body_reader=BytesIO(b""),
+    )
+    body = json.loads(response.body.decode("utf-8"))
+    assert response.status == 200
+    assert body["status"] == "ok"
+
+
+def test_ack_alert_route_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.ack_alert_payload",
+        lambda _client, *, alert_id: {"alertId": alert_id, "status": "acked"},
+    )
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+    response = app.handle(
+        method="POST",
+        raw_path="/api/v1/ops/alerts/alert-1/ack",
+        headers=_auth_headers(),
+        body_reader=BytesIO(b""),
+    )
+    body = json.loads(response.body.decode("utf-8"))
+    assert response.status == 200
+    assert body == {"alertId": "alert-1", "status": "acked"}

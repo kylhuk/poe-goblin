@@ -7,7 +7,7 @@ from poe_trade.analytics.reports import daily_report
 from poe_trade.config.settings import Settings
 from poe_trade.db import ClickHouseClient
 from poe_trade.db.clickhouse import ClickHouseClientError
-from poe_trade.strategy.alerts import list_alerts
+from poe_trade.strategy.alerts import ack_alert, list_alerts
 
 from .ml import fetch_predict_one, fetch_status
 from .service_control import ServiceSnapshot
@@ -28,7 +28,7 @@ def contract_payload(
     )
     return {
         "version": "v1",
-        "auth_mode": "bearer_operator_token",
+        "auth_mode": "bearer_operator_token_or_cookie_session",
         "allowed_leagues": list(settings.api_league_allowlist),
         "primary_league": primary_league,
         "routes": {
@@ -37,10 +37,20 @@ def contract_payload(
             "ops_services": "/api/v1/ops/services",
             "ops_dashboard": "/api/v1/ops/dashboard",
             "ops_messages": "/api/v1/ops/messages",
+            "ops_scanner_summary": "/api/v1/ops/scanner/summary",
+            "ops_scanner_recommendations": "/api/v1/ops/scanner/recommendations",
+            "ops_alert_ack": "/api/v1/ops/alerts/{alert_id}/ack",
             "ops_analytics": "/api/v1/ops/analytics/{kind}",
             "service_action": "/api/v1/actions/services/{service_id}/{verb}",
             "ml_predict_one": "/api/v1/ml/leagues/{league}/predict-one",
             "stash_tabs": "/api/v1/stash/tabs?league={league}&realm={realm}",
+            "stash_status": "/api/v1/stash/status?league={league}&realm={realm}",
+            "auth_login": "/api/v1/auth/login",
+            "auth_callback": "/api/v1/auth/callback",
+            "auth_session": "/api/v1/auth/session",
+            "auth_logout": "/api/v1/auth/logout",
+            "ml_automation_status": "/api/v1/ml/leagues/{league}/automation/status",
+            "ml_automation_history": "/api/v1/ml/leagues/{league}/automation/history",
         },
         "tabs": [
             "dashboard",
@@ -160,6 +170,71 @@ def analytics_scanner(client: ClickHouseClient) -> dict[str, Any]:
         "GROUP BY status ORDER BY status FORMAT JSONEachRow",
     )
     return {"rows": rows}
+
+
+def scanner_summary_payload(client: ClickHouseClient) -> dict[str, Any]:
+    rows = _safe_json_rows(
+        client,
+        "SELECT max(recorded_at) AS last_run_at, count() AS recommendation_count "
+        "FROM poe_trade.scanner_recommendations FORMAT JSONEachRow",
+    )
+    if not rows:
+        return {
+            "status": "empty",
+            "lastRunAt": None,
+            "recommendationCount": 0,
+        }
+    row = rows[0]
+    return {
+        "status": "ok",
+        "lastRunAt": str(row.get("last_run_at") or "").replace(" ", "T") + "Z"
+        if row.get("last_run_at")
+        else None,
+        "recommendationCount": int(row.get("recommendation_count") or 0),
+    }
+
+
+def scanner_recommendations_payload(
+    client: ClickHouseClient, *, limit: int = 50
+) -> dict[str, Any]:
+    rows = _safe_json_rows(
+        client,
+        "SELECT scanner_run_id, strategy_id, league, item_or_market_key, why_it_fired, buy_plan, "
+        "max_buy, transform_plan, exit_plan, execution_venue, expected_profit_chaos, expected_roi, expected_hold_time, confidence, recorded_at "
+        "FROM poe_trade.scanner_recommendations "
+        "ORDER BY recorded_at DESC "
+        f"LIMIT {max(1, limit)} FORMAT JSONEachRow",
+    )
+    mapped = [
+        {
+            "scannerRunId": str(row.get("scanner_run_id") or ""),
+            "strategyId": str(row.get("strategy_id") or ""),
+            "league": str(row.get("league") or ""),
+            "itemOrMarketKey": str(row.get("item_or_market_key") or ""),
+            "whyItFired": str(row.get("why_it_fired") or ""),
+            "buyPlan": str(row.get("buy_plan") or ""),
+            "maxBuy": row.get("max_buy"),
+            "transformPlan": str(row.get("transform_plan") or ""),
+            "exitPlan": str(row.get("exit_plan") or ""),
+            "executionVenue": str(row.get("execution_venue") or ""),
+            "expectedProfitChaos": row.get("expected_profit_chaos"),
+            "expectedRoi": row.get("expected_roi"),
+            "expectedHoldTime": str(row.get("expected_hold_time") or ""),
+            "confidence": row.get("confidence"),
+            "recordedAt": str(row.get("recorded_at") or "").replace(" ", "T") + "Z"
+            if row.get("recorded_at")
+            else None,
+        }
+        for row in rows
+    ]
+    return {"recommendations": mapped}
+
+
+def ack_alert_payload(client: ClickHouseClient, *, alert_id: str) -> dict[str, Any]:
+    if not alert_id:
+        raise ValueError("alert_id is required")
+    acked = ack_alert(client, alert_id=alert_id)
+    return {"alertId": acked, "status": "acked"}
 
 
 def analytics_alerts(client: ClickHouseClient) -> dict[str, Any]:

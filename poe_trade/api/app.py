@@ -12,15 +12,26 @@ from poe_trade.config.settings import Settings
 from poe_trade.db import ClickHouseClient
 
 from .auth import cors_headers, parse_bearer_token, validate_bearer_token
+from .auth_session import (
+    authorize_redirect,
+    begin_login,
+    clear_session,
+    create_session,
+    get_session,
+    validate_state,
+)
 from .ml import (
     BackendUnavailable,
     contract_payload,
     ensure_allowed_league,
+    fetch_automation_history,
+    fetch_automation_status,
     fetch_predict_one,
     fetch_status,
 )
 from .ops import (
     OpsBackendUnavailable,
+    ack_alert_payload,
     analytics_alerts,
     analytics_backtests,
     analytics_ingestion,
@@ -29,13 +40,15 @@ from .ops import (
     analytics_scanner,
     contract_payload as ops_contract_payload,
     dashboard_payload,
+    scanner_recommendations_payload,
+    scanner_summary_payload,
     messages_payload,
     price_check_payload,
     services_payload,
 )
 from .responses import ApiError, Response, json_error, json_response
 from .routes import Router
-from .stash import StashBackendUnavailable, fetch_stash_tabs
+from .stash import StashBackendUnavailable, fetch_stash_tabs, stash_status_payload
 from .service_control import (
     ServiceActionForbiddenError,
     ServiceActionInvalidError,
@@ -68,6 +81,21 @@ class ApiApp:
         )
         self.router.add("/api/v1/ops/messages", ("GET", "OPTIONS"), self._ops_messages)
         self.router.add(
+            "/api/v1/ops/scanner/summary",
+            ("GET", "OPTIONS"),
+            self._ops_scanner_summary,
+        )
+        self.router.add(
+            "/api/v1/ops/scanner/recommendations",
+            ("GET", "OPTIONS"),
+            self._ops_scanner_recommendations,
+        )
+        self.router.add(
+            "/api/v1/ops/alerts/{alert_id}/ack",
+            ("POST", "OPTIONS"),
+            self._ops_ack_alert,
+        )
+        self.router.add(
             "/api/v1/ops/analytics/{kind}",
             ("GET", "OPTIONS"),
             self._ops_analytics,
@@ -83,6 +111,27 @@ class ApiApp:
             self._price_check,
         )
         self.router.add("/api/v1/stash/tabs", ("GET", "OPTIONS"), self._stash_tabs)
+        self.router.add(
+            "/api/v1/stash/status",
+            ("GET", "OPTIONS"),
+            self._stash_status,
+        )
+        self.router.add("/api/v1/auth/login", ("GET", "OPTIONS"), self._auth_login)
+        self.router.add(
+            "/api/v1/auth/callback",
+            ("GET", "OPTIONS"),
+            self._auth_callback,
+        )
+        self.router.add(
+            "/api/v1/auth/session",
+            ("GET", "OPTIONS"),
+            self._auth_session,
+        )
+        self.router.add(
+            "/api/v1/auth/logout",
+            ("POST", "OPTIONS"),
+            self._auth_logout,
+        )
         self.router.add("/api/v1/ml/contract", ("GET", "OPTIONS"), self._ml_contract)
         self.router.add(
             "/api/v1/ml/leagues/{league}/status",
@@ -93,6 +142,16 @@ class ApiApp:
             "/api/v1/ml/leagues/{league}/predict-one",
             ("POST", "OPTIONS"),
             self._ml_predict_one,
+        )
+        self.router.add(
+            "/api/v1/ml/leagues/{league}/automation/status",
+            ("GET", "OPTIONS"),
+            self._ml_automation_status,
+        )
+        self.router.add(
+            "/api/v1/ml/leagues/{league}/automation/history",
+            ("GET", "OPTIONS"),
+            self._ml_automation_history,
         )
 
     def handle(
@@ -146,7 +205,7 @@ class ApiApp:
             )
 
         if protected and method != "OPTIONS":
-            self._require_auth(headers, cors)
+            self._require_auth(path=path, headers=headers, cors_headers_for_error=cors)
 
         if method == "OPTIONS":
             if protected and not cors:
@@ -165,10 +224,18 @@ class ApiApp:
 
     def _require_auth(
         self,
+        *,
+        path: str,
         headers: Mapping[str, str],
         cors_headers_for_error: Mapping[str, str],
     ) -> None:
         authorization = headers.get("Authorization")
+        if parse_bearer_token(
+            authorization
+        ) is None and self._allow_trusted_origin_without_bearer(
+            path=path, headers=headers
+        ):
+            return
         if parse_bearer_token(authorization) is None:
             raise ApiError(
                 status=401,
@@ -184,8 +251,35 @@ class ApiApp:
                 headers=dict(cors_headers_for_error),
             )
 
+    def _allow_trusted_origin_without_bearer(
+        self,
+        *,
+        path: str,
+        headers: Mapping[str, str],
+    ) -> bool:
+        if not self.settings.api_trusted_origin_bypass:
+            return False
+        if not _is_protected_path(path):
+            return False
+        origin = headers.get("Origin", "")
+        if not origin or origin not in self.settings.api_cors_origins:
+            return False
+        referer = headers.get("Referer", "")
+        if not referer:
+            return False
+        origin_parts = urlparse(origin)
+        referer_parts = urlparse(referer)
+        if not origin_parts.scheme or not origin_parts.netloc:
+            return False
+        if not referer_parts.scheme or not referer_parts.netloc:
+            return False
+        return (
+            referer_parts.scheme == origin_parts.scheme
+            and referer_parts.netloc == origin_parts.netloc
+        )
+
     def _cors_headers(self, *, origin: str | None, path: str) -> dict[str, str]:
-        if not origin or not _is_protected_path(path):
+        if not origin or not _is_cors_path(path):
             return {}
         if origin not in self.settings.api_cors_origins:
             return {}
@@ -235,6 +329,46 @@ class ApiApp:
                 message="backend unavailable",
             ) from None
         return json_response({"messages": messages})
+
+    def _ops_scanner_summary(self, _context: Mapping[str, object]) -> Response:
+        try:
+            payload = scanner_summary_payload(self.client)
+        except OpsBackendUnavailable:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        return json_response(payload)
+
+    def _ops_scanner_recommendations(self, _context: Mapping[str, object]) -> Response:
+        try:
+            payload = scanner_recommendations_payload(self.client)
+        except OpsBackendUnavailable:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        return json_response(payload)
+
+    def _ops_ack_alert(self, context: Mapping[str, object]) -> Response:
+        alert_id = str(context.get("alert_id") or "")
+        if not alert_id:
+            raise ApiError(status=400, code="invalid_input", message="invalid input")
+        try:
+            payload = ack_alert_payload(self.client, alert_id=alert_id)
+        except ValueError:
+            raise ApiError(
+                status=400, code="invalid_input", message="invalid input"
+            ) from None
+        except Exception:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        return json_response(payload)
 
     def _ops_analytics(self, context: Mapping[str, object]) -> Response:
         kind = str(context.get("kind") or "")
@@ -380,6 +514,23 @@ class ApiApp:
                 code="invalid_input",
                 message="league is required",
             )
+        session_cookie = _session_cookie_from_headers(
+            _headers_from_context(context),
+            cookie_name=self.settings.auth_cookie_name,
+        )
+        session = get_session(self.settings, session_id=session_cookie)
+        if session is None:
+            raise ApiError(
+                status=401,
+                code="auth_required",
+                message="session required",
+            )
+        if str(session.get("status") or "") == "session_expired":
+            raise ApiError(
+                status=401,
+                code="session_expired",
+                message="session expired",
+            )
         try:
             return json_response(
                 fetch_stash_tabs(self.client, league=league, realm=realm)
@@ -390,6 +541,111 @@ class ApiApp:
                 code="backend_unavailable",
                 message="backend unavailable",
             ) from None
+
+    def _stash_status(self, context: Mapping[str, object]) -> Response:
+        params = _query_params_from_context(context)
+        league = _first_query_param(
+            params,
+            "league",
+            default=(self.settings.account_stash_league or ""),
+        )
+        realm = _first_query_param(
+            params,
+            "realm",
+            default=(self.settings.account_stash_realm or "pc"),
+        )
+        session_cookie = _session_cookie_from_headers(
+            _headers_from_context(context),
+            cookie_name=self.settings.auth_cookie_name,
+        )
+        session = get_session(self.settings, session_id=session_cookie)
+        try:
+            payload = stash_status_payload(
+                self.client,
+                league=league,
+                realm=realm,
+                enable_account_stash=self.settings.enable_account_stash,
+                session=session,
+            )
+        except StashBackendUnavailable:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        return json_response(payload)
+
+    def _auth_login(self, _context: Mapping[str, object]) -> Response:
+        tx = begin_login(self.settings)
+        if not self.settings.oauth_client_id:
+            location = f"/api/v1/auth/callback?state={tx.state}&code=qa-simulated"
+        else:
+            location = authorize_redirect(self.settings, tx)
+        return Response(
+            status=302,
+            headers={"Location": location},
+            body=b"",
+        )
+
+    def _auth_callback(self, context: Mapping[str, object]) -> Response:
+        params = _query_params_from_context(context)
+        state = _first_query_param(params, "state", default="")
+        code = _first_query_param(params, "code", default="")
+        if not code:
+            raise ApiError(status=400, code="invalid_input", message="code is required")
+        if not validate_state(self.settings, state=state):
+            raise ApiError(status=400, code="invalid_state", message="invalid state")
+        session = create_session(self.settings, account_name="qa-exile")
+        location = f"{self.settings.poe_account_frontend_complete_uri}?status=success"
+        cookie = _session_set_cookie(
+            self.settings.auth_cookie_name,
+            str(session.get("session_id") or ""),
+            secure=self.settings.auth_cookie_secure,
+        )
+        return Response(
+            status=302, headers={"Location": location, "Set-Cookie": cookie}, body=b""
+        )
+
+    def _auth_session(self, context: Mapping[str, object]) -> Response:
+        session_id = _session_cookie_from_headers(
+            _headers_from_context(context),
+            cookie_name=self.settings.auth_cookie_name,
+        )
+        session = get_session(self.settings, session_id=session_id)
+        if session is None:
+            return json_response({"status": "disconnected", "accountName": None})
+        if str(session.get("status") or "") == "session_expired":
+            return json_response(
+                {
+                    "status": "session_expired",
+                    "accountName": str(session.get("account_name") or ""),
+                    "expiresAt": session.get("expires_at"),
+                }
+            )
+        return json_response(
+            {
+                "status": "connected",
+                "accountName": str(session.get("account_name") or ""),
+                "expiresAt": session.get("expires_at"),
+                "scope": session.get("scope") or [],
+            }
+        )
+
+    def _auth_logout(self, context: Mapping[str, object]) -> Response:
+        session_id = _session_cookie_from_headers(
+            _headers_from_context(context),
+            cookie_name=self.settings.auth_cookie_name,
+        )
+        clear_session(self.settings, session_id=session_id)
+        clear_cookie = _session_clear_cookie(
+            self.settings.auth_cookie_name,
+            secure=self.settings.auth_cookie_secure,
+        )
+        return Response(
+            status=200,
+            headers={"Set-Cookie": clear_cookie, "Content-Type": "application/json"},
+            body=b'{"status":"logged_out"}',
+        )
 
     def _ml_status(self, context: Mapping[str, object]) -> Response:
         league = str(context.get("league") or "")
@@ -447,6 +703,52 @@ class ApiApp:
                 message="invalid input",
                 headers=cors,
             ) from None
+        except BackendUnavailable:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+                headers=cors,
+            ) from None
+        return json_response(payload)
+
+    def _ml_automation_status(self, context: Mapping[str, object]) -> Response:
+        league = str(context.get("league") or "")
+        cors = _cors_from_context(context)
+        try:
+            ensure_allowed_league(league, self.settings)
+        except ValueError:
+            raise ApiError(
+                status=400,
+                code="league_not_allowed",
+                message="league is not allowed",
+                headers=cors,
+            ) from None
+        try:
+            payload = fetch_automation_status(self.client, league=league)
+        except BackendUnavailable:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+                headers=cors,
+            ) from None
+        return json_response(payload)
+
+    def _ml_automation_history(self, context: Mapping[str, object]) -> Response:
+        league = str(context.get("league") or "")
+        cors = _cors_from_context(context)
+        try:
+            ensure_allowed_league(league, self.settings)
+        except ValueError:
+            raise ApiError(
+                status=400,
+                code="league_not_allowed",
+                message="league is not allowed",
+                headers=cors,
+            ) from None
+        try:
+            payload = fetch_automation_history(self.client, league=league)
         except BackendUnavailable:
             raise ApiError(
                 status=503,
@@ -604,8 +906,13 @@ def _is_protected_path(path: str) -> bool:
             "/api/v1/ml/",
             "/api/v1/ops/",
             "/api/v1/actions/",
-            "/api/v1/stash/",
         )
+    )
+
+
+def _is_cors_path(path: str) -> bool:
+    return _is_protected_path(path) or path.startswith(
+        ("/api/v1/stash/", "/api/v1/auth/")
     )
 
 
@@ -631,3 +938,27 @@ def _first_query_param(
     if not values:
         return default
     return values[0]
+
+
+def _session_cookie_from_headers(
+    headers: Mapping[str, str], *, cookie_name: str
+) -> str | None:
+    raw = headers.get("Cookie")
+    if not raw:
+        return None
+    parts = [chunk.strip() for chunk in raw.split(";") if chunk.strip()]
+    for part in parts:
+        key, sep, value = part.partition("=")
+        if sep and key.strip() == cookie_name:
+            return value.strip() or None
+    return None
+
+
+def _session_set_cookie(cookie_name: str, session_id: str, *, secure: bool) -> str:
+    secure_token = "; Secure" if secure else ""
+    return f"{cookie_name}={session_id}; Path=/; HttpOnly; SameSite=Lax{secure_token}; Max-Age=604800"
+
+
+def _session_clear_cookie(cookie_name: str, *, secure: bool) -> str:
+    secure_token = "; Secure" if secure else ""
+    return f"{cookie_name}=; Path=/; HttpOnly; SameSite=Lax{secure_token}; Max-Age=0"
