@@ -14,6 +14,7 @@ import type {
   StaleListingOpp,
   StashTab,
 } from '@/types/api';
+import { getStoredToken } from '@/services/auth';
 
 type ApiErrorPayload = {
   error?: {
