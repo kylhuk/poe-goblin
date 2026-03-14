@@ -161,20 +161,21 @@
 body::after {
   content: '';
   position: fixed;
-  inset: 0;
+  width: 1px;
+  height: 1px;
+  top: 0;
+  left: 0;
   pointer-events: none;
   z-index: 9999;
   background: transparent;
-  animation: float-up 18s linear infinite;
+  animation: float-up 20s linear infinite;
   box-shadow:
-    120px 90vh 2px hsl(38 55% 42% / 0.3),
-    340px 95vh 1.5px hsl(38 70% 58% / 0.25),
-    560px 88vh 2px hsl(38 55% 42% / 0.2),
-    780px 92vh 1px hsl(38 70% 58% / 0.35),
-    950px 96vh 2px hsl(38 55% 42% / 0.2),
-    200px 85vh 1.5px hsl(38 70% 58% / 0.3),
-    1100px 91vh 1px hsl(38 55% 42% / 0.25),
-    450px 97vh 2px hsl(38 70% 58% / 0.2);
+    120px 95vh 1px 0px hsl(38 55% 42% / 0.15),
+    340px 90vh 1px 0px hsl(38 70% 58% / 0.12),
+    560px 85vh 1px 0px hsl(38 55% 42% / 0.1),
+    780px 92vh 1px 0px hsl(38 70% 58% / 0.15),
+    950px 88vh 1px 0px hsl(38 55% 42% / 0.1),
+    200px 97vh 1px 0px hsl(38 70% 58% / 0.12);
 }
 
 /* ── Vignette ─────────────────────────────────── */
