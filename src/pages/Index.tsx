@@ -7,6 +7,7 @@ import StashViewerTab from '@/components/tabs/StashViewerTab';
 import MessagesTab from '@/components/tabs/MessagesTab';
 import { LayoutDashboard, Server, BarChart3, Search, Grid3X3, MessageSquare } from 'lucide-react';
 import UserMenu from '@/components/UserMenu';
+import ApiErrorPanel from '@/components/ApiErrorPanel';
 
 const Index = () => {
   return (
