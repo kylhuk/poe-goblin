@@ -61,7 +61,7 @@ const ServicesTab = forwardRef<HTMLDivElement, Record<string, never>>(function S
   };
 
   return (
-    <div className="space-y-4" data-testid="panel-services-root">
+    <div ref={ref} className="space-y-4" data-testid="panel-services-root">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold font-sans text-foreground">Services</h2>
         <div className="flex gap-2">
