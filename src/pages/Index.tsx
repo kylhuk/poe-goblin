@@ -6,6 +6,7 @@ import PriceCheckTab from '@/components/tabs/PriceCheckTab';
 import StashViewerTab from '@/components/tabs/StashViewerTab';
 import MessagesTab from '@/components/tabs/MessagesTab';
 import { LayoutDashboard, Server, BarChart3, Search, Grid3X3, MessageSquare } from 'lucide-react';
+import UserMenu from '@/components/UserMenu';
 
 const Index = () => {
   return (
@@ -14,7 +15,10 @@ const Index = () => {
       <header className="border-b border-border bg-card/50 backdrop-blur sticky top-0 z-50">
         <div className="container flex items-center justify-between h-12 px-4">
           <h1 className="text-lg font-display text-primary tracking-wide">PoE Dashboard</h1>
-          <span className="text-xs text-muted-foreground font-mono">All data delayed · Not real-time</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground font-mono hidden sm:inline">All data delayed · Not real-time</span>
+            <UserMenu />
+          </div>
         </div>
       </header>
 
