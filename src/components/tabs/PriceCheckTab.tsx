@@ -8,7 +8,7 @@ import type { PriceCheckResponse } from '@/types/api';
 import { Search } from 'lucide-react';
 import { RenderState } from '@/components/shared/RenderState';
 
-export default function PriceCheckTab() {
+const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function PriceCheckTab(_props, ref) {
   const [text, setText] = useState('');
   const [result, setResult] = useState<PriceCheckResponse | null>(null);
   const [loading, setLoading] = useState(false);
