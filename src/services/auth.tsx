@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 import { API_BASE } from './config';
+import { logApiError } from './apiErrorLog';
 
 export interface AuthUser {
   accountName: string;
