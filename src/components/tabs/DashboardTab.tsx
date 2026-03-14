@@ -6,7 +6,7 @@ import { api } from '@/services/api';
 import type { Service, AppMessage } from '@/types/api';
 import { Activity, AlertTriangle, TrendingUp, Server } from 'lucide-react';
 
-export default function DashboardTab() {
+const DashboardTab = forwardRef<HTMLDivElement, Record<string, never>>(function DashboardTab(_props, ref) {
   const [services, setServices] = useState<Service[]>([]);
   const [messages, setMessages] = useState<AppMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
