@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 import { API_BASE } from './config';
+import { logApiError } from './apiErrorLog';
 
 export interface AuthUser {
   accountName: string;
@@ -33,13 +34,19 @@ const AuthContext = createContext<AuthContextValue>({
 export const useAuth = () => useContext(AuthContext);
 
 async function fetchSession(): Promise<SessionPayload> {
-  const response = await fetch(`${API_BASE}/api/v1/auth/session`, {
-    credentials: 'include',
-  });
-  if (!response.ok) {
+  try {
+    const response = await fetch(`${API_BASE}/api/v1/auth/session`, {
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      logApiError({ path: '/api/v1/auth/session', statusCode: response.status, errorCode: 'auth_session', message: `Session check failed (${response.status})` });
+      return { status: 'disconnected' };
+    }
+    return (await response.json()) as SessionPayload;
+  } catch (err) {
+    logApiError({ path: '/api/v1/auth/session', errorCode: 'network_error', message: err instanceof Error ? err.message : 'Network error' });
     return { status: 'disconnected' };
   }
-  return (await response.json()) as SessionPayload;
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {

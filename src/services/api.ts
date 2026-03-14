@@ -30,21 +30,30 @@ type ContractPayload = {
 };
 
 import { API_BASE } from './config';
+import { logApiError } from './apiErrorLog';
 const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
 
 let cachedPrimaryLeague: string | null = null;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = API_BASE ? `${API_BASE}${path}` : path;
-  const response = await fetch(url, {
-    ...init,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}),
-      ...(init?.headers || {}),
-    },
-  });
+  const method = init?.method || 'GET';
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}),
+        ...(init?.headers || {}),
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Network error';
+    logApiError({ method, path, errorCode: 'network_error', message });
+    throw err;
+  }
   if (!response.ok) {
     let payload: ApiErrorPayload = {};
     try {
@@ -54,6 +63,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     const code = payload.error?.code || 'request_failed';
     const message = payload.error?.message || `Request failed (${response.status})`;
+    logApiError({ method, path, statusCode: response.status, errorCode: code, message });
     throw new Error(`${code}: ${message}`);
   }
   if (response.status === 204) {

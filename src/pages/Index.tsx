@@ -7,6 +7,7 @@ import StashViewerTab from '@/components/tabs/StashViewerTab';
 import MessagesTab from '@/components/tabs/MessagesTab';
 import { LayoutDashboard, Server, BarChart3, Search, Grid3X3, MessageSquare } from 'lucide-react';
 import UserMenu from '@/components/UserMenu';
+import ApiErrorPanel from '@/components/ApiErrorPanel';
 
 const Index = () => {
   return (
@@ -17,6 +18,7 @@ const Index = () => {
           <h1 className="text-lg font-display text-primary tracking-wide">PoE Dashboard</h1>
           <div className="flex items-center gap-3">
             <span className="text-xs text-muted-foreground font-mono hidden sm:inline">All data delayed · Not real-time</span>
+            <ApiErrorPanel />
             <UserMenu />
           </div>
         </div>
