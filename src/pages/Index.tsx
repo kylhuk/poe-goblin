@@ -9,6 +9,15 @@ import { LayoutDashboard, Server, BarChart3, Search, Grid3X3, MessageSquare } fr
 import UserMenu from '@/components/UserMenu';
 import ApiErrorPanel from '@/components/ApiErrorPanel';
 
+console.log('[DEBUG] DashboardTab:', typeof DashboardTab, DashboardTab);
+console.log('[DEBUG] ServicesTab:', typeof ServicesTab, ServicesTab);
+console.log('[DEBUG] AnalyticsTab:', typeof AnalyticsTab, AnalyticsTab);
+console.log('[DEBUG] PriceCheckTab:', typeof PriceCheckTab, PriceCheckTab);
+console.log('[DEBUG] StashViewerTab:', typeof StashViewerTab, StashViewerTab);
+console.log('[DEBUG] MessagesTab:', typeof MessagesTab, MessagesTab);
+console.log('[DEBUG] UserMenu:', typeof UserMenu, UserMenu);
+console.log('[DEBUG] ApiErrorPanel:', typeof ApiErrorPanel, ApiErrorPanel);
+
 const Index = () => {
   return (
     <div className="min-h-screen bg-background">
