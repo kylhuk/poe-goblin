@@ -7,22 +7,22 @@
 @layer base {
   :root {
     --background: 25 10% 5%;
-    --foreground: 35 15% 75%;
+    --foreground: 30 8% 88%;
 
     --card: 25 8% 8%;
-    --card-foreground: 35 15% 75%;
+    --card-foreground: 30 8% 88%;
 
     --popover: 25 8% 8%;
-    --popover-foreground: 35 15% 75%;
+    --popover-foreground: 30 8% 88%;
 
     --primary: 38 55% 42%;
     --primary-foreground: 25 10% 5%;
 
     --secondary: 30 8% 12%;
-    --secondary-foreground: 35 15% 75%;
+    --secondary-foreground: 30 8% 88%;
 
     --muted: 30 8% 10%;
-    --muted-foreground: 30 8% 45%;
+    --muted-foreground: 30 8% 55%;
 
     --accent: 38 55% 42%;
     --accent-foreground: 25 10% 5%;
@@ -47,35 +47,35 @@
 
     --gold: 38 55% 42%;
     --gold-dim: 35 35% 22%;
-    --gold-bright: 38 70% 58%;
+    --gold-bright: 38 70% 65%;
     --chaos: 35 80% 50%;
     --divine: 210 50% 55%;
     --exalt: 45 70% 55%;
     --mirror: 280 45% 55%;
 
     --sidebar-background: 25 10% 4%;
-    --sidebar-foreground: 35 15% 75%;
+    --sidebar-foreground: 30 8% 88%;
     --sidebar-primary: 38 55% 42%;
     --sidebar-primary-foreground: 25 10% 5%;
     --sidebar-accent: 30 8% 10%;
-    --sidebar-accent-foreground: 35 15% 75%;
+    --sidebar-accent-foreground: 30 8% 88%;
     --sidebar-border: 35 15% 16%;
     --sidebar-ring: 38 55% 42%;
   }
 
   .dark {
     --background: 25 10% 5%;
-    --foreground: 35 15% 75%;
+    --foreground: 30 8% 88%;
     --card: 25 8% 8%;
-    --card-foreground: 35 15% 75%;
+    --card-foreground: 30 8% 88%;
     --popover: 25 8% 8%;
-    --popover-foreground: 35 15% 75%;
+    --popover-foreground: 30 8% 88%;
     --primary: 38 55% 42%;
     --primary-foreground: 25 10% 5%;
     --secondary: 30 8% 12%;
-    --secondary-foreground: 35 15% 75%;
+    --secondary-foreground: 30 8% 88%;
     --muted: 30 8% 10%;
-    --muted-foreground: 30 8% 45%;
+    --muted-foreground: 30 8% 55%;
     --accent: 38 55% 42%;
     --accent-foreground: 25 10% 5%;
     --destructive: 0 65% 45%;
@@ -84,11 +84,11 @@
     --input: 35 15% 16%;
     --ring: 38 55% 42%;
     --sidebar-background: 25 10% 4%;
-    --sidebar-foreground: 35 15% 75%;
+    --sidebar-foreground: 30 8% 88%;
     --sidebar-primary: 38 55% 42%;
     --sidebar-primary-foreground: 25 10% 5%;
     --sidebar-accent: 30 8% 10%;
-    --sidebar-accent-foreground: 35 15% 75%;
+    --sidebar-accent-foreground: 30 8% 88%;
     --sidebar-border: 35 15% 16%;
     --sidebar-ring: 38 55% 42%;
   }
@@ -190,7 +190,7 @@ body::after {
   inset: 0;
   pointer-events: none;
   z-index: 50;
-  background: radial-gradient(ellipse at center, transparent 55%, hsl(25 10% 3% / 0.7) 100%);
+  background: radial-gradient(ellipse at center, transparent 60%, hsl(25 10% 3% / 0.45) 100%);
 }
 
 /* ── Card Game Effect ─────────────────────────── */
