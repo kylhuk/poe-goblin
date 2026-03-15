@@ -18,7 +18,8 @@ import {
   type BacktestAnalytics, 
   type MlAnalytics, 
   type MlStatus,
-  type ReportAnalytics 
+  type ReportAnalytics,
+  type ReportData,
 } from '@/services/api';
 import { RenderState } from '@/components/shared/RenderState';
 
