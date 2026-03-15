@@ -4,7 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Settings, Eye, EyeOff, Save, Trash2, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { Separator } from '@/components/ui/separator';
+import { Settings, Eye, EyeOff, Save, Trash2, CheckCircle2, XCircle, AlertCircle, ExternalLink } from 'lucide-react';
+import { API_BASE } from '@/services/config';
 
 const UserMenu = () => {
   const { user, login, logout, sessionState, isLoading } = useAuth();
@@ -22,6 +24,10 @@ const UserMenu = () => {
   const handleClear = () => {
     setValue('');
     logout();
+  };
+
+  const handleOAuthLogin = () => {
+    window.location.href = `${API_BASE}/api/v1/auth/login`;
   };
 
   if (isLoading) return null;
@@ -51,6 +57,21 @@ const UserMenu = () => {
               <><XCircle className="h-3.5 w-3.5 text-destructive" /><span className="text-muted-foreground">Not connected</span></>
             )}
           </div>
+
+          {/* OAuth Login */}
+          {!connected && (
+            <>
+              <Button size="sm" className="w-full gap-2 text-xs h-8 btn-game" onClick={handleOAuthLogin}>
+                <ExternalLink className="h-3.5 w-3.5" />
+                Login with PoE Account
+              </Button>
+              <div className="flex items-center gap-2">
+                <Separator className="flex-1" />
+                <span className="text-xs text-muted-foreground">or</span>
+                <Separator className="flex-1" />
+              </div>
+            </>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="poesessid" className="text-xs">POESESSID</Label>

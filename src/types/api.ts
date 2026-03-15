@@ -143,6 +143,20 @@ export interface PriceCheckResponse {
   fallbackReason?: string;
 }
 
+// ========== ML Predict One ==========
+export interface MlPredictOneRequest {
+  clipboard: string;
+}
+
+export interface MlPredictOneResponse {
+  predictedValue: number;
+  currency: string;
+  confidence: number;
+  interval?: { p10: number | null; p90: number | null };
+  saleProbabilityPercent?: number | null;
+  fallbackReason?: string;
+}
+
 // ========== Stash Viewer ==========
 export type PriceEvaluation = 'well_priced' | 'could_be_better' | 'mispriced';
 export interface StashItem {
@@ -203,6 +217,52 @@ export interface ScannerRecommendation {
   recordedAt: string | null;
 }
 
+// ========== Scanner Filter Options ==========
+export interface ScannerFilterOptions {
+  sort?: string;
+  limit?: number;
+  min_confidence?: number;
+  strategy_id?: string;
+  league?: string;
+}
+
+// ========== Dashboard ==========
+export interface DashboardSummary {
+  running: number;
+  total: number;
+  errors: number;
+  criticalAlerts: number;
+  topOpportunity: string;
+}
+
+export interface DashboardResponse {
+  services: Service[];
+  summary: DashboardSummary;
+  topOpportunities: ScannerRecommendation[];
+}
+
+// ========== ML Automation ==========
+export interface MlAutomationRun {
+  run_id: string;
+  status: string;
+  stop_reason: string;
+  model_version: string | null;
+  started_at: string;
+  finished_at: string | null;
+  promotion_verdict: string;
+}
+
+export interface MlAutomationStatus {
+  league: string;
+  active_model_version: string | null;
+  latest_run: MlAutomationRun | null;
+  automation_enabled: boolean;
+}
+
+export interface MlAutomationHistory {
+  runs: MlAutomationRun[];
+}
+
 // ========== Messages ==========
 export type MessageSeverity = 'info' | 'warning' | 'critical';
 export interface AppMessage {
@@ -216,12 +276,13 @@ export interface AppMessage {
 
 // ========== API Service Interface ==========
 export interface ApiService {
+  getDashboard(): Promise<DashboardResponse>;
   getScannerSummary(): Promise<ScannerSummary>;
-  getScannerRecommendations(): Promise<ScannerRecommendation[]>;
+  getScannerRecommendations(filters?: ScannerFilterOptions): Promise<ScannerRecommendation[]>;
   ackAlert(alertId: string): Promise<void>;
   getStashStatus(): Promise<StashStatus>;
-  getMlAutomationStatus(): Promise<Record<string, unknown>>;
-  getMlAutomationHistory(): Promise<Record<string, unknown>>;
+  getMlAutomationStatus(): Promise<MlAutomationStatus>;
+  getMlAutomationHistory(): Promise<MlAutomationHistory>;
 
   getServices(): Promise<Service[]>;
   startService(id: string): Promise<void>;
@@ -238,6 +299,7 @@ export interface ApiService {
   simulateGearSwap(candidateItem: string): Promise<GearSwapResult>;
 
   priceCheck(req: PriceCheckRequest): Promise<PriceCheckResponse>;
+  mlPredictOne(req: MlPredictOneRequest): Promise<MlPredictOneResponse>;
 
   getStashTabs(): Promise<StashTab[]>;
   getMessages(): Promise<AppMessage[]>;

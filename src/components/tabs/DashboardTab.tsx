@@ -3,23 +3,19 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusDot, Freshness } from '@/components/shared/StatusIndicators';
 import { RenderState } from '@/components/shared/RenderState';
 import { api } from '@/services/api';
-import type { Service, AppMessage, ScannerRecommendation } from '@/types/api';
+import type { DashboardResponse } from '@/types/api';
 import { Activity, AlertTriangle, TrendingUp, Server } from 'lucide-react';
 import { useMouseGlow } from '@/hooks/useMouseGlow';
 
 const DashboardTab = forwardRef<HTMLDivElement, Record<string, never>>(function DashboardTab(_props, ref) {
-  const [services, setServices] = useState<Service[]>([]);
-  const [messages, setMessages] = useState<AppMessage[]>([]);
-  const [recommendations, setRecommendations] = useState<ScannerRecommendation[]>([]);
+  const [data, setData] = useState<DashboardResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mouseGlow = useMouseGlow();
 
   useEffect(() => {
-    Promise.all([api.getServices(), api.getMessages(), api.getScannerRecommendations()])
-      .then(([nextServices, nextMessages, nextRecs]) => {
-        setServices(nextServices);
-        setMessages(nextMessages);
-        setRecommendations(nextRecs);
+    api.getDashboard()
+      .then(d => {
+        setData(d);
         setError(null);
       })
       .catch((err: unknown) => {
@@ -27,19 +23,24 @@ const DashboardTab = forwardRef<HTMLDivElement, Record<string, never>>(function 
       });
   }, []);
 
-  const running = services.filter(s => s.status === 'running').length;
-  const errors = services.filter(s => s.status === 'error').length;
-  const criticals = messages.filter(m => m.severity === 'critical');
-  const topOpportunity = recommendations[0] ? `${recommendations[0].strategyId}: ${recommendations[0].itemOrMarketKey}` : 'No opportunities';
+  const services = data?.services ?? [];
+  const summary = data?.summary;
+  const topOpportunities = data?.topOpportunities ?? [];
+
+  const running = summary?.running ?? services.filter(s => s.status === 'running').length;
+  const total = summary?.total ?? services.length;
+  const errors = summary?.errors ?? services.filter(s => s.status === 'error').length;
+  const criticals = summary?.criticalAlerts ?? 0;
+  const topOpp = summary?.topOpportunity ?? (topOpportunities[0] ? `${topOpportunities[0].strategyId}: ${topOpportunities[0].itemOrMarketKey}` : 'No opportunities');
 
   return (
     <div ref={ref} className="space-y-6" data-testid="panel-dashboard-root">
       {/* Summary row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <SummaryCard mouseGlow={mouseGlow} icon={<Server className="h-5 w-5 text-primary transition-transform hover:scale-110" />} label="Services Running" value={`${running}/${services.length}`} />
+        <SummaryCard mouseGlow={mouseGlow} icon={<Server className="h-5 w-5 text-primary transition-transform hover:scale-110" />} label="Services Running" value={`${running}/${total}`} />
         <SummaryCard mouseGlow={mouseGlow} icon={<AlertTriangle className="h-5 w-5 text-destructive transition-transform hover:scale-110" />} label="Errors" value={String(errors)} accent={errors > 0 ? 'destructive' : undefined} />
-        <SummaryCard mouseGlow={mouseGlow} icon={<Activity className="h-5 w-5 text-warning transition-transform hover:scale-110" />} label="Critical Alerts" value={String(criticals.length)} accent={criticals.length > 0 ? 'warning' : undefined} />
-        <SummaryCard mouseGlow={mouseGlow} icon={<TrendingUp className="h-5 w-5 text-success transition-transform hover:scale-110" />} label="Top Opportunity" value={topOpportunity} />
+        <SummaryCard mouseGlow={mouseGlow} icon={<Activity className="h-5 w-5 text-warning transition-transform hover:scale-110" />} label="Critical Alerts" value={String(criticals)} accent={criticals > 0 ? 'warning' : undefined} />
+        <SummaryCard mouseGlow={mouseGlow} icon={<TrendingUp className="h-5 w-5 text-success transition-transform hover:scale-110" />} label="Top Opportunity" value={topOpp} />
       </div>
 
       {/* Service health strip */}
@@ -68,7 +69,7 @@ const DashboardTab = forwardRef<HTMLDivElement, Record<string, never>>(function 
           <p className="text-xs text-muted-foreground">Sorted by expected net chaos per minute of human time</p>
         </CardHeader>
         <CardContent className="space-y-3">
-          {recommendations.slice(0, 3).map(r => (
+          {topOpportunities.slice(0, 3).map(r => (
             <div key={`${r.scannerRunId}-${r.itemOrMarketKey}`} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-secondary/30 rounded p-3 border border-border transition-colors hover:border-primary/30">
               <div className="flex-1">
                 <span className="text-xs text-muted-foreground font-mono">{r.strategyId}</span>
@@ -79,7 +80,7 @@ const DashboardTab = forwardRef<HTMLDivElement, Record<string, never>>(function 
               </div>
             </div>
           ))}
-          {recommendations.length === 0 && <RenderState kind="empty" message="No opportunities right now" />}
+          {topOpportunities.length === 0 && <RenderState kind="empty" message="No opportunities right now" />}
         </CardContent>
       </Card>
     </div>

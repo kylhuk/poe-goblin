@@ -1,20 +1,26 @@
 import type {
   ApiService,
   AppMessage,
+  DashboardResponse,
   FairValueItem,
   GearSwapResult,
   GemState,
   GoldShadowData,
   HeistDrop,
+  MlAutomationHistory,
+  MlAutomationStatus,
+  MlPredictOneRequest,
+  MlPredictOneResponse,
   PriceCheckRequest,
   PriceCheckResponse,
+  ScannerFilterOptions,
+  ScannerRecommendation,
+  ScannerSummary,
   Service,
   SessionRecommendation,
   ShipmentRecommendation,
-  StashStatus,
-  ScannerRecommendation,
-  ScannerSummary,
   StaleListingOpp,
+  StashStatus,
   StashTab,
 } from '@/types/api';
 
@@ -208,13 +214,30 @@ export async function getAnalyticsReport() {
   return request<ReportAnalytics>('/api/v1/ops/analytics/report');
 }
 
+function buildQueryString(params: Record<string, string | number | undefined>): string {
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== '');
+  if (entries.length === 0) return '';
+  return '?' + entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
+}
+
 export const api: ApiService = {
+  async getDashboard() {
+    return request<DashboardResponse>('/api/v1/ops/dashboard');
+  },
+
   async getScannerSummary() {
     return request<ScannerSummary>('/api/v1/ops/scanner/summary');
   },
 
-  async getScannerRecommendations() {
-    const payload = await request<{ recommendations: ScannerRecommendation[] }>('/api/v1/ops/scanner/recommendations');
+  async getScannerRecommendations(filters?: ScannerFilterOptions) {
+    const qs = filters ? buildQueryString({
+      sort: filters.sort,
+      limit: filters.limit,
+      min_confidence: filters.min_confidence,
+      strategy_id: filters.strategy_id,
+      league: filters.league,
+    }) : '';
+    const payload = await request<{ recommendations: ScannerRecommendation[] }>(`/api/v1/ops/scanner/recommendations${qs}`);
     return payload.recommendations;
   },
 
@@ -231,12 +254,12 @@ export const api: ApiService = {
 
   async getMlAutomationStatus() {
     const league = await primaryLeague();
-    return request<Record<string, unknown>>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/automation/status`);
+    return request<MlAutomationStatus>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/automation/status`);
   },
 
   async getMlAutomationHistory() {
     const league = await primaryLeague();
-    return request<Record<string, unknown>>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/automation/history`);
+    return request<MlAutomationHistory>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/automation/history`);
   },
 
   async getServices() {
@@ -326,6 +349,14 @@ export const api: ApiService = {
   async priceCheck(req) {
     const league = await primaryLeague();
     return request<PriceCheckResponse>(`/api/v1/ops/leagues/${league}/price-check`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  },
+
+  async mlPredictOne(req) {
+    const league = await primaryLeague();
+    return request<MlPredictOneResponse>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/predict-one`, {
       method: 'POST',
       body: JSON.stringify(req),
     });

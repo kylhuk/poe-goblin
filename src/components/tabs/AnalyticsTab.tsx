@@ -21,6 +21,8 @@ import {
   type ReportAnalytics,
   type ReportData,
 } from '@/services/api';
+import { api } from '@/services/api';
+import type { MlAutomationStatus, MlAutomationHistory } from '@/types/api';
 import { RenderState } from '@/components/shared/RenderState';
 
 const AnalyticsTab = forwardRef<HTMLDivElement, Record<string, never>>(function AnalyticsTab(_props, ref) {
@@ -214,10 +216,21 @@ function humanize(s: string): string {
 function MlPanel() {
   const [data, setData] = useState<MlAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [automationStatus, setAutomationStatus] = useState<MlAutomationStatus | null>(null);
+  const [automationHistory, setAutomationHistory] = useState<MlAutomationHistory | null>(null);
+  const [automationError, setAutomationError] = useState<string | null>(null);
+
   useEffect(() => { 
     getAnalyticsMl()
       .then(setData)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ML analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ML analytics'));
+
+    Promise.all([api.getMlAutomationStatus(), api.getMlAutomationHistory()])
+      .then(([status, history]) => {
+        setAutomationStatus(status);
+        setAutomationHistory(history);
+      })
+      .catch(err => setAutomationError(err instanceof Error ? err.message : 'Failed to load automation data'));
   }, []);
 
   if (error) return <RenderState kind="degraded" message={error} />;
@@ -339,6 +352,102 @@ function MlPanel() {
         </Card>
       ) : (
         <p className="text-xs text-muted-foreground text-center py-2">No route hotspots</p>
+      )}
+
+      {/* ML Automation Section */}
+      <MlAutomationPanel status={automationStatus} history={automationHistory} error={automationError} />
+    </div>
+  );
+}
+
+function MlAutomationPanel({ status, history, error }: { status: MlAutomationStatus | null; history: MlAutomationHistory | null; error: string | null }) {
+  if (error) {
+    return (
+      <Card className="card-game">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-sans">ML Automation</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <RenderState kind="degraded" message={error} />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Automation Status */}
+      {status && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Automation Status</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 text-xs">
+              <div>
+                <span className="text-muted-foreground">League</span>
+                <p className="font-mono text-foreground">{status.league}</p>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Active Model</span>
+                <p className="font-mono text-foreground">{status.active_model_version ?? 'None'}</p>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Automation</span>
+                <div className="mt-0.5">
+                  <Badge className={status.automation_enabled ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-destructive/20 text-destructive border-destructive/30'}>
+                    {status.automation_enabled ? 'Enabled' : 'Disabled'}
+                  </Badge>
+                </div>
+              </div>
+              {status.latest_run && (
+                <>
+                  <div className="col-span-2 sm:col-span-3">
+                    <span className="text-muted-foreground">Latest Run</span>
+                    <div className="flex items-center gap-3 mt-1">
+                      <span className="font-mono text-foreground truncate">{status.latest_run.run_id}</span>
+                      <Badge className={statusColor(status.latest_run.status)}>{humanize(status.latest_run.status)}</Badge>
+                      <Badge className={verdictColor(status.latest_run.promotion_verdict)}>{humanize(status.latest_run.promotion_verdict)}</Badge>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Run History */}
+      {history && history.runs.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Run History</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Run ID</TableHead>
+                  <TableHead className="text-xs">Status</TableHead>
+                  <TableHead className="text-xs">Verdict</TableHead>
+                  <TableHead className="text-xs">Model</TableHead>
+                  <TableHead className="text-xs">Stop Reason</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {history.runs.map(run => (
+                  <TableRow key={run.run_id}>
+                    <TableCell className="text-xs font-mono truncate max-w-[120px]">{run.run_id}</TableCell>
+                    <TableCell><Badge className={`text-xs ${statusColor(run.status)}`}>{humanize(run.status)}</Badge></TableCell>
+                    <TableCell><Badge className={`text-xs ${verdictColor(run.promotion_verdict)}`}>{humanize(run.promotion_verdict)}</Badge></TableCell>
+                    <TableCell className="text-xs font-mono">{run.model_version ?? '—'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{humanize(run.stop_reason)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
