@@ -24,7 +24,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue>({
   user: null,
-  login: async () => {},
+  login: async () => false,
   logout: () => {},
   refreshSession: async () => {},
   sessionState: 'disconnected',

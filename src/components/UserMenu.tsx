@@ -104,8 +104,8 @@ const UserMenu = () => {
           </div>
 
           <div className="flex gap-2">
-            <Button size="sm" className="flex-1 gap-1 text-xs h-7 btn-game" onClick={handleSave} disabled={!value.trim()}>
-              <Save className="h-3 w-3" /> Save
+            <Button size="sm" className="flex-1 gap-1 text-xs h-7 btn-game" onClick={handleSave} disabled={!value.trim() || saving}>
+              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save
             </Button>
             <Button size="sm" variant="destructive" className="gap-1 text-xs h-7 btn-game" onClick={handleClear}>
               <Trash2 className="h-3 w-3" /> Clear
