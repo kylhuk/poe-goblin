@@ -1,0 +1,22 @@
+SELECT
+    toDateTime(time_bucket) AS time_bucket,
+    coalesce(league, '') AS league,
+    concat(category, ':', base_type, ':', coalesce(price_currency, 'none')) AS item_or_market_key,
+    concat(category, ':', base_type, ':', coalesce(price_currency, 'none')) AS semantic_key,
+    coalesce(median_price_amount, 0.0) * 0.14 AS expected_profit_chaos,
+    coalesce(median_price_amount, 0.0) / 11.0 AS expected_roi,
+    least(1.0, toFloat64(listing_count) / 100.0) AS confidence,
+    listing_count AS sample_count,
+    'Cluster jewel listings retain repricing room at current depth and spread' AS why_it_fired,
+    'Buy cluster jewels below median and anchor bids near top liquidity bands' AS buy_plan,
+    'Prioritize bases with repeat listings and reroll only when margin supports it' AS transform_plan,
+    'Exit as soon as cluster spread normalizes or listing depth rolls over' AS exit_plan,
+    '2h' AS expected_hold_time,
+    realm,
+    category,
+    base_type,
+    price_currency,
+    listing_count,
+    median_price_amount
+FROM poe_trade.gold_listing_ref_hour
+WHERE category = 'cluster_jewel';
