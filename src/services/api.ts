@@ -49,8 +49,33 @@ export interface BacktestAnalytics {
   totals: { summary: number; detail: number };
 }
 
+export interface MlCandidateComparison {
+  candidate_run_id: string;
+  incumbent_run_id: string;
+  candidate_avg_mdape: number;
+  incumbent_avg_mdape: number;
+  candidate_avg_interval_coverage: number;
+  incumbent_avg_interval_coverage: number;
+  mdape_improvement: number;
+  coverage_delta: number;
+  coverage_floor_ok: boolean;
+}
+
+export interface MlStatus {
+  league: string;
+  run: string;
+  status: string;
+  promotion_verdict: string;
+  stop_reason: string;
+  active_model_version: string | null;
+  latest_avg_mdape: number;
+  latest_avg_interval_coverage: number;
+  candidate_vs_incumbent: MlCandidateComparison;
+  route_hotspots: unknown[];
+}
+
 export interface MlAnalytics {
-  status: Record<string, unknown>;
+  status: MlStatus;
 }
 
 export interface ReportAnalytics {

@@ -1,7 +1,10 @@
 import { forwardRef, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Freshness } from '@/components/shared/StatusIndicators';
+import { CheckCircle2, XCircle } from 'lucide-react';
 import { 
   getAnalyticsIngestion, 
   getAnalyticsScanner, 
@@ -14,6 +17,7 @@ import {
   type AlertRow, 
   type BacktestAnalytics, 
   type MlAnalytics, 
+  type MlStatus,
   type ReportAnalytics 
 } from '@/services/api';
 import { RenderState } from '@/components/shared/RenderState';
