@@ -344,6 +344,14 @@ function MlPanel() {
   );
 }
 
+const GOLD_LABELS: { key: keyof ReportData; label: string }[] = [
+  { key: 'gold_currency_ref_hour_rows', label: 'Currency Ref' },
+  { key: 'gold_listing_ref_hour_rows', label: 'Listing Ref' },
+  { key: 'gold_liquidity_ref_hour_rows', label: 'Liquidity Ref' },
+  { key: 'gold_bulk_premium_hour_rows', label: 'Bulk Premium' },
+  { key: 'gold_set_ref_hour_rows', label: 'Set Ref' },
+];
+
 function ReportsPanel() {
   const [data, setData] = useState<ReportAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -356,16 +364,75 @@ function ReportsPanel() {
   if (error) return <RenderState kind="degraded" message={error} />;
   if (!data || data.status === 'empty') return <RenderState kind="empty" message="No report data available" />;
 
+  const r = data.report as ReportData;
+
   return (
-    <Card className="card-game">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-sans">Daily Report</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all">
-          {JSON.stringify(data.report, null, 2)}
-        </pre>
-      </CardContent>
-    </Card>
+    <div className="space-y-4">
+      {/* Header: League + PnL */}
+      <Card className="card-game">
+        <CardContent className="p-4 flex items-center justify-between">
+          <div className="text-xs">
+            <span className="text-muted-foreground">League</span>
+            <p className="font-mono text-foreground">{r.league}</p>
+          </div>
+          <div className="text-right">
+            <span className="text-xs text-muted-foreground">Realized PnL</span>
+            <p className="text-lg font-mono text-foreground">
+              {r.realized_pnl_chaos.toLocaleString()}<span className="text-xs text-muted-foreground ml-1">chaos</span>
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Activity Counts */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {([
+          ['Recommendations', r.recommendations],
+          ['Alerts', r.alerts],
+          ['Journal Events', r.journal_events],
+          ['Journal Positions', r.journal_positions],
+        ] as const).map(([label, val]) => (
+          <Card key={label} className="card-game">
+            <CardContent className="p-4 text-center">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <p className="text-lg font-mono text-foreground">{val}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Backtest Counts */}
+      <div className="grid grid-cols-2 gap-4">
+        <Card className="card-game">
+          <CardContent className="p-4 text-center">
+            <span className="text-xs text-muted-foreground">Backtest Summary Rows</span>
+            <p className="text-lg font-mono text-foreground">{r.backtest_summary_rows}</p>
+          </CardContent>
+        </Card>
+        <Card className="card-game">
+          <CardContent className="p-4 text-center">
+            <span className="text-xs text-muted-foreground">Backtest Detail Rows</span>
+            <p className="text-lg font-mono text-foreground">{r.backtest_detail_rows}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Gold Reference Data */}
+      <Card className="card-game">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-sans">Gold Reference Data</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-3 text-xs">
+            {GOLD_LABELS.map(({ key, label }) => (
+              <div key={key}>
+                <span className="text-muted-foreground">{label}</span>
+                <p className="font-mono text-foreground">{(r[key] as number).toLocaleString()} rows</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

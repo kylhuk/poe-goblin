@@ -78,9 +78,25 @@ export interface MlAnalytics {
   status: MlStatus;
 }
 
+export interface ReportData {
+  league: string;
+  recommendations: number;
+  alerts: number;
+  journal_events: number;
+  journal_positions: number;
+  backtest_summary_rows: number;
+  backtest_detail_rows: number;
+  gold_currency_ref_hour_rows: number;
+  gold_listing_ref_hour_rows: number;
+  gold_liquidity_ref_hour_rows: number;
+  gold_bulk_premium_hour_rows: number;
+  gold_set_ref_hour_rows: number;
+  realized_pnl_chaos: number;
+}
+
 export interface ReportAnalytics {
   status: string;
-  report: Record<string, unknown>;
+  report: ReportData;
 }
 
 type ApiErrorPayload = {
