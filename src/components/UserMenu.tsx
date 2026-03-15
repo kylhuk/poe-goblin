@@ -5,20 +5,29 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
-import { Settings, Eye, EyeOff, Save, Trash2, CheckCircle2, XCircle, AlertCircle, ExternalLink } from 'lucide-react';
+import { Settings, Eye, EyeOff, Save, Trash2, CheckCircle2, XCircle, AlertCircle, ExternalLink, Loader2 } from 'lucide-react';
 import { API_BASE } from '@/services/config';
+import { toast } from 'sonner';
 
 const UserMenu = () => {
   const { user, login, logout, sessionState, isLoading } = useAuth();
   const [value, setValue] = useState('');
   const [showValue, setShowValue] = useState(false);
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
     if (!value.trim()) return;
-    await login(value.trim());
-    setValue('');
-    setOpen(false);
+    setSaving(true);
+    const success = await login(value.trim());
+    setSaving(false);
+    if (success) {
+      toast.success('Connected successfully');
+      setValue('');
+      setOpen(false);
+    } else {
+      toast.error('Login failed — check your POESESSID');
+    }
   };
 
   const handleClear = () => {
