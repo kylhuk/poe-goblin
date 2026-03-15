@@ -194,6 +194,22 @@ function BacktestsPanel() {
   );
 }
 
+function statusColor(status: string): string {
+  if (status.startsWith('passed') || status === 'promoted') return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+  if (status === 'hold' || status.includes('hold')) return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+  return 'bg-destructive/20 text-destructive border-destructive/30';
+}
+
+function verdictColor(verdict: string): string {
+  if (verdict === 'promote') return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+  if (verdict === 'hold') return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+  return 'bg-destructive/20 text-destructive border-destructive/30';
+}
+
+function humanize(s: string): string {
+  return s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 function MlPanel() {
   const [data, setData] = useState<MlAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -206,17 +222,124 @@ function MlPanel() {
   if (error) return <RenderState kind="degraded" message={error} />;
   if (!data) return <RenderState kind="empty" message="No ML data available" />;
 
+  const s = data.status as MlStatus;
+  const cmp = s.candidate_vs_incumbent;
+
   return (
-    <Card className="card-game">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-sans">ML Status</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all">
-          {JSON.stringify(data.status, null, 2)}
-        </pre>
-      </CardContent>
-    </Card>
+    <div className="space-y-4">
+      {/* Status Header */}
+      <Card className="card-game">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-sans">Training Run</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 text-xs">
+            <div>
+              <span className="text-muted-foreground">League</span>
+              <p className="font-mono text-foreground">{s.league}</p>
+            </div>
+            <div className="sm:col-span-2">
+              <span className="text-muted-foreground">Run ID</span>
+              <p className="font-mono text-foreground truncate">{s.run}</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Status</span>
+              <div className="mt-0.5"><Badge className={statusColor(s.status)}>{humanize(s.status)}</Badge></div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Verdict</span>
+              <div className="mt-0.5"><Badge className={verdictColor(s.promotion_verdict)}>{humanize(s.promotion_verdict)}</Badge></div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Active Model</span>
+              <p className="font-mono text-foreground">{s.active_model_version ?? 'None'}</p>
+            </div>
+            <div className="col-span-2 sm:col-span-3">
+              <span className="text-muted-foreground">Stop Reason</span>
+              <p className="font-mono text-foreground">{humanize(s.stop_reason)}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Metrics */}
+      <div className="grid grid-cols-2 gap-4">
+        <Card className="card-game">
+          <CardContent className="p-4 text-center">
+            <span className="text-xs text-muted-foreground">Avg MDAPE</span>
+            <p className="text-lg font-mono text-foreground">{(s.latest_avg_mdape * 100).toFixed(1)}%</p>
+          </CardContent>
+        </Card>
+        <Card className="card-game">
+          <CardContent className="p-4 text-center">
+            <span className="text-xs text-muted-foreground">Interval Coverage</span>
+            <p className="text-lg font-mono text-foreground">{(s.latest_avg_interval_coverage * 100).toFixed(1)}%</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Candidate vs Incumbent */}
+      {cmp && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Candidate vs Incumbent</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Metric</TableHead>
+                  <TableHead className="text-xs">Candidate</TableHead>
+                  <TableHead className="text-xs">Incumbent</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow>
+                  <TableCell className="text-xs text-muted-foreground">Run ID</TableCell>
+                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.candidate_run_id}</TableCell>
+                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.incumbent_run_id}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-xs text-muted-foreground">Avg MDAPE</TableCell>
+                  <TableCell className="text-xs font-mono">{(cmp.candidate_avg_mdape * 100).toFixed(1)}%</TableCell>
+                  <TableCell className="text-xs font-mono">{(cmp.incumbent_avg_mdape * 100).toFixed(1)}%</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-xs text-muted-foreground">Interval Coverage</TableCell>
+                  <TableCell className="text-xs font-mono">{(cmp.candidate_avg_interval_coverage * 100).toFixed(1)}%</TableCell>
+                  <TableCell className="text-xs font-mono">{(cmp.incumbent_avg_interval_coverage * 100).toFixed(1)}%</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+            <div className="flex items-center gap-6 px-4 py-3 border-t border-border text-xs">
+              <span className="text-muted-foreground">MDAPE Δ: <span className="font-mono text-foreground">{(cmp.mdape_improvement * 100).toFixed(1)}%</span></span>
+              <span className="text-muted-foreground">Coverage Δ: <span className="font-mono text-foreground">{(cmp.coverage_delta * 100).toFixed(1)}%</span></span>
+              <span className="text-muted-foreground flex items-center gap-1">
+                Floor OK: {cmp.coverage_floor_ok
+                  ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                  : <XCircle className="h-3.5 w-3.5 text-destructive" />}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Route Hotspots */}
+      {s.route_hotspots.length > 0 ? (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Route Hotspots</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all">
+              {JSON.stringify(s.route_hotspots, null, 2)}
+            </pre>
+          </CardContent>
+        </Card>
+      ) : (
+        <p className="text-xs text-muted-foreground text-center py-2">No route hotspots</p>
+      )}
+    </div>
   );
 }
 
