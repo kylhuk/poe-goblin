@@ -34,6 +34,12 @@ def test_list_strategy_packs_discovers_initial_packs() -> None:
     }
     assert all(pack.discover_sql_path.exists() for pack in packs)
     assert all(pack.backtest_sql_path.exists() for pack in packs)
+    assert all(pack.candidate_sql_path.name == "candidate.sql" for pack in packs)
+    canonical_candidate_ids = {pack.strategy_id for pack in packs}
+    discovered_candidate_ids = {
+        pack.strategy_id for pack in packs if pack.candidate_sql_path.exists()
+    }
+    assert discovered_candidate_ids == canonical_candidate_ids
     bulk_essence = next(pack for pack in packs if pack.strategy_id == "bulk_essence")
     assert bulk_essence.min_expected_profit_chaos == 20.0
     assert bulk_essence.min_expected_roi == 0.2
@@ -68,6 +74,7 @@ def test_set_strategy_enabled_updates_metadata(tmp_path, monkeypatch) -> None:
         notes_path=Path("notes.md"),
         discover_sql_path=Path("discover.sql"),
         backtest_sql_path=Path("backtest.sql"),
+        candidate_sql_path=Path("candidate.sql"),
     )
 
     monkeypatch.setattr(registry, "list_strategy_packs", lambda: [pack])
@@ -77,12 +84,75 @@ def test_set_strategy_enabled_updates_metadata(tmp_path, monkeypatch) -> None:
     assert "enabled = false" in metadata_path.read_text(encoding="utf-8")
 
 
+def test_candidate_sql_helper_prefers_canonical_path_when_present(tmp_path) -> None:
+    registry = importlib.import_module("poe_trade.strategy.registry")
+    canonical_sql = tmp_path / "candidate.sql"
+    canonical_sql.write_text("SELECT 1 AS canonical", encoding="utf-8")
+    backtest_sql = tmp_path / "backtest.sql"
+    backtest_sql.write_text("SELECT 1 AS fallback", encoding="utf-8")
+
+    pack = registry.StrategyPack(
+        strategy_id="demo",
+        name="Demo",
+        enabled=True,
+        priority=1,
+        latency_class="delayed",
+        execution_venue="manual_trade",
+        capital_tier="bootstrap",
+        min_expected_profit_chaos=10.0,
+        min_expected_roi=0.1,
+        min_confidence=0.5,
+        min_sample_count=5,
+        cooldown_minutes=60,
+        requires_journal=False,
+        metadata_path=tmp_path / "strategy.toml",
+        notes_path=tmp_path / "notes.md",
+        discover_sql_path=tmp_path / "discover.sql",
+        backtest_sql_path=backtest_sql,
+        candidate_sql_path=canonical_sql,
+    )
+
+    assert registry.get_candidate_sql_path(pack) == canonical_sql
+    assert registry.load_candidate_sql(pack) == "SELECT 1 AS canonical"
+
+
+def test_candidate_sql_helper_falls_back_to_backtest_path(tmp_path) -> None:
+    registry = importlib.import_module("poe_trade.strategy.registry")
+    backtest_sql = tmp_path / "backtest.sql"
+    backtest_sql.write_text("SELECT 1 AS fallback", encoding="utf-8")
+
+    pack = registry.StrategyPack(
+        strategy_id="demo",
+        name="Demo",
+        enabled=True,
+        priority=1,
+        latency_class="delayed",
+        execution_venue="manual_trade",
+        capital_tier="bootstrap",
+        min_expected_profit_chaos=10.0,
+        min_expected_roi=0.1,
+        min_confidence=0.5,
+        min_sample_count=5,
+        cooldown_minutes=60,
+        requires_journal=False,
+        metadata_path=tmp_path / "strategy.toml",
+        notes_path=tmp_path / "notes.md",
+        discover_sql_path=tmp_path / "discover.sql",
+        backtest_sql_path=backtest_sql,
+        candidate_sql_path=tmp_path / "candidate.sql",
+    )
+
+    assert registry.get_candidate_sql_path(pack) == backtest_sql
+    assert registry.load_candidate_sql(pack) == "SELECT 1 AS fallback"
+
+
 def test_all_backtest_sql_files_use_shared_contract_columns() -> None:
     registry = importlib.import_module("poe_trade.strategy.registry")
     required_columns = (
         "time_bucket",
         "league",
         "item_or_market_key",
+        "semantic_key",
         "expected_profit_chaos",
         "expected_roi",
         "confidence",
@@ -94,3 +164,62 @@ def test_all_backtest_sql_files_use_shared_contract_columns() -> None:
         assert "SELECT *" not in sql
         for column in required_columns:
             assert column in sql
+
+
+def test_candidate_sql_files_use_explicit_scanner_columns() -> None:
+    registry = importlib.import_module("poe_trade.strategy.registry")
+    required_aliases = (
+        "AS TIME_BUCKET",
+        "AS LEAGUE",
+        "AS ITEM_OR_MARKET_KEY",
+        "AS SEMANTIC_KEY",
+        "AS EXPECTED_PROFIT_CHAOS",
+        "AS EXPECTED_ROI",
+        "AS CONFIDENCE",
+        "AS SAMPLE_COUNT",
+        "AS WHY_IT_FIRED",
+        "AS BUY_PLAN",
+        "AS EXIT_PLAN",
+        "AS EXPECTED_HOLD_TIME",
+    )
+    sample_terms = (
+        "bulk_listing_count",
+        "listing_count",
+        "small_listing_count",
+        "observed_samples",
+    )
+
+    for pack in registry.list_strategy_packs():
+        if not pack.candidate_sql_path.exists():
+            continue
+        sql = pack.candidate_sql_path.read_text(encoding="utf-8")
+        upper_sql = sql.upper()
+        assert "SELECT *" not in upper_sql
+        for alias in required_aliases:
+            assert alias in upper_sql
+        assert any(term in sql for term in sample_terms)
+
+
+def test_enabled_non_journal_discover_sql_contract() -> None:
+    registry = importlib.import_module("poe_trade.strategy.registry")
+    required_aliases = (
+        "AS TIME_BUCKET",
+        "AS LEAGUE",
+        "AS ITEM_OR_MARKET_KEY",
+        "AS EXPECTED_PROFIT_CHAOS",
+        "AS EXPECTED_ROI",
+        "AS CONFIDENCE",
+        "AS SAMPLE_COUNT",
+        "AS WHY_IT_FIRED",
+        "AS BUY_PLAN",
+        "AS EXIT_PLAN",
+    )
+
+    for pack in registry.list_strategy_packs():
+        if not pack.enabled or pack.requires_journal:
+            continue
+        sql = pack.discover_sql_path.read_text(encoding="utf-8")
+        upper_sql = sql.upper()
+        assert "SELECT *" not in upper_sql
+        for alias in required_aliases:
+            assert alias in upper_sql
