@@ -62,8 +62,8 @@ This project is built with:
 
 ## Known Limitations & Stubs
 
-- **CORS**: The live frontend at `poe.lama-lan.ch` is currently blocked by CORS when accessing `api.poe.lama-lan.ch`. Use local dev or QA environments for full functionality.
-- **Feature Stubs**: Several analytics panels (Session, Diagnostics) and price-check comparables are currently `feature_unavailable` or return empty results from the backend.
+- **CORS**: The live frontend at `https://poe.lama-lan.ch` is now allowed by default. Use `POE_API_CORS_ORIGINS` to add more origins if needed.
+- **Feature Stubs**: Several analytics panels (Session) and price-check comparables are currently `feature_unavailable` or return empty results from the backend. Diagnostics are now available via the `goldDiagnostics` payload.
 - **Opportunities**: The dashboard "Top Opportunities" are now scanner-backed via the API, but the frontend may still render them from the messages/alerts feed in some views.
 
 ## How can I deploy this project?

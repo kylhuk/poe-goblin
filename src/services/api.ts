@@ -62,6 +62,7 @@ type ApiErrorPayload = {
   error?: {
     code?: string;
     message?: string;
+    details?: unknown;
   };
 };
 
@@ -102,7 +103,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       payload = {};
     }
     const code = payload.error?.code || 'request_failed';
-    const message = payload.error?.message || `Request failed (${response.status})`;
+    const baseMessage = payload.error?.message || `Request failed (${response.status})`;
+    const detail = formatApiErrorDetail(payload.error?.details);
+    const message = detail ? `${baseMessage} (${detail})` : baseMessage;
     logApiError({ method, path, statusCode: response.status, errorCode: code, message });
     throw new Error(`${code}: ${message}`);
   }
@@ -110,6 +113,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return {} as T;
   }
   return (await response.json()) as T;
+}
+
+function formatApiErrorDetail(details: unknown): string | null {
+  if (typeof details === 'string' && details.trim()) {
+    return details.trim();
+  }
+  if (
+    details &&
+    typeof details === 'object' &&
+    'reason' in details &&
+    typeof details.reason === 'string' &&
+    details.reason.trim()
+  ) {
+    return details.reason.trim();
+  }
+  return null;
 }
 
 async function primaryLeague(): Promise<string> {
