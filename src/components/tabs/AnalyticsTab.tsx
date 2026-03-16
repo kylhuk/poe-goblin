@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useState } from 'react';
 import { Slider } from '@/components/ui/slider';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -79,11 +79,12 @@ export default AnalyticsTab;
 function IngestionPanel() {
   const [items, setItems] = useState<IngestionRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsIngestion()
       .then(setItems)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ingestion analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ingestion analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (items.length === 0) return <RenderState kind="empty" message="No ingestion data available" />;
@@ -113,11 +114,12 @@ function IngestionPanel() {
 function ScannerPanel() {
   const [items, setItems] = useState<ScannerRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsScanner()
       .then(setItems)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load scanner analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load scanner analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (items.length === 0) return <RenderState kind="empty" message="No scanner data available" />;
@@ -141,11 +143,12 @@ function ScannerPanel() {
 function AlertsPanel() {
   const [items, setItems] = useState<AlertRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsAlerts()
       .then(setItems)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load alerts analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load alerts analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (items.length === 0) return <RenderState kind="empty" message="No alerts data available" />;
@@ -172,11 +175,12 @@ function AlertsPanel() {
 function BacktestsPanel() {
   const [data, setData] = useState<BacktestAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsBacktests()
       .then(setData)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load backtests analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load backtests analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (!data || data.rows.length === 0) return <RenderState kind="empty" message="No backtest data available" />;
@@ -249,7 +253,7 @@ function MlPanel() {
   const [automationHistory, setAutomationHistory] = useState<MlAutomationHistory | null>(null);
   const [automationError, setAutomationError] = useState<string | null>(null);
 
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsMl()
       .then(setData)
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ML analytics'));
@@ -261,6 +265,7 @@ function MlPanel() {
       })
       .catch(err => setAutomationError(err instanceof Error ? err.message : 'Failed to load automation data'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (!data?.status) return <RenderState kind="empty" message="No ML data available" />;
@@ -740,11 +745,12 @@ const GOLD_LABELS: { key: keyof ReportData; label: string }[] = [
 function ReportsPanel() {
   const [data, setData] = useState<ReportAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsReport()
       .then(setData)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load report analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load report analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (!data || data.status === 'empty') return <RenderState kind="empty" message="No report data available" />;

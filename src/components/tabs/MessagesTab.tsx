@@ -41,7 +41,7 @@ const MessagesTab = forwardRef<HTMLDivElement, Record<string, never>>(function M
 
   useEffect(() => {
     load();
-    const iv = setInterval(load, 30_000);
+    const iv = setInterval(load, 5_000);
     return () => clearInterval(iv);
   }, [load]);
 

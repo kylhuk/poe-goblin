@@ -1,4 +1,4 @@
-import React, { forwardRef, useEffect, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { StatusDot, Freshness } from '../shared/StatusIndicators';
 import { RenderState } from '../shared/RenderState';
@@ -12,7 +12,7 @@ const DashboardTab = forwardRef<HTMLDivElement, Record<string, never>>(function 
   const [error, setError] = useState<string | null>(null);
   const mouseGlow = useMouseGlow();
 
-  useEffect(() => {
+  const load = useCallback(() => {
     api.getDashboard()
       .then((response) => {
         setData(response);
@@ -22,6 +22,12 @@ const DashboardTab = forwardRef<HTMLDivElement, Record<string, never>>(function 
         setError(err instanceof Error ? err.message : 'Backend unavailable');
       });
   }, []);
+
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 5_000);
+    return () => clearInterval(iv);
+  }, [load]);
 
   const services = data?.services ?? [];
   const summary = data?.summary;
