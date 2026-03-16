@@ -74,21 +74,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   /* Supabase auth state */
   const [supabaseUser, setSupabaseUser] = useState<User | null>(null);
   const [supabaseReady, setSupabaseReady] = useState(false);
+  const [isApproved, setIsApproved] = useState(false);
+
+  const checkApproval = useCallback(async (userId: string) => {
+    const { data } = await supabase
+      .from('approved_users')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
+    setIsApproved(!!data);
+  }, []);
 
   useEffect(() => {
     // Set up listener FIRST
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSupabaseUser(session?.user ?? null);
+      if (session?.user) {
+        checkApproval(session.user.id);
+      } else {
+        setIsApproved(false);
+      }
     });
 
     // Then check existing session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSupabaseUser(session?.user ?? null);
-      setSupabaseReady(true);
+      if (session?.user) {
+        checkApproval(session.user.id).then(() => setSupabaseReady(true));
+      } else {
+        setSupabaseReady(true);
+      }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [checkApproval]);
 
   const signIn = useCallback(async (email: string, password: string): Promise<string | null> => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
