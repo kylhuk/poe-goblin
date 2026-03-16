@@ -202,6 +202,9 @@ class Settings:
     ml_automation_max_wall_clock_seconds: int
     ml_automation_no_improvement_patience: int
     ml_automation_min_mdape_improvement: float
+    poe_enable_poeninja_snapshot: bool
+    poe_poeninja_snapshot_league: str | None
+    poe_ml_dataset_rebuild_interval_seconds: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -412,6 +415,18 @@ class Settings:
             ml_automation_min_mdape_improvement=_parse_env_float(
                 "POE_ML_AUTOMATION_MIN_MDAPE_IMPROVEMENT",
                 constants.DEFAULT_ML_AUTOMATION_MIN_MDAPE_IMPROVEMENT,
+            ),
+            poe_enable_poeninja_snapshot=_parse_env_bool(
+                "POE_ENABLE_POENINJA_SNAPSHOT",
+                constants.DEFAULT_POE_ENABLE_POENINJA_SNAPSHOT,
+            ),
+            poe_poeninja_snapshot_league=os.getenv(
+                "POE_POENINJA_SNAPSHOT_LEAGUE",
+                constants.DEFAULT_POE_POENINJA_SNAPSHOT_LEAGUE,
+            ),
+            poe_ml_dataset_rebuild_interval_seconds=_parse_env_int(
+                "POE_ML_DATASET_REBUILD_INTERVAL_SECONDS",
+                constants.DEFAULT_POE_ML_DATASET_REBUILD_INTERVAL_SECONDS,
             ),
         )
 
