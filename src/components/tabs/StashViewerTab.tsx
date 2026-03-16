@@ -77,7 +77,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
   const [activeTab, setActiveTab] = useState(0);
   const [schemaOpen, setSchemaOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
+  const load = useCallback(() => {
     api.getStashStatus()
       .then(async (stashStatus) => {
         setStatus(stashStatus.status);
@@ -94,6 +94,12 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
         setStatus('degraded');
       });
   }, []);
+
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 5_000);
+    return () => clearInterval(iv);
+  }, [load]);
 
   const tab = tabs[activeTab];
   const grid = tab ? getGridSize(tab.type) : 12;

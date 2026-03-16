@@ -745,11 +745,12 @@ const GOLD_LABELS: { key: keyof ReportData; label: string }[] = [
 function ReportsPanel() {
   const [data, setData] = useState<ReportAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsReport()
       .then(setData)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load report analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load report analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (!data || data.status === 'empty') return <RenderState kind="empty" message="No report data available" />;
