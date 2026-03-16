@@ -678,8 +678,12 @@ function SearchHistoryPanel() {
     setLeague('');
     setPriceMin(undefined);
     setPriceMax(undefined);
+    setCommittedPriceMin(undefined);
+    setCommittedPriceMax(undefined);
     setTimeFrom(undefined);
     setTimeTo(undefined);
+    setCommittedTimeFrom(undefined);
+    setCommittedTimeTo(undefined);
     setSort('added_on');
     setOrder('desc');
   };
