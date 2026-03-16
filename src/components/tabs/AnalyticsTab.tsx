@@ -295,7 +295,7 @@ function MlPanel() {
         <Card className="card-game">
           <CardContent className="p-4 text-center">
             <span className="text-xs text-muted-foreground">Interval Coverage</span>
-            <p className="text-lg font-mono text-foreground">{(s.latest_avg_interval_coverage * 100).toFixed(1)}%</p>
+            <p className="text-lg font-mono text-foreground">{s.latest_avg_interval_coverage != null ? (s.latest_avg_interval_coverage * 100).toFixed(1) : '—'}%</p>
           </CardContent>
         </Card>
       </div>
