@@ -799,7 +799,7 @@ function SearchHistoryPanel() {
                   buckets={data.histograms.datetime}
                   formatLabel={value => formatShortDate(String(value))}
                 />
-                {hasTimeRange && selectedTimeMin !== null && selectedTimeMax !== null ? (
+                {hasTimeRange ? (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs text-muted-foreground gap-3">
                       <span>{formatShortDate(new Date(toUnixMs(timeFrom) ?? timeRangeMin!).toISOString())}</span>
