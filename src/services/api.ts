@@ -116,9 +116,8 @@ type ContractPayload = {
   primary_league?: string;
 };
 
-import { API_BASE } from './config';
 import { logApiError } from './apiErrorLog';
-const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
+import { supabase } from '@/integrations/supabase/client';
 
 let cachedPrimaryLeague: string | null = null;
 
