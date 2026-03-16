@@ -1,8 +1,25 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
-import { API_BASE } from './config';
 import { logApiError } from './apiErrorLog';
+
+const PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+const PROXY_URL = `https://${PROJECT_ID}.supabase.co/functions/v1/api-proxy`;
+
+async function proxyFetch(path: string, init?: RequestInit): Promise<Response> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  return fetch(PROXY_URL, {
+    ...init,
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      'x-proxy-path': path,
+      ...(init?.headers || {}),
+    },
+  });
+}
 
 export interface AuthUser {
   accountName: string;
@@ -54,9 +71,7 @@ export const useAuth = () => useContext(AuthContext);
 
 async function fetchSession(): Promise<SessionPayload> {
   try {
-    const response = await fetch(`${API_BASE}/api/v1/auth/session`, {
-      credentials: 'include',
-    });
+    const response = await proxyFetch('/api/v1/auth/session');
     if (!response.ok) {
       logApiError({ path: '/api/v1/auth/session', statusCode: response.status, errorCode: 'auth_session', message: `Session check failed (${response.status})` });
       return { status: 'disconnected' };
@@ -146,11 +161,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = useCallback(async (poeSessionId: string): Promise<boolean> => {
     try {
-      const response = await fetch(`${API_BASE}/api/v1/auth/session`, {
+      const response = await proxyFetch('/api/v1/auth/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ poeSessionId }),
-        credentials: 'include',
       });
       if (!response.ok) {
         logApiError({ path: '/api/v1/auth/session', statusCode: response.status, errorCode: 'auth_login', message: `Login failed (${response.status})` });
@@ -164,9 +178,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshSession]);
 
   const logout = useCallback(() => {
-    fetch(`${API_BASE}/api/v1/auth/logout`, {
+    proxyFetch('/api/v1/auth/logout', {
       method: 'POST',
-      credentials: 'include',
     }).finally(() => {
       setUser(null);
       setSessionState('disconnected');
