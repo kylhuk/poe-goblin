@@ -143,11 +143,12 @@ function ScannerPanel() {
 function AlertsPanel() {
   const [items, setItems] = useState<AlertRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsAlerts()
       .then(setItems)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load alerts analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load alerts analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (items.length === 0) return <RenderState kind="empty" message="No alerts data available" />;
