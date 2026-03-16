@@ -1,0 +1,1003 @@
+diff --git a/src/components/tabs/AnalyticsTab.tsx b/src/components/tabs/AnalyticsTab.tsx
+index dd0ec95..5c923be 100644
+--- a/src/components/tabs/AnalyticsTab.tsx
++++ b/src/components/tabs/AnalyticsTab.tsx
+@@ -1,5 +1,6 @@
+ import { forwardRef, useEffect, useState } from 'react';
+ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
++import { Button } from '@/components/ui/button';
+ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+ import { Badge } from '@/components/ui/badge';
+ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+@@ -11,7 +12,10 @@ import {
+   getAnalyticsAlerts, 
+   getAnalyticsBacktests, 
+   getAnalyticsMl, 
++  getAnalyticsPricingOutliers,
+   getAnalyticsReport,
++  getAnalyticsSearchHistory,
++  getAnalyticsSearchSuggestions,
+   type IngestionRow, 
+   type ScannerRow, 
+   type AlertRow, 
+@@ -22,7 +26,7 @@ import {
+   type ReportData,
+ } from '@/services/api';
+ import { api } from '@/services/api';
+-import type { MlAutomationStatus, MlAutomationHistory } from '@/types/api';
++import type { MlAutomationStatus, MlAutomationHistory, PricingOutliersResponse, SearchHistoryResponse, SearchSuggestion } from '@/types/api';
+ import { RenderState } from '@/components/shared/RenderState';
+ 
+ const AnalyticsTab = forwardRef<HTMLDivElement, Record<string, never>>(function AnalyticsTab(_props, ref) {
+@@ -36,6 +40,8 @@ const AnalyticsTab = forwardRef<HTMLDivElement, Record<string, never>>(function
+         <TabsTrigger data-testid="analytics-tab-backtests" value="backtests" className="tab-game text-xs">Backtests</TabsTrigger>
+         <TabsTrigger data-testid="analytics-tab-ml" value="ml" className="tab-game text-xs">ML</TabsTrigger>
+         <TabsTrigger data-testid="analytics-tab-reports" value="reports" className="tab-game text-xs">Reports</TabsTrigger>
++        <TabsTrigger data-testid="analytics-tab-search" value="search" className="tab-game text-xs">Search</TabsTrigger>
++        <TabsTrigger data-testid="analytics-tab-outliers" value="outliers" className="tab-game text-xs">Outliers</TabsTrigger>
+         <TabsTrigger data-testid="analytics-tab-session" value="session" className="tab-game text-xs">Session</TabsTrigger>
+         <TabsTrigger data-testid="analytics-tab-diagnostics" value="diagnostics" className="tab-game text-xs">Diagnostics</TabsTrigger>
+       </TabsList>
+@@ -46,6 +52,8 @@ const AnalyticsTab = forwardRef<HTMLDivElement, Record<string, never>>(function
+       <TabsContent data-testid="analytics-panel-backtests" value="backtests"><BacktestsPanel /></TabsContent>
+       <TabsContent data-testid="analytics-panel-ml" value="ml"><MlPanel /></TabsContent>
+       <TabsContent data-testid="analytics-panel-reports" value="reports"><ReportsPanel /></TabsContent>
++      <TabsContent data-testid="analytics-panel-search" value="search"><SearchHistoryPanel /></TabsContent>
++      <TabsContent data-testid="analytics-panel-outliers" value="outliers"><PricingOutliersPanel /></TabsContent>
+       <TabsContent data-testid="analytics-panel-session" value="session"><RenderState kind="feature_unavailable" message="Session analytics not supported by backend contract" /></TabsContent>
+       <TabsContent data-testid="analytics-panel-diagnostics" value="diagnostics"><RenderState kind="feature_unavailable" message="Diagnostics not supported by backend contract" /></TabsContent>
+     </Tabs>
+@@ -545,3 +553,585 @@ function ReportsPanel() {
+     </div>
+   );
+ }
++
++
++type HistogramBucket = {
++  bucketStart: number | string;
++  bucketEnd: number | string;
++  count: number;
++};
++
++function SearchHistoryPanel() {
++  const [query, setQuery] = useState('');
++  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
++  const [data, setData] = useState<SearchHistoryResponse | null>(null);
++  const [error, setError] = useState<string | null>(null);
++  const [league, setLeague] = useState('');
++  const [sort, setSort] = useState('added_on');
++  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
++  const [priceMin, setPriceMin] = useState<number | undefined>();
++  const [priceMax, setPriceMax] = useState<number | undefined>();
++  const [timeFrom, setTimeFrom] = useState<string | undefined>();
++  const [timeTo, setTimeTo] = useState<string | undefined>();
++
++  useEffect(() => {
++    const normalizedQuery = query.trim();
++    if (normalizedQuery.length < 2) {
++      setSuggestions([]);
++      return;
++    }
++    let cancelled = false;
++    const timer = window.setTimeout(() => {
++      getAnalyticsSearchSuggestions(normalizedQuery)
++        .then(payload => {
++          if (!cancelled) {
++            setSuggestions(payload.suggestions);
++          }
++        })
++        .catch(() => {
++          if (!cancelled) {
++            setSuggestions([]);
++          }
++        });
++    }, 150);
++    return () => {
++      cancelled = true;
++      window.clearTimeout(timer);
++    };
++  }, [query]);
++
++  useEffect(() => {
++    const normalizedQuery = query.trim();
++    if (normalizedQuery.length < 2) {
++      setData(null);
++      setError(null);
++      return;
++    }
++    let cancelled = false;
++    const timer = window.setTimeout(() => {
++      getAnalyticsSearchHistory({
++        query: normalizedQuery,
++        league,
++        sort,
++        order,
++        priceMin,
++        priceMax,
++        timeFrom,
++        timeTo,
++        limit: 100,
++      })
++        .then(payload => {
++          if (!cancelled) {
++            setData(payload);
++            setError(null);
++          }
++        })
++        .catch(err => {
++          if (!cancelled) {
++            setError(err instanceof Error ? err.message : 'Failed to load search history');
++          }
++        });
++    }, 250);
++    return () => {
++      cancelled = true;
++      window.clearTimeout(timer);
++    };
++  }, [query, league, sort, order, priceMin, priceMax, timeFrom, timeTo]);
++
++  const priceFloor = data?.filters.price.min ?? 0;
++  const priceCeiling = Math.max(data?.filters.price.max ?? 0, priceFloor);
++  const selectedPriceMin = clampNumber(priceMin ?? priceFloor, priceFloor, priceCeiling);
++  const selectedPriceMax = clampNumber(priceMax ?? priceCeiling, selectedPriceMin, priceCeiling);
++  const priceStep = calculateStep(priceFloor, priceCeiling);
++
++  const timeRangeMin = toUnixMs(data?.filters.datetime.min);
++  const timeRangeMax = toUnixMs(data?.filters.datetime.max);
++  const hasTimeRange = timeRangeMin !== null && timeRangeMax !== null && timeRangeMax >= timeRangeMin;
++  const selectedTimeMin = hasTimeRange
++    ? clampNumber(toUnixMs(timeFrom) ?? timeRangeMin, timeRangeMin, timeRangeMax)
++    : null;
++  const selectedTimeMax = hasTimeRange
++    ? clampNumber(toUnixMs(timeTo) ?? timeRangeMax, selectedTimeMin ?? timeRangeMin, timeRangeMax)
++    : null;
++  const timeStep = hasTimeRange && timeRangeMin !== null && timeRangeMax !== null
++    ? calculateStep(timeRangeMin, timeRangeMax)
++    : 1;
++
++  const applyHistorySort = (nextSort: string) => {
++    if (sort === nextSort) {
++      setOrder(current => current === 'asc' ? 'desc' : 'asc');
++      return;
++    }
++    setSort(nextSort);
++    setOrder(nextSort === 'added_on' ? 'desc' : 'asc');
++  };
++
++  const resetFilters = () => {
++    setLeague('');
++    setPriceMin(undefined);
++    setPriceMax(undefined);
++    setTimeFrom(undefined);
++    setTimeTo(undefined);
++    setSort('added_on');
++    setOrder('desc');
++  };
++
++  return (
++    <div className="space-y-4">
++      <Card className="card-game">
++        <CardHeader className="pb-2">
++          <CardTitle className="text-sm font-sans">Global Item Search</CardTitle>
++        </CardHeader>
++        <CardContent className="space-y-4">
++          <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(180px,1fr)_auto] items-end">
++            <label className="text-xs text-muted-foreground space-y-1">
++              <span>Item name</span>
++              <input
++                data-testid="search-history-input"
++                list="search-history-item-suggestions"
++                value={query}
++                onChange={event => setQuery(event.target.value)}
++                placeholder="Start typing an item name"
++                title="Suggestions come from ClickHouse and help you choose the exact item name."
++                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
++              />
++              <datalist id="search-history-item-suggestions">
++                {suggestions.map(suggestion => (
++                  <option key={`${suggestion.itemKind}-${suggestion.itemName}`} value={suggestion.itemName}>
++                    {`${suggestion.itemKind} · ${suggestion.matchCount}`}
++                  </option>
++                ))}
++              </datalist>
++            </label>
++
++            <label className="text-xs text-muted-foreground space-y-1">
++              <span>League</span>
++              <select
++                data-testid="search-history-league"
++                value={league}
++                onChange={event => setLeague(event.target.value)}
++                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
++              >
++                <option value="">All leagues</option>
++                {(data?.filters.leagueOptions ?? []).map(option => (
++                  <option key={option} value={option}>{option}</option>
++                ))}
++              </select>
++            </label>
++
++            <Button type="button" variant="outline" className="w-full lg:w-auto" onClick={resetFilters}>
++              Reset filters
++            </Button>
++          </div>
++
++          {suggestions.length > 0 && (
++            <div className="flex flex-wrap gap-2">
++              {suggestions.map(suggestion => (
++                <button
++                  key={`${suggestion.itemKind}-${suggestion.itemName}`}
++                  type="button"
++                  title={`${suggestion.itemKind} · ${suggestion.matchCount} matches`}
++                  className="rounded-full border border-border px-3 py-1 text-xs text-foreground hover:bg-secondary"
++                  onClick={() => setQuery(suggestion.itemName)}
++                >
++                  {suggestion.itemName}
++                </button>
++              ))}
++            </div>
++          )}
++
++          <p className="text-xs text-muted-foreground">
++            Every filter change is sent back to the backend as SQL parameters so ClickHouse does the heavy work and the frontend only renders the returned rows and histograms.
++          </p>
++        </CardContent>
++      </Card>
++
++      {error && <RenderState kind="degraded" message={error} />}
++      {!error && !data && (
++        <RenderState kind="empty" message="Type at least two characters to search the historical listings index." />
++      )}
++
++      {data && (
++        <>
++          <div className="grid gap-4 xl:grid-cols-2">
++            <Card className="card-game">
++              <CardHeader className="pb-2">
++                <CardTitle className="text-sm font-sans">Listed Price Distribution</CardTitle>
++              </CardHeader>
++              <CardContent className="space-y-4">
++                <MiniHistogram
++                  dataTestId="search-history-price-histogram"
++                  title="Listed price"
++                  buckets={data.histograms.price}
++                  formatLabel={value => typeof value === 'number' ? `${value.toFixed(1)}c` : String(value)}
++                />
++                <div className="space-y-2">
++                  <div className="flex items-center justify-between text-xs text-muted-foreground">
++                    <span>{selectedPriceMin.toFixed(1)}c</span>
++                    <span>{selectedPriceMax.toFixed(1)}c</span>
++                  </div>
++                  <input
++                    type="range"
++                    min={priceFloor}
++                    max={priceCeiling}
++                    step={priceStep}
++                    value={selectedPriceMin}
++                    onChange={event => setPriceMin(Math.min(Number(event.target.value), selectedPriceMax))}
++                    disabled={priceFloor === priceCeiling}
++                    className="w-full"
++                  />
++                  <input
++                    type="range"
++                    min={priceFloor}
++                    max={priceCeiling}
++                    step={priceStep}
++                    value={selectedPriceMax}
++                    onChange={event => setPriceMax(Math.max(Number(event.target.value), selectedPriceMin))}
++                    disabled={priceFloor === priceCeiling}
++                    className="w-full"
++                  />
++                </div>
++              </CardContent>
++            </Card>
++
++            <Card className="card-game">
++              <CardHeader className="pb-2">
++                <CardTitle className="text-sm font-sans">Added On Distribution</CardTitle>
++              </CardHeader>
++              <CardContent className="space-y-4">
++                <MiniHistogram
++                  dataTestId="search-history-time-histogram"
++                  title="Added on"
++                  buckets={data.histograms.datetime}
++                  formatLabel={value => formatShortDate(String(value))}
++                />
++                {hasTimeRange && selectedTimeMin !== null && selectedTimeMax !== null ? (
++                  <div className="space-y-2">
++                    <div className="flex items-center justify-between text-xs text-muted-foreground gap-3">
++                      <span>{formatShortDate(new Date(selectedTimeMin).toISOString())}</span>
++                      <span>{formatShortDate(new Date(selectedTimeMax).toISOString())}</span>
++                    </div>
++                    <input
++                      type="range"
++                      min={timeRangeMin}
++                      max={timeRangeMax}
++                      step={timeStep}
++                      value={selectedTimeMin}
++                      onChange={event => {
++                        const nextMin = Math.min(Number(event.target.value), selectedTimeMax);
++                        setTimeFrom(new Date(nextMin).toISOString());
++                      }}
++                      disabled={timeRangeMin === timeRangeMax}
++                      className="w-full"
++                    />
++                    <input
++                      type="range"
++                      min={timeRangeMin}
++                      max={timeRangeMax}
++                      step={timeStep}
++                      value={selectedTimeMax}
++                      onChange={event => {
++                        const nextMax = Math.max(Number(event.target.value), selectedTimeMin);
++                        setTimeTo(new Date(nextMax).toISOString());
++                      }}
++                      disabled={timeRangeMin === timeRangeMax}
++                      className="w-full"
++                    />
++                  </div>
++                ) : (
++                  <p className="text-xs text-muted-foreground">No datetime buckets available for the current search.</p>
++                )}
++              </CardContent>
++            </Card>
++          </div>
++
++          <Card className="card-game" data-testid="search-history-results">
++            <CardHeader className="pb-2">
++              <div className="flex items-center justify-between gap-3">
++                <CardTitle className="text-sm font-sans">Historical Results</CardTitle>
++                <span className="text-xs text-muted-foreground">{data.rows.length} rows · {order.toUpperCase()}</span>
++              </div>
++            </CardHeader>
++            <CardContent className="p-0">
++              <Table>
++                <TableHeader>
++                  <TableRow>
++                    <TableHead className="text-xs">
++                      <button type="button" onClick={() => applyHistorySort('item_name')}>Item Name{sort === 'item_name' ? ` ${sortArrow(order)}` : ''}</button>
++                    </TableHead>
++                    <TableHead className="text-xs">
++                      <button type="button" onClick={() => applyHistorySort('league')}>League{sort === 'league' ? ` ${sortArrow(order)}` : ''}</button>
++                    </TableHead>
++                    <TableHead className="text-xs">
++                      <button type="button" onClick={() => applyHistorySort('listed_price')}>Listed Price{sort === 'listed_price' ? ` ${sortArrow(order)}` : ''}</button>
++                    </TableHead>
++                    <TableHead className="text-xs">
++                      <button type="button" onClick={() => applyHistorySort('added_on')}>Added On{sort === 'added_on' ? ` ${sortArrow(order)}` : ''}</button>
++                    </TableHead>
++                  </TableRow>
++                </TableHeader>
++                <TableBody>
++                  {data.rows.map((row, index) => (
++                    <TableRow key={`${row.itemName}-${row.addedOn}-${index}`}>
++                      <TableCell className="text-xs font-medium text-foreground">{row.itemName}</TableCell>
++                      <TableCell className="text-xs">{row.league}</TableCell>
++                      <TableCell className="text-xs font-mono">{row.listedPrice} {row.currency}</TableCell>
++                      <TableCell className="text-xs text-muted-foreground">{formatDisplayDate(row.addedOn)}</TableCell>
++                    </TableRow>
++                  ))}
++                </TableBody>
++              </Table>
++            </CardContent>
++          </Card>
++        </>
++      )}
++    </div>
++  );
++}
++
++function PricingOutliersPanel() {
++  const [query, setQuery] = useState('');
++  const [league, setLeague] = useState('');
++  const [sort, setSort] = useState('items_total');
++  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
++  const [minTotal, setMinTotal] = useState(25);
++  const [data, setData] = useState<PricingOutliersResponse | null>(null);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    let cancelled = false;
++    const timer = window.setTimeout(() => {
++      getAnalyticsPricingOutliers({
++        query: query.trim() || undefined,
++        league: league.trim() || undefined,
++        sort,
++        order,
++        minTotal,
++        limit: 100,
++      })
++        .then(payload => {
++          if (!cancelled) {
++            setData(payload);
++            setError(null);
++          }
++        })
++        .catch(err => {
++          if (!cancelled) {
++            setError(err instanceof Error ? err.message : 'Failed to load pricing outliers');
++          }
++        });
++    }, 250);
++    return () => {
++      cancelled = true;
++      window.clearTimeout(timer);
++    };
++  }, [query, league, sort, order, minTotal]);
++
++  return (
++    <div className="space-y-4">
++      <Card className="card-game">
++        <CardHeader className="pb-2">
++          <CardTitle className="text-sm font-sans">Too Cheap Analysis</CardTitle>
++        </CardHeader>
++        <CardContent className="space-y-4">
++          <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_180px_180px_180px] items-end">
++            <label className="text-xs text-muted-foreground space-y-1">
++              <span>Item filter</span>
++              <input
++                value={query}
++                onChange={event => setQuery(event.target.value)}
++                placeholder="Optional item name filter"
++                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
++              />
++            </label>
++            <label className="text-xs text-muted-foreground space-y-1">
++              <span>League</span>
++              <input
++                value={league}
++                onChange={event => setLeague(event.target.value)}
++                placeholder="Default league"
++                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
++              />
++            </label>
++            <label className="text-xs text-muted-foreground space-y-1">
++              <span>Sort</span>
++              <select
++                value={sort}
++                onChange={event => setSort(event.target.value)}
++                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
++              >
++                <option value="items_total">Items total</option>
++                <option value="items_per_week">Items / week</option>
++                <option value="p10">10 percentile</option>
++                <option value="median">Median</option>
++                <option value="p90">90 percentile</option>
++                <option value="item_name">Item name</option>
++              </select>
++            </label>
++            <label className="text-xs text-muted-foreground space-y-1">
++              <span>Minimum sample size</span>
++              <input
++                type="number"
++                min={1}
++                value={minTotal}
++                onChange={event => setMinTotal(Math.max(1, Number(event.target.value) || 1))}
++                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
++              />
++            </label>
++          </div>
++
++          <p className="text-xs text-muted-foreground">
++            Rows below the 10 percentile are treated as too cheap. The backend calculates per-item and per-affix percentiles so the frontend only renders the returned summary tables and weekly counts.
++          </p>
++        </CardContent>
++      </Card>
++
++      {error && <RenderState kind="degraded" message={error} />}
++      {!error && !data && <RenderState kind="empty" message="Loading too-cheap pricing analysis…" />}
++
++      {data && (
++        <>
++          <Card className="card-game">
++            <CardHeader className="pb-2">
++              <CardTitle className="text-sm font-sans">Too Cheap per Week</CardTitle>
++            </CardHeader>
++            <CardContent>
++              <MiniHistogram
++                dataTestId="pricing-outliers-weekly-chart"
++                title="Items per week below the 10 percentile"
++                buckets={data.weekly.map(entry => ({
++                  bucketStart: entry.weekStart,
++                  bucketEnd: entry.weekStart,
++                  count: entry.tooCheapCount,
++                }))}
++                formatLabel={value => formatShortDate(String(value))}
++              />
++            </CardContent>
++          </Card>
++
++          <Card className="card-game" data-testid="pricing-outliers-results">
++            <CardHeader className="pb-2">
++              <div className="flex items-center justify-between gap-3">
++                <CardTitle className="text-sm font-sans">Outlier Results</CardTitle>
++                <span className="text-xs text-muted-foreground">{data.rows.length} rows · {order.toUpperCase()}</span>
++              </div>
++            </CardHeader>
++            <CardContent className="p-0">
++              <Table>
++                <TableHeader>
++                  <TableRow>
++                    <TableHead className="text-xs">Item Name</TableHead>
++                    <TableHead className="text-xs">Affix Analyzed</TableHead>
++                    <TableHead className="text-xs">10 percentile</TableHead>
++                    <TableHead className="text-xs">Median</TableHead>
++                    <TableHead className="text-xs">90 percentile</TableHead>
++                    <TableHead className="text-xs">Items / week</TableHead>
++                    <TableHead className="text-xs">Items total</TableHead>
++                  </TableRow>
++                </TableHeader>
++                <TableBody>
++                  {data.rows.map((row, index) => (
++                    <TableRow key={`${row.itemName}-${row.affixAnalyzed ?? 'base'}-${index}`}>
++                      <TableCell className="text-xs font-medium text-foreground">{row.itemName}</TableCell>
++                      <TableCell className="text-xs text-muted-foreground">
++                        <div className="flex items-center gap-2">
++                          <span>{row.affixAnalyzed ?? 'All item rolls'}</span>
++                          <Badge variant="outline" className="text-[10px] uppercase tracking-wide">{row.analysisLevel}</Badge>
++                        </div>
++                      </TableCell>
++                      <TableCell className="text-xs font-mono">{row.p10.toFixed(2)}</TableCell>
++                      <TableCell className="text-xs font-mono">{row.median.toFixed(2)}</TableCell>
++                      <TableCell className="text-xs font-mono">{row.p90.toFixed(2)}</TableCell>
++                      <TableCell className="text-xs font-mono">{row.itemsPerWeek.toFixed(2)}</TableCell>
++                      <TableCell className="text-xs font-mono">{row.itemsTotal}</TableCell>
++                    </TableRow>
++                  ))}
++                </TableBody>
++              </Table>
++            </CardContent>
++          </Card>
++        </>
++      )}
++    </div>
++  );
++}
++
++function MiniHistogram({
++  title,
++  buckets,
++  formatLabel,
++  dataTestId,
++}: {
++  title: string;
++  buckets: HistogramBucket[];
++  formatLabel: (value: number | string) => string;
++  dataTestId: string;
++}) {
++  if (buckets.length === 0) {
++    return <p className="text-xs text-muted-foreground">No histogram data available.</p>;
++  }
++  const maxCount = buckets.reduce((current, bucket) => Math.max(current, bucket.count), 1);
++  return (
++    <div className="space-y-2" data-testid={dataTestId}>
++      <p className="text-xs text-muted-foreground">{title}</p>
++      <div className="flex items-end gap-1 h-32">
++        {buckets.map((bucket, index) => (
++          <div key={`${String(bucket.bucketStart)}-${index}`} className="flex-1 h-full flex items-end">
++            <div
++              title={`${formatLabel(bucket.bucketStart)} → ${formatLabel(bucket.bucketEnd)} · ${bucket.count}`}
++              className="w-full rounded-t bg-secondary border border-border/40"
++              style={{ height: `${Math.max(12, (bucket.count / maxCount) * 100)}%` }}
++            />
++          </div>
++        ))}
++      </div>
++      <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
++        <span>{formatLabel(buckets[0].bucketStart)}</span>
++        <span>{formatLabel(buckets[buckets.length - 1].bucketEnd)}</span>
++      </div>
++    </div>
++  );
++}
++
++function calculateStep(minValue: number, maxValue: number): number {
++  const distance = Math.max(maxValue - minValue, 1);
++  return Math.max(Math.floor(distance / 100), 1);
++}
++
++function clampNumber(value: number, minValue: number, maxValue: number): number {
++  if (maxValue < minValue) {
++    return minValue;
++  }
++  return Math.min(Math.max(value, minValue), maxValue);
++}
++
++function toUnixMs(value: string | null | undefined): number | null {
++  if (!value) {
++    return null;
++  }
++  const parsed = Date.parse(value);
++  return Number.isNaN(parsed) ? null : parsed;
++}
++
++function formatDisplayDate(value: string | null | undefined): string {
++  if (!value) {
++    return '—';
++  }
++  const parsed = new Date(value);
++  if (Number.isNaN(parsed.getTime())) {
++    return value;
++  }
++  return parsed.toLocaleString();
++}
++
++function formatShortDate(value: string): string {
++  const parsed = new Date(value);
++  if (Number.isNaN(parsed.getTime())) {
++    return value;
++  }
++  return parsed.toLocaleDateString();
++}
++
++function sortArrow(order: 'asc' | 'desc'): string {
++  return order === 'asc' ? '↑' : '↓';
++}
+diff --git a/src/components/tabs/PriceCheckTab.tsx b/src/components/tabs/PriceCheckTab.tsx
+index 8dc31f2..39ff639 100644
+--- a/src/components/tabs/PriceCheckTab.tsx
++++ b/src/components/tabs/PriceCheckTab.tsx
+@@ -2,16 +2,17 @@ import { forwardRef, useState } from 'react';
+ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+ import { Button } from '@/components/ui/button';
+ import { Textarea } from '@/components/ui/textarea';
++import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+ import { ConfidenceBadge } from '@/components/shared/StatusIndicators';
+ import { api } from '@/services/api';
+-import type { MlPredictOneResponse } from '@/types/api';
++import type { PriceCheckResponse } from '@/types/api';
+ import { Brain } from 'lucide-react';
+ import { RenderState } from '@/components/shared/RenderState';
+ import { useMouseGlow } from '@/hooks/useMouseGlow';
+ 
+ const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function PriceCheckTab(_props, ref) {
+   const [text, setText] = useState('');
+-  const [result, setResult] = useState<MlPredictOneResponse | null>(null);
++  const [result, setResult] = useState<PriceCheckResponse | null>(null);
+   const [loading, setLoading] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+   const mouseGlow = useMouseGlow();
+@@ -24,7 +25,7 @@ const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function
+     setLoading(true);
+     setResult(null);
+     try {
+-      const nextResult = await api.mlPredictOne({ clipboard: text });
++      const nextResult = await api.priceCheck({ itemText: text });
+       setResult(nextResult);
+       setError(null);
+     } catch (err: unknown) {
+@@ -35,11 +36,11 @@ const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function
+   };
+ 
+   return (
+-    <div ref={ref} className="max-w-2xl mx-auto space-y-6" data-testid="panel-pricecheck-root">
++    <div ref={ref} className="max-w-4xl mx-auto space-y-6" data-testid="panel-pricecheck-root">
+       <div className="space-y-3">
+-        <h2 className="text-lg font-semibold font-sans text-foreground">ML Price Prediction</h2>
++        <h2 className="text-lg font-semibold font-sans text-foreground">ML Price Check</h2>
+         <p className="text-xs text-muted-foreground">
+-          Paste PoE clipboard text. The value shown here is produced by the trained ML pricing route.
++          Paste PoE clipboard text. The backend runs the trained price model and returns recent market comparables from the synchronized dataset.
+         </p>
+ 
+         <Textarea
+@@ -58,7 +59,7 @@ Quality: +20%
+         />
+         <Button data-testid="pricecheck-submit" onClick={check} disabled={loading} className="gap-2 w-full sm:w-auto btn-game">
+           <Brain className="h-4 w-4" />
+-          {loading ? 'Predicting...' : 'Predict Value'}
++          {loading ? 'Checking...' : 'Check Price'}
+         </Button>
+         {error && <RenderState kind="invalid_input" message={error} />}
+       </div>
+@@ -66,12 +67,12 @@ Quality: +20%
+       {result && (
+         <Card className="glow-gold card-game animate-scale-fade-in" onMouseMove={mouseGlow}>
+           <CardHeader className="pb-2">
+-            <div className="flex items-center justify-between">
++            <div className="flex items-center justify-between gap-3">
+               <CardTitle className="text-sm font-sans">ML Prediction</CardTitle>
+               <ConfidenceBadge value={result.confidence} />
+             </div>
+           </CardHeader>
+-          <CardContent className="space-y-4">
++          <CardContent className="space-y-6">
+             <div className="text-center py-4">
+               <p className="text-3xl font-mono font-semibold gold-shimmer-text">
+                 {result.predictedValue} <span className="text-lg text-muted-foreground">{result.currency}</span>
+@@ -90,6 +91,44 @@ Quality: +20%
+                 <p className="text-xs text-warning mt-1">Fallback: {result.fallbackReason}</p>
+               )}
+             </div>
++
++            <div className="space-y-2">
++              <div className="flex items-center justify-between gap-3">
++                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent Comparables</h3>
++                <span className="text-xs text-muted-foreground">{result.comparables.length} rows</span>
++              </div>
++
++              {result.comparables.length > 0 ? (
++                <div className="rounded-md border border-border overflow-hidden">
++                  <Table>
++                    <TableHeader>
++                      <TableRow>
++                        <TableHead className="text-xs">Item Name</TableHead>
++                        <TableHead className="text-xs">Price</TableHead>
++                        <TableHead className="text-xs">Currency</TableHead>
++                        <TableHead className="text-xs">League</TableHead>
++                        <TableHead className="text-xs">Added On</TableHead>
++                      </TableRow>
++                    </TableHeader>
++                    <TableBody>
++                      {result.comparables.map((row, index) => (
++                        <TableRow key={`${row.name}-${row.price}-${index}`}>
++                          <TableCell className="text-xs font-medium text-foreground">{row.name}</TableCell>
++                          <TableCell className="text-xs font-mono">{row.price}</TableCell>
++                          <TableCell className="text-xs font-mono">{row.currency}</TableCell>
++                          <TableCell className="text-xs">{row.league ?? '—'}</TableCell>
++                          <TableCell className="text-xs text-muted-foreground">{formatComparableDate(row.addedOn)}</TableCell>
++                        </TableRow>
++                      ))}
++                    </TableBody>
++                  </Table>
++                </div>
++              ) : (
++                <p className="text-xs text-muted-foreground">
++                  No recent comparables were found for this parsed base type in the selected league.
++                </p>
++              )}
++            </div>
+           </CardContent>
+         </Card>
+       )}
+@@ -97,5 +136,16 @@ Quality: +20%
+   );
+ });
+ 
++function formatComparableDate(value: string | null | undefined): string {
++  if (!value) {
++    return '—';
++  }
++  const parsed = new Date(value);
++  if (Number.isNaN(parsed.getTime())) {
++    return value;
++  }
++  return parsed.toLocaleString();
++}
++
+ PriceCheckTab.displayName = 'PriceCheckTab';
+ export default PriceCheckTab;
+diff --git a/src/services/api.ts b/src/services/api.ts
+index 6b64ede..e789372 100644
+--- a/src/services/api.ts
++++ b/src/services/api.ts
+@@ -13,9 +13,14 @@ import type {
+   MlPredictOneResponse,
+   PriceCheckRequest,
+   PriceCheckResponse,
++  PricingOutliersRequest,
++  PricingOutliersResponse,
+   ScannerRecommendationsRequest,
+   ScannerRecommendationsResponse,
+   ScannerSummary,
++  SearchHistoryRequest,
++  SearchHistoryResponse,
++  SearchSuggestionsResponse,
+   Service,
+   SessionRecommendation,
+   ShipmentRecommendation,
+@@ -260,6 +265,38 @@ function buildQueryString(params: Record<string, string | number | undefined>):
+   return '?' + entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
+ }
+ 
++export async function getAnalyticsSearchSuggestions(query: string) {
++  const queryString = buildQueryString({ query });
++  return request<SearchSuggestionsResponse>(`/api/v1/ops/analytics/search-suggestions${queryString}`);
++}
++
++export async function getAnalyticsSearchHistory(params: SearchHistoryRequest) {
++  const queryString = buildQueryString({
++    query: params.query,
++    league: params.league,
++    sort: params.sort,
++    order: params.order,
++    price_min: params.priceMin,
++    price_max: params.priceMax,
++    time_from: params.timeFrom,
++    time_to: params.timeTo,
++    limit: params.limit,
++  });
++  return request<SearchHistoryResponse>(`/api/v1/ops/analytics/search-history${queryString}`);
++}
++
++export async function getAnalyticsPricingOutliers(params: PricingOutliersRequest = {}) {
++  const queryString = buildQueryString({
++    query: params.query,
++    league: params.league,
++    sort: params.sort,
++    order: params.order,
++    min_total: params.minTotal,
++    limit: params.limit,
++  });
++  return request<PricingOutliersResponse>(`/api/v1/ops/analytics/pricing-outliers${queryString}`);
++}
++
+ export const api: ApiService = {
+   async getDashboard() {
+     return request<DashboardResponse>('/api/v1/ops/dashboard');
+diff --git a/src/types/api.ts b/src/types/api.ts
+index 86820e6..b7fbafc 100644
+--- a/src/types/api.ts
++++ b/src/types/api.ts
+@@ -132,11 +132,19 @@ export interface PriceCheckRequest {
+   itemText: string;
+ }
+ 
++export interface PriceComparable {
++  name: string;
++  price: number;
++  currency: string;
++  league?: string;
++  addedOn?: string | null;
++}
++
+ export interface PriceCheckResponse {
+   predictedValue: number;
+   currency: string;
+   confidence: number;
+-  comparables: { name: string; price: number; currency: string }[];
++  comparables: PriceComparable[];
+   interval?: { p10: number | null; p90: number | null };
+   saleProbabilityPercent?: number | null;
+   priceRecommendationEligible?: boolean;
+@@ -158,6 +166,99 @@ export interface MlPredictOneResponse {
+   priceRecommendationEligible?: boolean;
+ }
+ 
++// ========== Search History Analytics ==========
++export interface SearchSuggestion {
++  itemName: string;
++  itemKind: string;
++  matchCount: number;
++}
++
++export interface SearchSuggestionsResponse {
++  query: string;
++  suggestions: SearchSuggestion[];
++}
++
++export interface SearchHistoryPriceBucket {
++  bucketStart: number;
++  bucketEnd: number;
++  count: number;
++}
++
++export interface SearchHistoryDatetimeBucket {
++  bucketStart: string;
++  bucketEnd: string;
++  count: number;
++}
++
++export interface SearchHistoryRow {
++  itemName: string;
++  league: string;
++  listedPrice: number;
++  currency: string;
++  addedOn: string;
++}
++
++export interface SearchHistoryResponse {
++  query: string;
++  league: string | null;
++  sort: string;
++  order: 'asc' | 'desc';
++  filters: {
++    leagueOptions: string[];
++    price: { min: number; max: number };
++    datetime: { min: string | null; max: string | null };
++  };
++  histograms: {
++    price: SearchHistoryPriceBucket[];
++    datetime: SearchHistoryDatetimeBucket[];
++  };
++  rows: SearchHistoryRow[];
++}
++
++export interface SearchHistoryRequest {
++  query: string;
++  league?: string;
++  sort?: string;
++  order?: 'asc' | 'desc';
++  priceMin?: number;
++  priceMax?: number;
++  timeFrom?: string;
++  timeTo?: string;
++  limit?: number;
++}
++
++// ========== Pricing Outlier Analytics ==========
++export interface PricingOutlierRow {
++  itemName: string;
++  affixAnalyzed: string | null;
++  p10: number;
++  median: number;
++  p90: number;
++  itemsPerWeek: number;
++  itemsTotal: number;
++  analysisLevel: string;
++}
++
++export interface PricingOutlierWeek {
++  weekStart: string;
++  tooCheapCount: number;
++}
++
++export interface PricingOutliersResponse {
++  league: string | null;
++  rows: PricingOutlierRow[];
++  weekly: PricingOutlierWeek[];
++}
++
++export interface PricingOutliersRequest {
++  query?: string;
++  league?: string;
++  sort?: string;
++  order?: 'asc' | 'desc';
++  minTotal?: number;
++  limit?: number;
++}
++
+ // ========== Stash Viewer ==========
+ export type PriceEvaluation = 'well_priced' | 'could_be_better' | 'mispriced';
+ export interface StashItem {
+diff --git a/tests_static/test_frontend_features.py b/tests_static/test_frontend_features.py
+new file mode 100644
+index 0000000..f4d178f
+--- /dev/null
++++ b/tests_static/test_frontend_features.py
+@@ -0,0 +1,44 @@
++from pathlib import Path
++
++ROOT = Path('/mnt/data/frontendrepo')
++API_TS = (ROOT / 'src/services/api.ts').read_text(encoding='utf-8')
++TYPES_TS = (ROOT / 'src/types/api.ts').read_text(encoding='utf-8')
++PRICECHECK_TSX = (ROOT / 'src/components/tabs/PriceCheckTab.tsx').read_text(encoding='utf-8')
++ANALYTICS_TSX = (ROOT / 'src/components/tabs/AnalyticsTab.tsx').read_text(encoding='utf-8')
++
++
++def test_pricecheck_tab_uses_ops_pricecheck_and_shows_comparables() -> None:
++    assert 'api.priceCheck({ itemText: text })' in PRICECHECK_TSX
++    assert 'api.mlPredictOne({ clipboard: text })' not in PRICECHECK_TSX
++    assert 'Recent Comparables' in PRICECHECK_TSX
++    assert 'League' in PRICECHECK_TSX
++    assert 'Added On' in PRICECHECK_TSX
++
++
++def test_api_exports_search_history_and_outlier_helpers() -> None:
++    assert 'export async function getAnalyticsSearchSuggestions' in API_TS
++    assert '/api/v1/ops/analytics/search-suggestions' in API_TS
++    assert 'export async function getAnalyticsSearchHistory' in API_TS
++    assert '/api/v1/ops/analytics/search-history' in API_TS
++    assert 'export async function getAnalyticsPricingOutliers' in API_TS
++    assert '/api/v1/ops/analytics/pricing-outliers' in API_TS
++
++
++def test_types_define_new_search_and_outlier_shapes() -> None:
++    assert 'export interface SearchSuggestion' in TYPES_TS
++    assert 'export interface SearchHistoryResponse' in TYPES_TS
++    assert 'export interface PricingOutlierRow' in TYPES_TS
++    assert 'league?: string' in TYPES_TS
++    assert 'addedOn?: string | null' in TYPES_TS
++
++
++def test_analytics_tab_adds_search_and_outlier_panels() -> None:
++    assert 'analytics-tab-search' in ANALYTICS_TSX
++    assert 'analytics-tab-outliers' in ANALYTICS_TSX
++    assert '<SearchHistoryPanel />' in ANALYTICS_TSX
++    assert '<PricingOutliersPanel />' in ANALYTICS_TSX
++    assert 'data-testid="search-history-results"' in ANALYTICS_TSX
++    assert 'data-testid="pricing-outliers-results"' in ANALYTICS_TSX
++    assert 'Item Name' in ANALYTICS_TSX
++    assert 'Listed Price' in ANALYTICS_TSX
++    assert '10 percentile' in ANALYTICS_TSX
+

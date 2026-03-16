@@ -13,9 +13,14 @@ import type {
   MlPredictOneResponse,
   PriceCheckRequest,
   PriceCheckResponse,
+  PricingOutliersRequest,
+  PricingOutliersResponse,
   ScannerRecommendationsRequest,
   ScannerRecommendationsResponse,
   ScannerSummary,
+  SearchHistoryRequest,
+  SearchHistoryResponse,
+  SearchSuggestionsResponse,
   Service,
   SessionRecommendation,
   ShipmentRecommendation,
@@ -258,6 +263,38 @@ function buildQueryString(params: Record<string, string | number | undefined>): 
   const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== '');
   if (entries.length === 0) return '';
   return '?' + entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
+}
+
+export async function getAnalyticsSearchSuggestions(query: string) {
+  const queryString = buildQueryString({ query });
+  return request<SearchSuggestionsResponse>(`/api/v1/ops/analytics/search-suggestions${queryString}`);
+}
+
+export async function getAnalyticsSearchHistory(params: SearchHistoryRequest) {
+  const queryString = buildQueryString({
+    query: params.query,
+    league: params.league,
+    sort: params.sort,
+    order: params.order,
+    price_min: params.priceMin,
+    price_max: params.priceMax,
+    time_from: params.timeFrom,
+    time_to: params.timeTo,
+    limit: params.limit,
+  });
+  return request<SearchHistoryResponse>(`/api/v1/ops/analytics/search-history${queryString}`);
+}
+
+export async function getAnalyticsPricingOutliers(params: PricingOutliersRequest = {}) {
+  const queryString = buildQueryString({
+    query: params.query,
+    league: params.league,
+    sort: params.sort,
+    order: params.order,
+    min_total: params.minTotal,
+    limit: params.limit,
+  });
+  return request<PricingOutliersResponse>(`/api/v1/ops/analytics/pricing-outliers${queryString}`);
 }
 
 export const api: ApiService = {

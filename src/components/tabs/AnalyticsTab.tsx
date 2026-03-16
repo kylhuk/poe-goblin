@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -11,7 +12,10 @@ import {
   getAnalyticsAlerts, 
   getAnalyticsBacktests, 
   getAnalyticsMl, 
+  getAnalyticsPricingOutliers,
   getAnalyticsReport,
+  getAnalyticsSearchHistory,
+  getAnalyticsSearchSuggestions,
   type IngestionRow, 
   type ScannerRow, 
   type AlertRow, 
@@ -22,7 +26,7 @@ import {
   type ReportData,
 } from '@/services/api';
 import { api } from '@/services/api';
-import type { MlAutomationStatus, MlAutomationHistory } from '@/types/api';
+import type { MlAutomationStatus, MlAutomationHistory, PricingOutliersResponse, SearchHistoryResponse, SearchSuggestion } from '@/types/api';
 import { RenderState } from '@/components/shared/RenderState';
 
 const AnalyticsTab = forwardRef<HTMLDivElement, Record<string, never>>(function AnalyticsTab(_props, ref) {
@@ -36,6 +40,8 @@ const AnalyticsTab = forwardRef<HTMLDivElement, Record<string, never>>(function 
         <TabsTrigger data-testid="analytics-tab-backtests" value="backtests" className="tab-game text-xs">Backtests</TabsTrigger>
         <TabsTrigger data-testid="analytics-tab-ml" value="ml" className="tab-game text-xs">ML</TabsTrigger>
         <TabsTrigger data-testid="analytics-tab-reports" value="reports" className="tab-game text-xs">Reports</TabsTrigger>
+        <TabsTrigger data-testid="analytics-tab-search" value="search" className="tab-game text-xs">Search</TabsTrigger>
+        <TabsTrigger data-testid="analytics-tab-outliers" value="outliers" className="tab-game text-xs">Outliers</TabsTrigger>
         <TabsTrigger data-testid="analytics-tab-session" value="session" className="tab-game text-xs">Session</TabsTrigger>
         <TabsTrigger data-testid="analytics-tab-diagnostics" value="diagnostics" className="tab-game text-xs">Diagnostics</TabsTrigger>
       </TabsList>
@@ -46,6 +52,8 @@ const AnalyticsTab = forwardRef<HTMLDivElement, Record<string, never>>(function 
       <TabsContent data-testid="analytics-panel-backtests" value="backtests"><BacktestsPanel /></TabsContent>
       <TabsContent data-testid="analytics-panel-ml" value="ml"><MlPanel /></TabsContent>
       <TabsContent data-testid="analytics-panel-reports" value="reports"><ReportsPanel /></TabsContent>
+      <TabsContent data-testid="analytics-panel-search" value="search"><SearchHistoryPanel /></TabsContent>
+      <TabsContent data-testid="analytics-panel-outliers" value="outliers"><PricingOutliersPanel /></TabsContent>
       <TabsContent data-testid="analytics-panel-session" value="session"><RenderState kind="feature_unavailable" message="Session analytics not supported by backend contract" /></TabsContent>
       <TabsContent data-testid="analytics-panel-diagnostics" value="diagnostics"><RenderState kind="feature_unavailable" message="Diagnostics not supported by backend contract" /></TabsContent>
     </Tabs>
@@ -544,4 +552,586 @@ function ReportsPanel() {
       </Card>
     </div>
   );
+}
+
+
+type HistogramBucket = {
+  bucketStart: number | string;
+  bucketEnd: number | string;
+  count: number;
+};
+
+function SearchHistoryPanel() {
+  const [query, setQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
+  const [data, setData] = useState<SearchHistoryResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [league, setLeague] = useState('');
+  const [sort, setSort] = useState('added_on');
+  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
+  const [priceMin, setPriceMin] = useState<number | undefined>();
+  const [priceMax, setPriceMax] = useState<number | undefined>();
+  const [timeFrom, setTimeFrom] = useState<string | undefined>();
+  const [timeTo, setTimeTo] = useState<string | undefined>();
+
+  useEffect(() => {
+    const normalizedQuery = query.trim();
+    if (normalizedQuery.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      getAnalyticsSearchSuggestions(normalizedQuery)
+        .then(payload => {
+          if (!cancelled) {
+            setSuggestions(payload.suggestions);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setSuggestions([]);
+          }
+        });
+    }, 150);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  useEffect(() => {
+    const normalizedQuery = query.trim();
+    if (normalizedQuery.length < 2) {
+      setData(null);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      getAnalyticsSearchHistory({
+        query: normalizedQuery,
+        league,
+        sort,
+        order,
+        priceMin,
+        priceMax,
+        timeFrom,
+        timeTo,
+        limit: 100,
+      })
+        .then(payload => {
+          if (!cancelled) {
+            setData(payload);
+            setError(null);
+          }
+        })
+        .catch(err => {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : 'Failed to load search history');
+          }
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query, league, sort, order, priceMin, priceMax, timeFrom, timeTo]);
+
+  const priceFloor = data?.filters.price.min ?? 0;
+  const priceCeiling = Math.max(data?.filters.price.max ?? 0, priceFloor);
+  const selectedPriceMin = clampNumber(priceMin ?? priceFloor, priceFloor, priceCeiling);
+  const selectedPriceMax = clampNumber(priceMax ?? priceCeiling, selectedPriceMin, priceCeiling);
+  const priceStep = calculateStep(priceFloor, priceCeiling);
+
+  const timeRangeMin = toUnixMs(data?.filters.datetime.min);
+  const timeRangeMax = toUnixMs(data?.filters.datetime.max);
+  const hasTimeRange = timeRangeMin !== null && timeRangeMax !== null && timeRangeMax >= timeRangeMin;
+  const selectedTimeMin = hasTimeRange
+    ? clampNumber(toUnixMs(timeFrom) ?? timeRangeMin, timeRangeMin, timeRangeMax)
+    : null;
+  const selectedTimeMax = hasTimeRange
+    ? clampNumber(toUnixMs(timeTo) ?? timeRangeMax, selectedTimeMin ?? timeRangeMin, timeRangeMax)
+    : null;
+  const timeStep = hasTimeRange && timeRangeMin !== null && timeRangeMax !== null
+    ? calculateStep(timeRangeMin, timeRangeMax)
+    : 1;
+
+  const applyHistorySort = (nextSort: string) => {
+    if (sort === nextSort) {
+      setOrder(current => current === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    setSort(nextSort);
+    setOrder(nextSort === 'added_on' ? 'desc' : 'asc');
+  };
+
+  const resetFilters = () => {
+    setLeague('');
+    setPriceMin(undefined);
+    setPriceMax(undefined);
+    setTimeFrom(undefined);
+    setTimeTo(undefined);
+    setSort('added_on');
+    setOrder('desc');
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card className="card-game">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-sans">Global Item Search</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(180px,1fr)_auto] items-end">
+            <label className="text-xs text-muted-foreground space-y-1">
+              <span>Item name</span>
+              <input
+                data-testid="search-history-input"
+                list="search-history-item-suggestions"
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder="Start typing an item name"
+                title="Suggestions come from ClickHouse and help you choose the exact item name."
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+              />
+              <datalist id="search-history-item-suggestions">
+                {suggestions.map(suggestion => (
+                  <option key={`${suggestion.itemKind}-${suggestion.itemName}`} value={suggestion.itemName}>
+                    {`${suggestion.itemKind} · ${suggestion.matchCount}`}
+                  </option>
+                ))}
+              </datalist>
+            </label>
+
+            <label className="text-xs text-muted-foreground space-y-1">
+              <span>League</span>
+              <select
+                data-testid="search-history-league"
+                value={league}
+                onChange={event => setLeague(event.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+              >
+                <option value="">All leagues</option>
+                {(data?.filters.leagueOptions ?? []).map(option => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </label>
+
+            <Button type="button" variant="outline" className="w-full lg:w-auto" onClick={resetFilters}>
+              Reset filters
+            </Button>
+          </div>
+
+          {suggestions.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {suggestions.map(suggestion => (
+                <button
+                  key={`${suggestion.itemKind}-${suggestion.itemName}`}
+                  type="button"
+                  title={`${suggestion.itemKind} · ${suggestion.matchCount} matches`}
+                  className="rounded-full border border-border px-3 py-1 text-xs text-foreground hover:bg-secondary"
+                  onClick={() => setQuery(suggestion.itemName)}
+                >
+                  {suggestion.itemName}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            Every filter change is sent back to the backend as SQL parameters so ClickHouse does the heavy work and the frontend only renders the returned rows and histograms.
+          </p>
+        </CardContent>
+      </Card>
+
+      {error && <RenderState kind="degraded" message={error} />}
+      {!error && !data && (
+        <RenderState kind="empty" message="Type at least two characters to search the historical listings index." />
+      )}
+
+      {data && (
+        <>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Card className="card-game">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-sans">Listed Price Distribution</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <MiniHistogram
+                  dataTestId="search-history-price-histogram"
+                  title="Listed price"
+                  buckets={data.histograms.price}
+                  formatLabel={value => typeof value === 'number' ? `${value.toFixed(1)}c` : String(value)}
+                />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>{selectedPriceMin.toFixed(1)}c</span>
+                    <span>{selectedPriceMax.toFixed(1)}c</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={priceFloor}
+                    max={priceCeiling}
+                    step={priceStep}
+                    value={selectedPriceMin}
+                    onChange={event => setPriceMin(Math.min(Number(event.target.value), selectedPriceMax))}
+                    disabled={priceFloor === priceCeiling}
+                    className="w-full"
+                  />
+                  <input
+                    type="range"
+                    min={priceFloor}
+                    max={priceCeiling}
+                    step={priceStep}
+                    value={selectedPriceMax}
+                    onChange={event => setPriceMax(Math.max(Number(event.target.value), selectedPriceMin))}
+                    disabled={priceFloor === priceCeiling}
+                    className="w-full"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="card-game">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-sans">Added On Distribution</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <MiniHistogram
+                  dataTestId="search-history-time-histogram"
+                  title="Added on"
+                  buckets={data.histograms.datetime}
+                  formatLabel={value => formatShortDate(String(value))}
+                />
+                {hasTimeRange && selectedTimeMin !== null && selectedTimeMax !== null ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground gap-3">
+                      <span>{formatShortDate(new Date(selectedTimeMin).toISOString())}</span>
+                      <span>{formatShortDate(new Date(selectedTimeMax).toISOString())}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={timeRangeMin}
+                      max={timeRangeMax}
+                      step={timeStep}
+                      value={selectedTimeMin}
+                      onChange={event => {
+                        const nextMin = Math.min(Number(event.target.value), selectedTimeMax);
+                        setTimeFrom(new Date(nextMin).toISOString());
+                      }}
+                      disabled={timeRangeMin === timeRangeMax}
+                      className="w-full"
+                    />
+                    <input
+                      type="range"
+                      min={timeRangeMin}
+                      max={timeRangeMax}
+                      step={timeStep}
+                      value={selectedTimeMax}
+                      onChange={event => {
+                        const nextMax = Math.max(Number(event.target.value), selectedTimeMin);
+                        setTimeTo(new Date(nextMax).toISOString());
+                      }}
+                      disabled={timeRangeMin === timeRangeMax}
+                      className="w-full"
+                    />
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No datetime buckets available for the current search.</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="card-game" data-testid="search-history-results">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="text-sm font-sans">Historical Results</CardTitle>
+                <span className="text-xs text-muted-foreground">{data.rows.length} rows · {order.toUpperCase()}</span>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">
+                      <button type="button" onClick={() => applyHistorySort('item_name')}>Item Name{sort === 'item_name' ? ` ${sortArrow(order)}` : ''}</button>
+                    </TableHead>
+                    <TableHead className="text-xs">
+                      <button type="button" onClick={() => applyHistorySort('league')}>League{sort === 'league' ? ` ${sortArrow(order)}` : ''}</button>
+                    </TableHead>
+                    <TableHead className="text-xs">
+                      <button type="button" onClick={() => applyHistorySort('listed_price')}>Listed Price{sort === 'listed_price' ? ` ${sortArrow(order)}` : ''}</button>
+                    </TableHead>
+                    <TableHead className="text-xs">
+                      <button type="button" onClick={() => applyHistorySort('added_on')}>Added On{sort === 'added_on' ? ` ${sortArrow(order)}` : ''}</button>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.rows.map((row, index) => (
+                    <TableRow key={`${row.itemName}-${row.addedOn}-${index}`}>
+                      <TableCell className="text-xs font-medium text-foreground">{row.itemName}</TableCell>
+                      <TableCell className="text-xs">{row.league}</TableCell>
+                      <TableCell className="text-xs font-mono">{row.listedPrice} {row.currency}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{formatDisplayDate(row.addedOn)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+function PricingOutliersPanel() {
+  const [query, setQuery] = useState('');
+  const [league, setLeague] = useState('');
+  const [sort, setSort] = useState('items_total');
+  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
+  const [minTotal, setMinTotal] = useState(25);
+  const [data, setData] = useState<PricingOutliersResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      getAnalyticsPricingOutliers({
+        query: query.trim() || undefined,
+        league: league.trim() || undefined,
+        sort,
+        order,
+        minTotal,
+        limit: 100,
+      })
+        .then(payload => {
+          if (!cancelled) {
+            setData(payload);
+            setError(null);
+          }
+        })
+        .catch(err => {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : 'Failed to load pricing outliers');
+          }
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query, league, sort, order, minTotal]);
+
+  return (
+    <div className="space-y-4">
+      <Card className="card-game">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-sans">Too Cheap Analysis</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_180px_180px_180px] items-end">
+            <label className="text-xs text-muted-foreground space-y-1">
+              <span>Item filter</span>
+              <input
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder="Optional item name filter"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </label>
+            <label className="text-xs text-muted-foreground space-y-1">
+              <span>League</span>
+              <input
+                value={league}
+                onChange={event => setLeague(event.target.value)}
+                placeholder="Default league"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </label>
+            <label className="text-xs text-muted-foreground space-y-1">
+              <span>Sort</span>
+              <select
+                value={sort}
+                onChange={event => setSort(event.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+              >
+                <option value="items_total">Items total</option>
+                <option value="items_per_week">Items / week</option>
+                <option value="p10">10 percentile</option>
+                <option value="median">Median</option>
+                <option value="p90">90 percentile</option>
+                <option value="item_name">Item name</option>
+              </select>
+            </label>
+            <label className="text-xs text-muted-foreground space-y-1">
+              <span>Minimum sample size</span>
+              <input
+                type="number"
+                min={1}
+                value={minTotal}
+                onChange={event => setMinTotal(Math.max(1, Number(event.target.value) || 1))}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </label>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Rows below the 10 percentile are treated as too cheap. The backend calculates per-item and per-affix percentiles so the frontend only renders the returned summary tables and weekly counts.
+          </p>
+        </CardContent>
+      </Card>
+
+      {error && <RenderState kind="degraded" message={error} />}
+      {!error && !data && <RenderState kind="empty" message="Loading too-cheap pricing analysis…" />}
+
+      {data && (
+        <>
+          <Card className="card-game">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-sans">Too Cheap per Week</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <MiniHistogram
+                dataTestId="pricing-outliers-weekly-chart"
+                title="Items per week below the 10 percentile"
+                buckets={data.weekly.map(entry => ({
+                  bucketStart: entry.weekStart,
+                  bucketEnd: entry.weekStart,
+                  count: entry.tooCheapCount,
+                }))}
+                formatLabel={value => formatShortDate(String(value))}
+              />
+            </CardContent>
+          </Card>
+
+          <Card className="card-game" data-testid="pricing-outliers-results">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="text-sm font-sans">Outlier Results</CardTitle>
+                <span className="text-xs text-muted-foreground">{data.rows.length} rows · {order.toUpperCase()}</span>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Item Name</TableHead>
+                    <TableHead className="text-xs">Affix Analyzed</TableHead>
+                    <TableHead className="text-xs">10 percentile</TableHead>
+                    <TableHead className="text-xs">Median</TableHead>
+                    <TableHead className="text-xs">90 percentile</TableHead>
+                    <TableHead className="text-xs">Items / week</TableHead>
+                    <TableHead className="text-xs">Items total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.rows.map((row, index) => (
+                    <TableRow key={`${row.itemName}-${row.affixAnalyzed ?? 'base'}-${index}`}>
+                      <TableCell className="text-xs font-medium text-foreground">{row.itemName}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        <div className="flex items-center gap-2">
+                          <span>{row.affixAnalyzed ?? 'All item rolls'}</span>
+                          <Badge variant="outline" className="text-[10px] uppercase tracking-wide">{row.analysisLevel}</Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs font-mono">{row.p10.toFixed(2)}</TableCell>
+                      <TableCell className="text-xs font-mono">{row.median.toFixed(2)}</TableCell>
+                      <TableCell className="text-xs font-mono">{row.p90.toFixed(2)}</TableCell>
+                      <TableCell className="text-xs font-mono">{row.itemsPerWeek.toFixed(2)}</TableCell>
+                      <TableCell className="text-xs font-mono">{row.itemsTotal}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MiniHistogram({
+  title,
+  buckets,
+  formatLabel,
+  dataTestId,
+}: {
+  title: string;
+  buckets: HistogramBucket[];
+  formatLabel: (value: number | string) => string;
+  dataTestId: string;
+}) {
+  if (buckets.length === 0) {
+    return <p className="text-xs text-muted-foreground">No histogram data available.</p>;
+  }
+  const maxCount = buckets.reduce((current, bucket) => Math.max(current, bucket.count), 1);
+  return (
+    <div className="space-y-2" data-testid={dataTestId}>
+      <p className="text-xs text-muted-foreground">{title}</p>
+      <div className="flex items-end gap-1 h-32">
+        {buckets.map((bucket, index) => (
+          <div key={`${String(bucket.bucketStart)}-${index}`} className="flex-1 h-full flex items-end">
+            <div
+              title={`${formatLabel(bucket.bucketStart)} → ${formatLabel(bucket.bucketEnd)} · ${bucket.count}`}
+              className="w-full rounded-t bg-secondary border border-border/40"
+              style={{ height: `${Math.max(12, (bucket.count / maxCount) * 100)}%` }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+        <span>{formatLabel(buckets[0].bucketStart)}</span>
+        <span>{formatLabel(buckets[buckets.length - 1].bucketEnd)}</span>
+      </div>
+    </div>
+  );
+}
+
+function calculateStep(minValue: number, maxValue: number): number {
+  const distance = Math.max(maxValue - minValue, 1);
+  return Math.max(Math.floor(distance / 100), 1);
+}
+
+function clampNumber(value: number, minValue: number, maxValue: number): number {
+  if (maxValue < minValue) {
+    return minValue;
+  }
+  return Math.min(Math.max(value, minValue), maxValue);
+}
+
+function toUnixMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function formatDisplayDate(value: string | null | undefined): string {
+  if (!value) {
+    return '—';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+}
+
+function formatShortDate(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString();
+}
+
+function sortArrow(order: 'asc' | 'desc'): string {
+  return order === 'asc' ? '↑' : '↓';
 }

@@ -132,11 +132,19 @@ export interface PriceCheckRequest {
   itemText: string;
 }
 
+export interface PriceComparable {
+  name: string;
+  price: number;
+  currency: string;
+  league?: string;
+  addedOn?: string | null;
+}
+
 export interface PriceCheckResponse {
   predictedValue: number;
   currency: string;
   confidence: number;
-  comparables: { name: string; price: number; currency: string }[];
+  comparables: PriceComparable[];
   interval?: { p10: number | null; p90: number | null };
   saleProbabilityPercent?: number | null;
   priceRecommendationEligible?: boolean;
@@ -156,6 +164,99 @@ export interface MlPredictOneResponse {
   saleProbabilityPercent?: number | null;
   fallbackReason?: string;
   priceRecommendationEligible?: boolean;
+}
+
+// ========== Search History Analytics ==========
+export interface SearchSuggestion {
+  itemName: string;
+  itemKind: string;
+  matchCount: number;
+}
+
+export interface SearchSuggestionsResponse {
+  query: string;
+  suggestions: SearchSuggestion[];
+}
+
+export interface SearchHistoryPriceBucket {
+  bucketStart: number;
+  bucketEnd: number;
+  count: number;
+}
+
+export interface SearchHistoryDatetimeBucket {
+  bucketStart: string;
+  bucketEnd: string;
+  count: number;
+}
+
+export interface SearchHistoryRow {
+  itemName: string;
+  league: string;
+  listedPrice: number;
+  currency: string;
+  addedOn: string;
+}
+
+export interface SearchHistoryResponse {
+  query: string;
+  league: string | null;
+  sort: string;
+  order: 'asc' | 'desc';
+  filters: {
+    leagueOptions: string[];
+    price: { min: number; max: number };
+    datetime: { min: string | null; max: string | null };
+  };
+  histograms: {
+    price: SearchHistoryPriceBucket[];
+    datetime: SearchHistoryDatetimeBucket[];
+  };
+  rows: SearchHistoryRow[];
+}
+
+export interface SearchHistoryRequest {
+  query: string;
+  league?: string;
+  sort?: string;
+  order?: 'asc' | 'desc';
+  priceMin?: number;
+  priceMax?: number;
+  timeFrom?: string;
+  timeTo?: string;
+  limit?: number;
+}
+
+// ========== Pricing Outlier Analytics ==========
+export interface PricingOutlierRow {
+  itemName: string;
+  affixAnalyzed: string | null;
+  p10: number;
+  median: number;
+  p90: number;
+  itemsPerWeek: number;
+  itemsTotal: number;
+  analysisLevel: string;
+}
+
+export interface PricingOutlierWeek {
+  weekStart: string;
+  tooCheapCount: number;
+}
+
+export interface PricingOutliersResponse {
+  league: string | null;
+  rows: PricingOutlierRow[];
+  weekly: PricingOutlierWeek[];
+}
+
+export interface PricingOutliersRequest {
+  query?: string;
+  league?: string;
+  sort?: string;
+  order?: 'asc' | 'desc';
+  minTotal?: number;
+  limit?: number;
 }
 
 // ========== Stash Viewer ==========
