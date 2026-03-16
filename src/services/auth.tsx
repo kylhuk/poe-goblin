@@ -18,6 +18,7 @@ interface AuthContextValue {
   /* Supabase / Lovable Cloud auth */
   supabaseUser: User | null;
   isAuthenticated: boolean;
+  isApproved: boolean;
   signIn: (email: string, password: string) => Promise<string | null>;
   signUp: (email: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
