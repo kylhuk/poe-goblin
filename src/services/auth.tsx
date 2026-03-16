@@ -156,8 +156,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   useEffect(() => {
+    if (!supabaseReady || !isApproved) {
+      setIsLoading(false);
+      return;
+    }
     refreshSession().finally(() => setIsLoading(false));
-  }, [refreshSession]);
+  }, [refreshSession, supabaseReady, isApproved]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
