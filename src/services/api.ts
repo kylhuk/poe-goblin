@@ -122,16 +122,25 @@ import { supabase } from '@/integrations/supabase/client';
 let cachedPrimaryLeague: string | null = null;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = API_BASE ? `${API_BASE}${path}` : path;
   const method = init?.method || 'GET';
   let response: Response;
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) {
+      throw new Error('Not authenticated');
+    }
+
+    const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+    const url = `https://${projectId}.supabase.co/functions/v1/api-proxy`;
+
     response = await fetch(url, {
       ...init,
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}),
+        'Authorization': `Bearer ${token}`,
+        'x-proxy-path': path,
         ...(init?.headers || {}),
       },
     });
