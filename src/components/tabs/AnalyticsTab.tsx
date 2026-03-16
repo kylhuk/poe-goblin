@@ -776,28 +776,17 @@ function SearchHistoryPanel() {
                 />
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{selectedPriceMin.toFixed(1)}c</span>
-                    <span>{selectedPriceMax.toFixed(1)}c</span>
+                    <span>{(priceMin ?? priceFloor).toFixed(1)}c</span>
+                    <span>{(priceMax ?? priceCeiling).toFixed(1)}c</span>
                   </div>
-                  <input
-                    type="range"
+                  <Slider
                     min={priceFloor}
                     max={priceCeiling}
                     step={priceStep}
-                    value={selectedPriceMin}
-                    onChange={event => setPriceMin(Math.min(Number(event.target.value), selectedPriceMax))}
+                    value={[priceMin ?? priceFloor, priceMax ?? priceCeiling]}
+                    onValueChange={([lo, hi]) => { setPriceMin(lo); setPriceMax(hi); }}
+                    onValueCommit={([lo, hi]) => { setCommittedPriceMin(lo); setCommittedPriceMax(hi); }}
                     disabled={priceFloor === priceCeiling}
-                    className="w-full"
-                  />
-                  <input
-                    type="range"
-                    min={priceFloor}
-                    max={priceCeiling}
-                    step={priceStep}
-                    value={selectedPriceMax}
-                    onChange={event => setPriceMax(Math.max(Number(event.target.value), selectedPriceMin))}
-                    disabled={priceFloor === priceCeiling}
-                    className="w-full"
                   />
                 </div>
               </CardContent>
