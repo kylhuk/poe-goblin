@@ -1,11 +1,21 @@
 import React, { forwardRef, useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { StatusDot, Freshness } from '@/components/shared/StatusIndicators';
-import { RenderState } from '@/components/shared/RenderState';
-import { api } from '@/services/api';
-import type { Service, AppMessage, ScannerRecommendation } from '@/types/api';
+import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
+import { StatusDot, Freshness } from '../shared/StatusIndicators';
+import { RenderState } from '../shared/RenderState';
+import { api } from '../../services/api';
+import type {
+  Service,
+  AppMessage,
+  ScannerRecommendation,
+  ScannerRecommendationsRequest,
+} from '../../types/api';
 import { Activity, AlertTriangle, TrendingUp, Server } from 'lucide-react';
-import { useMouseGlow } from '@/hooks/useMouseGlow';
+import { useMouseGlow } from '../../hooks/useMouseGlow';
+
+const DASHBOARD_RECOMMENDATIONS_REQUEST: ScannerRecommendationsRequest = {
+  sort: 'expected_profit_per_minute_chaos',
+  limit: 3,
+};
 
 const DashboardTab = forwardRef<HTMLDivElement, Record<string, never>>(function DashboardTab(_props, ref) {
   const [services, setServices] = useState<Service[]>([]);
@@ -15,11 +25,15 @@ const DashboardTab = forwardRef<HTMLDivElement, Record<string, never>>(function 
   const mouseGlow = useMouseGlow();
 
   useEffect(() => {
-    Promise.all([api.getServices(), api.getMessages(), api.getScannerRecommendations()])
-      .then(([nextServices, nextMessages, nextRecs]) => {
+    Promise.all([
+      api.getServices(),
+      api.getMessages(),
+      api.getScannerRecommendations(DASHBOARD_RECOMMENDATIONS_REQUEST),
+    ])
+      .then(([nextServices, nextMessages, nextRecommendations]) => {
         setServices(nextServices);
         setMessages(nextMessages);
-        setRecommendations(nextRecs);
+        setRecommendations(nextRecommendations.recommendations);
         setError(null);
       })
       .catch((err: unknown) => {

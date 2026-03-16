@@ -13,6 +13,8 @@ import type {
   ShipmentRecommendation,
   StashStatus,
   ScannerRecommendation,
+  ScannerRecommendationsRequest,
+  ScannerRecommendationsResponse,
   ScannerSummary,
   StaleListingOpp,
   StashTab,
@@ -172,9 +174,31 @@ export const api: ApiService = {
     return request<ScannerSummary>('/api/v1/ops/scanner/summary');
   },
 
-  async getScannerRecommendations() {
-    const payload = await request<{ recommendations: ScannerRecommendation[] }>('/api/v1/ops/scanner/recommendations');
-    return payload.recommendations;
+  async getScannerRecommendations(requestParams?: ScannerRecommendationsRequest) {
+    const query = new URLSearchParams();
+    if (requestParams?.sort) {
+      query.set('sort', requestParams.sort);
+    }
+    if (requestParams?.limit !== undefined) {
+      query.set('limit', String(requestParams.limit));
+    }
+    if (requestParams?.cursor !== undefined) {
+      query.set('cursor', requestParams.cursor);
+    }
+    if (requestParams?.league) {
+      query.set('league', requestParams.league);
+    }
+    if (requestParams?.strategyId !== undefined) {
+      query.set('strategy_id', requestParams.strategyId);
+    }
+    if (requestParams?.minConfidence !== undefined) {
+      query.set('min_confidence', String(requestParams.minConfidence));
+    }
+    const queryString = query.toString();
+    const path = queryString
+      ? `/api/v1/ops/scanner/recommendations?${queryString}`
+      : '/api/v1/ops/scanner/recommendations';
+    return request<ScannerRecommendationsResponse>(path);
   },
 
   async ackAlert(alertId: string) {

@@ -301,6 +301,33 @@
       ]
     },
     {
+      "id": "opportunities-sort-profit-per-minute",
+      "owner": "qa-frontend",
+      "classification": "live-smoke",
+      "selectorTarget": "[data-testid=scanner-sort-profit-per-minute]",
+      "artifact": ".sisyphus/evidence/product/task-2-scenario-inventory/opportunities-sort-profit-per-minute.png",
+      "backendDependencies": [
+        "/api/v1/ops/scanner/recommendations?sort=expected_profit_per_minute_chaos",
+        "/api/v1/ops/scanner/recommendations?sort=expected_profit_per_minute_chaos&cursor=:opaque"
+      ],
+      "apiMethods": [
+        "getScannerRecommendations"
+      ]
+    },
+    {
+      "id": "scanner-recommendations-invalid-cursor",
+      "owner": "qa-frontend",
+      "classification": "degraded-state",
+      "selectorTarget": "[data-testid=panel-opportunities-root]",
+      "artifact": ".sisyphus/evidence/product/task-2-scenario-inventory/scanner-recommendations-invalid-cursor.json",
+      "backendDependencies": [
+        "/api/v1/ops/scanner/recommendations?sort=expected_profit_per_minute_chaos&cursor=broken"
+      ],
+      "apiMethods": [
+        "getScannerRecommendations"
+      ]
+    },
+    {
       "id": "auth-session-state-indicator",
       "owner": "qa-frontend",
       "classification": "degraded-state",

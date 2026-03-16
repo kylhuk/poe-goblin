@@ -197,10 +197,31 @@ export interface ScannerRecommendation {
   exitPlan: string;
   executionVenue: string;
   expectedProfitChaos: number | null;
+  expectedProfitPerMinuteChaos: number | null;
   expectedRoi: number | null;
   expectedHoldTime: string;
+  expectedHoldMinutes: number | null;
   confidence: number | null;
   recordedAt: string | null;
+}
+
+export interface ScannerRecommendationsMeta {
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export interface ScannerRecommendationsResponse {
+  recommendations: ScannerRecommendation[];
+  meta: ScannerRecommendationsMeta;
+}
+
+export interface ScannerRecommendationsRequest {
+  sort?: string;
+  limit?: number;
+  cursor?: string;
+  league?: string;
+  strategyId?: string;
+  minConfidence?: number;
 }
 
 // ========== Messages ==========
@@ -217,7 +238,9 @@ export interface AppMessage {
 // ========== API Service Interface ==========
 export interface ApiService {
   getScannerSummary(): Promise<ScannerSummary>;
-  getScannerRecommendations(): Promise<ScannerRecommendation[]>;
+  getScannerRecommendations(
+    request?: ScannerRecommendationsRequest
+  ): Promise<ScannerRecommendationsResponse>;
   ackAlert(alertId: string): Promise<void>;
   getStashStatus(): Promise<StashStatus>;
   getMlAutomationStatus(): Promise<Record<string, unknown>>;

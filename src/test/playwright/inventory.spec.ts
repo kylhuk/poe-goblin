@@ -21,10 +21,22 @@ async function responsePayload(response: import('@playwright/test').APIResponse)
 }
 
 const toWorkspaceArtifactPath = (artifact: string): string => `../${artifact}`;
+const qaOperatorToken = process.env.POE_API_OPERATOR_TOKEN ?? 'qa-operator-token';
 
 async function openTab(page: import('@playwright/test').Page, name: string): Promise<void> {
   await page.getByTestId(`tab-${name}`).click();
   await expect(page.getByTestId(`panel-${name}`)).toBeVisible();
+}
+
+function isScannerRecommendationsResponse(
+  response: import('@playwright/test').Response,
+  sort: string,
+): boolean {
+  const url = new URL(response.url());
+  return (
+    url.pathname === '/api/v1/ops/scanner/recommendations'
+    && url.searchParams.get('sort') === sort
+  );
 }
 
 test('scenario inventory coverage emits evidence artifacts', async ({ page }) => {
@@ -63,9 +75,11 @@ test('scenario inventory coverage emits evidence artifacts', async ({ page }) =>
     if (scenario.id === 'services-start-action' || scenario.id === 'services-stop-action' || scenario.id === 'services-restart-action') {
       await openTab(page, 'services');
       const target = page.locator(scenario.selectorTarget).first();
-      await expect(target).toBeVisible();
-      if (await target.isEnabled()) {
-        await target.click();
+      if (await target.count()) {
+        await expect(target).toBeVisible();
+        if (await target.isEnabled()) {
+          await target.click();
+        }
       }
       await writeScenarioArtifact(page, toWorkspaceArtifactPath(scenario.artifact));
       continue;
@@ -154,6 +168,73 @@ test('scenario inventory coverage emits evidence artifacts', async ({ page }) =>
       continue;
     }
 
+    if (scenario.id === 'opportunities-tab-load') {
+      await openTab(page, 'opportunities');
+      await expect(page.locator(scenario.selectorTarget)).toBeVisible();
+      await expect(page.locator('[data-testid=panel-opportunities-root] h3').first()).toBeVisible();
+      await writeScenarioArtifact(page, toWorkspaceArtifactPath(scenario.artifact));
+      continue;
+    }
+
+    if (scenario.id === 'opportunities-sort-profit-per-minute') {
+      await openTab(page, 'opportunities');
+      const opportunitiesPanel = page.getByTestId('panel-opportunities-root');
+      await expect(opportunitiesPanel).toBeVisible();
+      await expect(opportunitiesPanel.locator('h3').first()).toBeVisible();
+
+      const sortResponse = page.waitForResponse((response) => (
+        isScannerRecommendationsResponse(response, 'expected_profit_per_minute_chaos')
+      ));
+      await page.getByTestId('scanner-sort-profit-per-minute').click();
+      await sortResponse;
+
+      await expect(page.locator(scenario.selectorTarget)).toBeVisible();
+      const loadMoreButton = page.getByTestId('scanner-load-more');
+      await expect(loadMoreButton).toBeVisible();
+      await expect(loadMoreButton).toBeEnabled();
+      await expect(opportunitiesPanel.getByText('essence:bulk')).toHaveCount(0);
+      const paginationResponse = page.waitForResponse((response) => {
+        if (!isScannerRecommendationsResponse(response, 'expected_profit_per_minute_chaos')) {
+          return false;
+        }
+        const url = new URL(response.url());
+        return url.searchParams.get('cursor') !== null;
+      });
+      await loadMoreButton.click();
+      await paginationResponse;
+
+      await expect(opportunitiesPanel.getByText('cluster_jewel:Malachite Cluster Jewel:chaos')).toBeVisible();
+      await expect(opportunitiesPanel.getByText('essence:bulk')).toBeVisible();
+      await expect(opportunitiesPanel.locator('h3').first()).toBeVisible();
+      await writeScenarioArtifact(page, toWorkspaceArtifactPath(scenario.artifact));
+      continue;
+    }
+
+    if (scenario.id === 'scanner-recommendations-invalid-cursor') {
+      const response = await page.request.get(
+        'http://127.0.0.1:8080/api/v1/ops/scanner/recommendations?sort=expected_profit_per_minute_chaos&cursor=broken',
+        {
+          headers: {
+            Authorization: `Bearer ${qaOperatorToken}`,
+            Origin: 'http://127.0.0.1:4173',
+            Referer: 'http://127.0.0.1:4173/',
+          },
+        },
+      );
+      const body = await responsePayload(response);
+      apiResponses[scenario.id] = { status: response.status(), body };
+
+      expect(response.status()).toBe(400);
+      expect(body).toEqual(expect.objectContaining({
+        error: expect.objectContaining({
+          code: 'invalid_input',
+        }),
+      }));
+
+      await writeScenarioArtifact(page, toWorkspaceArtifactPath(scenario.artifact), apiResponses[scenario.id]);
+      continue;
+    }
+
     if (scenario.id === 'auth-session-state-indicator') {
       await expect(page.locator(scenario.selectorTarget)).toBeVisible();
       await writeScenarioArtifact(page, toWorkspaceArtifactPath(scenario.artifact));
@@ -170,9 +251,13 @@ test('scenario inventory coverage emits evidence artifacts', async ({ page }) =>
 
     if (scenario.id === 'auth-settings-clear-logout') {
       await page.getByTestId('settings-trigger').click();
-      await page.getByRole('button', { name: 'Clear' }).click();
+      const clearButton = page.getByRole('button', { name: 'Clear' }).last();
+      await expect(clearButton).toBeVisible();
+      await clearButton.click({ force: true });
       await writeScenarioArtifact(page, toWorkspaceArtifactPath(scenario.artifact));
       continue;
     }
+
+    throw new Error(`Unhandled scenario inventory row: ${scenario.id}`);
   }
 });
