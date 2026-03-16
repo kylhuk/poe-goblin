@@ -51,6 +51,7 @@ const UserMenu = () => {
   };
 
   const handleSignOut = async () => {
+    logout();
     await signOut();
     setOpen(false);
   };
@@ -58,11 +59,6 @@ const UserMenu = () => {
   if (isLoading) return null;
 
   const connected = sessionState === 'connected' && !!user;
-  const handleSignOut = async () => {
-    logout();
-     await signOut();
-     setOpen(false);
-   };
   return (
     <div className="flex items-center gap-2">
       {connected && (
