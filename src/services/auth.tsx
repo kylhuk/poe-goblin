@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-
+import { User } from '@supabase/supabase-js';
+import { supabase } from '@/integrations/supabase/client';
 import { API_BASE } from './config';
 import { logApiError } from './apiErrorLog';
 
@@ -14,6 +15,14 @@ interface SessionPayload {
 }
 
 interface AuthContextValue {
+  /* Supabase / Lovable Cloud auth */
+  supabaseUser: User | null;
+  isAuthenticated: boolean;
+  signIn: (email: string, password: string) => Promise<string | null>;
+  signUp: (email: string, password: string) => Promise<string | null>;
+  signOut: () => Promise<void>;
+
+  /* PoE session auth (unchanged) */
   user: AuthUser | null;
   login: (poeSessionId: string) => Promise<boolean>;
   logout: () => void;
@@ -23,6 +32,12 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue>({
+  supabaseUser: null,
+  isAuthenticated: false,
+  signIn: async () => null,
+  signUp: async () => null,
+  signOut: async () => {},
+
   user: null,
   login: async () => false,
   logout: () => {},
@@ -32,6 +47,8 @@ const AuthContext = createContext<AuthContextValue>({
 });
 
 export const useAuth = () => useContext(AuthContext);
+
+/* ---------- PoE session helpers (unchanged) ---------- */
 
 async function fetchSession(): Promise<SessionPayload> {
   try {
@@ -49,7 +66,43 @@ async function fetchSession(): Promise<SessionPayload> {
   }
 }
 
+/* ---------- Provider ---------- */
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  /* Supabase auth state */
+  const [supabaseUser, setSupabaseUser] = useState<User | null>(null);
+  const [supabaseReady, setSupabaseReady] = useState(false);
+
+  useEffect(() => {
+    // Set up listener FIRST
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSupabaseUser(session?.user ?? null);
+    });
+
+    // Then check existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSupabaseUser(session?.user ?? null);
+      setSupabaseReady(true);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const signIn = useCallback(async (email: string, password: string): Promise<string | null> => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    return error ? error.message : null;
+  }, []);
+
+  const signUp = useCallback(async (email: string, password: string): Promise<string | null> => {
+    const { error } = await supabase.auth.signUp({ email, password });
+    return error ? error.message : null;
+  }, []);
+
+  const signOutFn = useCallback(async () => {
+    await supabase.auth.signOut();
+  }, []);
+
+  /* PoE session auth state (unchanged) */
   const [user, setUser] = useState<AuthUser | null>(null);
   const [sessionState, setSessionState] = useState<'connected' | 'disconnected' | 'session_expired'>('disconnected');
   const [isLoading, setIsLoading] = useState(true);
@@ -74,9 +127,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/session`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ poeSessionId }),
         credentials: 'include',
       });
@@ -101,8 +152,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, []);
 
+  const isAuthenticated = !!supabaseUser;
+  const combinedLoading = !supabaseReady || isLoading;
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, refreshSession, sessionState, isLoading }}>
+    <AuthContext.Provider value={{
+      supabaseUser,
+      isAuthenticated,
+      signIn,
+      signUp,
+      signOut: signOutFn,
+      user,
+      login,
+      logout,
+      refreshSession,
+      sessionState,
+      isLoading: combinedLoading,
+    }}>
       {children}
     </AuthContext.Provider>
   );

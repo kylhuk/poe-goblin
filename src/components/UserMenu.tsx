@@ -5,12 +5,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
-import { Settings, Eye, EyeOff, Save, Trash2, CheckCircle2, XCircle, AlertCircle, ExternalLink, Loader2 } from 'lucide-react';
+import { Settings, Eye, EyeOff, Save, Trash2, CheckCircle2, XCircle, AlertCircle, ExternalLink, Loader2, LogOut } from 'lucide-react';
 import { API_BASE } from '@/services/config';
 import { toast } from 'sonner';
 
 const UserMenu = () => {
-  const { user, login, logout, sessionState, isLoading } = useAuth();
+  const { user, login, logout, sessionState, isLoading, supabaseUser, signOut } = useAuth();
   const [value, setValue] = useState('');
   const [showValue, setShowValue] = useState(false);
   const [open, setOpen] = useState(false);
@@ -39,6 +39,11 @@ const UserMenu = () => {
     window.location.href = `${API_BASE}/api/v1/auth/login`;
   };
 
+  const handleSignOut = async () => {
+    await signOut();
+    setOpen(false);
+  };
+
   if (isLoading) return null;
 
   const connected = sessionState === 'connected' && !!user;
@@ -57,6 +62,13 @@ const UserMenu = () => {
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-72 space-y-3 border-primary/30 animate-scale-fade-in">
+          {/* Supabase user info */}
+          {supabaseUser && (
+            <div className="text-xs text-muted-foreground truncate">
+              {supabaseUser.email}
+            </div>
+          )}
+
           <div className="flex items-center gap-2 text-xs">
             {sessionState === 'connected' && user ? (
               <><CheckCircle2 className="h-3.5 w-3.5 text-primary" /><span className="text-muted-foreground">Connected as <strong className="text-foreground">{user.accountName}</strong></span></>
@@ -111,6 +123,12 @@ const UserMenu = () => {
               <Trash2 className="h-3 w-3" /> Clear
             </Button>
           </div>
+
+          <Separator />
+
+          <Button size="sm" variant="ghost" className="w-full gap-2 text-xs h-7 text-muted-foreground hover:text-foreground" onClick={handleSignOut}>
+            <LogOut className="h-3 w-3" /> Sign Out
+          </Button>
         </PopoverContent>
       </Popover>
     </div>
