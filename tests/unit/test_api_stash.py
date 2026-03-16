@@ -200,3 +200,20 @@ def test_stash_status_session_expired_for_expired_session() -> None:
 
     assert payload["status"] == "session_expired"
     assert payload["connected"] is False
+
+
+def test_stash_status_feature_unavailable_explains_flag() -> None:
+    client = _StubClickHouse(payload='{"tabs":2,"snapshots":5}\n')
+
+    payload = stash_status_payload(
+        client,
+        league="Mirage",
+        realm="pc",
+        enable_account_stash=False,
+        session=None,
+    )
+
+    assert payload["status"] == "feature_unavailable"
+    assert payload["connected"] is False
+    assert payload["reason"] == "set POE_ENABLE_ACCOUNT_STASH=true to enable stash APIs"
+    assert payload["featureFlag"] == "POE_ENABLE_ACCOUNT_STASH"

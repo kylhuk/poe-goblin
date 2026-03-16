@@ -1,0 +1,6 @@
+{
+  "api_unavailable": false,
+  "scanner_degraded": false,
+  "service_action_failure": false,
+  "stash_empty": false
+}

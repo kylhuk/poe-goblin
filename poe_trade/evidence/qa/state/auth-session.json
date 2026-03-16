@@ -1,0 +1,11 @@
+{
+  "account_name": "qa-exile",
+  "expires_at": "2099-01-01T00:00:00Z",
+  "scope": [
+    "account:profile",
+    "account:stashes"
+  ],
+  "seeded_at": "2026-03-15T18:26:55.169509Z",
+  "session_id": "qa-session-mirage",
+  "status": "connected"
+}

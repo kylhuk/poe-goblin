@@ -1,0 +1,9 @@
+command: /home/hal9000/docker/poe_trade/.venv/bin/python -m poe_trade.cli scan plan --league Mirage --limit 20
+exit_code: 0
+stdout:
+scan_id	4ac0eaf05e50404b83b44bb87e11dc7c
+strategy_id	search_hint	item_or_market_key	buy_plan	max_buy	transform_plan	exit_plan	execution_venue	expected_profit_chaos	expected_roi	confidence	why_it_fired
+cluster_basic	Malachite Cluster Jewel	cluster_jewel:Malachite Cluster Jewel:chaos	Buy cluster jewels below median and anchor bids near top liquidity bands		Prioritize bases with repeat listings and reroll only when margin supports it	Exit as soon as cluster spread normalizes or listing depth rolls over	manual_trade	98.00000000000001	63.63636363636363	1	Cluster jewel listings retain repricing room at current depth and spread
+bulk_essence	essence	essence:bulk	Buy bulk essence lots while spread remains above median bulk price		Track small listing queue; keep position until small price premium compresses	Exit once small listings trade under the bulk threshold or ROI drops	manual_trade	30	1	1	Bulk essence spread between bulk and small listings
+stderr:
+<empty>

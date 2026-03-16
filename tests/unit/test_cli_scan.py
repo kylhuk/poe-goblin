@@ -140,3 +140,8 @@ def test_scan_plan_command(monkeypatch, capsys):
     )
     assert len(clients) == 1
     assert "scanner_recommendations" in clients[0].queries[0]
+    assert "20.0" in output[2]
+    assert "0.5" in output[2]
+    assert "0.8" in output[2]
+    assert "sell" in output[2]
+    assert "spread" in output[2]

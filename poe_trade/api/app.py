@@ -349,6 +349,7 @@ class ApiApp:
         sort_by = _first_query_param(query_params, "sort", default="recorded_at")
         league = _optional_query_param(query_params, "league")
         strategy_id = _optional_query_param(query_params, "strategy_id")
+        cursor = _optional_query_param(query_params, "cursor")
         try:
             limit = _int_query_param(query_params, "limit", default=50)
             min_confidence = _optional_float_query_param(query_params, "min_confidence")
@@ -362,6 +363,7 @@ class ApiApp:
                 min_confidence=min_confidence,
                 league=league,
                 strategy_id=strategy_id,
+                cursor=cursor,
             )
         except OpsBackendUnavailable:
             raise ApiError(
@@ -434,6 +436,7 @@ class ApiApp:
     def _service_action(self, context: Mapping[str, object]) -> Response:
         service_id = str(context.get("service_id") or "")
         verb = str(context.get("verb") or "")
+        cors = _cors_from_context(context)
         try:
             snapshot = execute_service_action(
                 self.client,
@@ -445,24 +448,29 @@ class ApiApp:
                 status=404,
                 code="service_not_found",
                 message="service not found",
+                headers=cors,
             ) from None
         except ServiceActionInvalidError:
             raise ApiError(
                 status=400,
                 code="service_action_invalid",
                 message="invalid service action",
+                headers=cors,
             ) from None
         except ServiceActionForbiddenError:
             raise ApiError(
                 status=403,
                 code="service_action_forbidden",
                 message="service action is forbidden",
+                headers=cors,
             ) from None
-        except ServiceControlError:
+        except ServiceControlError as exc:
             raise ApiError(
                 status=503,
                 code="service_action_failed",
                 message="service action failed",
+                details=_safe_service_action_details(exc),
+                headers=cors,
             ) from None
         return json_response({"service": services_payload([snapshot])[0]})
 
@@ -516,7 +524,7 @@ class ApiApp:
             raise ApiError(
                 status=503,
                 code="feature_unavailable",
-                message="stash feature is unavailable",
+                message="stash feature is unavailable; set POE_ENABLE_ACCOUNT_STASH=true",
             )
         params = _query_params_from_context(context)
         league = _first_query_param(
@@ -1097,3 +1105,11 @@ def _session_set_cookie(cookie_name: str, session_id: str, *, secure: bool) -> s
 def _session_clear_cookie(cookie_name: str, *, secure: bool) -> str:
     secure_token = "; Secure" if secure else ""
     return f"{cookie_name}=; Path=/; HttpOnly; SameSite=Lax{secure_token}; Max-Age=0"
+
+
+def _safe_service_action_details(exc: ServiceControlError) -> dict[str, str] | None:
+    reason = str(exc).strip()
+    if not reason:
+        return None
+    normalized = " ".join(reason.split())
+    return {"reason": normalized[:240]}

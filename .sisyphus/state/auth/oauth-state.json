@@ -1,7 +1,7 @@
 {
-  "code_challenge": "LUcLoE7aP9fDiaq1yMhbZ-zsveWE5_HmiVU-lpY5iTk",
-  "code_verifier": "bqcNzWq1B4j3UQ0CIeuFfdCUH_UBSkZv-sIOiiPWLwfpea8lMtsMhyUzeC_UksDV",
-  "created_at": "2026-03-14T22:44:21.299992Z",
-  "expires_at": "2026-03-14T22:44:51.299992Z",
-  "state": "LENUZIFDvvmPQVDmNRaqg_wv9m4GecwO"
+  "code_challenge": "ZJd6AhrG9IdZUcnQ1hKuWNd15o3FFeSvSk6MoJZkWAM",
+  "code_verifier": "gfM0sex0w1DT3EkUlTYJWUEngSZihkvJK6y4_AQjpi96V_dygZrb0L8lUpeftFwb",
+  "created_at": "2026-03-15T20:41:33.804332Z",
+  "expires_at": "2026-03-15T20:42:03.804332Z",
+  "state": "ZKTA0668h76qHokLlxKil_spldYyDgLg"
 }

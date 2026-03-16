@@ -57,3 +57,19 @@ SELECT
 FROM poe_trade.gold_set_ref_hour
 ORDER BY time_bucket DESC
 LIMIT 20;
+
+SELECT
+    mart_name,
+    diagnostic_state,
+    source_row_count,
+    gold_row_count,
+    source_latest_at,
+    gold_latest_at,
+    source_to_gold_lag_minutes,
+    gold_freshness_minutes,
+    source_distinct_league_count,
+    gold_distinct_league_count,
+    source_blank_or_null_league_rows,
+    gold_blank_or_null_league_rows
+FROM poe_trade.v_gold_mart_diagnostics
+ORDER BY mart_name;

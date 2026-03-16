@@ -69,6 +69,11 @@ services:
       - .env
     environment:
       POE_CLICKHOUSE_URL: http://clickhouse:8123
+      POE_ENABLE_ACCOUNT_STASH: "true"
+      POE_ACCOUNT_STASH_REALM: pc
+      POE_ACCOUNT_STASH_LEAGUE: Mirage
+      POE_ACCOUNT_STASH_ACCOUNT_NAME: wengaCH-0218
+      POE_ACCOUNT_STASH_ACCESS_TOKEN: qa-seeded-token
     volumes:
       - ./.state:/app/.state
     networks:
@@ -103,6 +108,13 @@ services:
       - .env
     environment:
       POE_CLICKHOUSE_URL: http://clickhouse:8123
+      POE_ML_AUTOMATION_ENABLED: "true"
+      POE_ML_AUTOMATION_LEAGUE: Mirage
+      POE_ML_AUTOMATION_INTERVAL_SECONDS: "120"
+      POE_ML_AUTOMATION_MAX_ITERATIONS: "20"
+      POE_ML_AUTOMATION_MAX_WALL_CLOCK_SECONDS: "180"
+      POE_ML_AUTOMATION_NO_IMPROVEMENT_PATIENCE: "5"
+      POE_ML_AUTOMATION_MIN_MDAPE_IMPROVEMENT: "0.001"
     volumes:
       - ./.state:/app/.state
       - ./artifacts:/app/artifacts
@@ -125,6 +137,9 @@ services:
       POE_API_CORS_ORIGINS: ${POE_API_CORS_ORIGINS:-https://poe.lama-lan.ch}
       POE_API_TRUSTED_ORIGIN_BYPASS: "true"
       POE_CLICKHOUSE_URL: http://clickhouse:8123
+      POE_ENABLE_ACCOUNT_STASH: "true"
+      POE_ACCOUNT_STASH_REALM: pc
+      POE_ACCOUNT_STASH_LEAGUE: Mirage
     networks:
       - default
       - lama-lan_backend

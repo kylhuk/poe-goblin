@@ -1,0 +1,43 @@
+{
+  "root": "poe_trade/evidence",
+  "artifactCount": 8,
+  "artifacts": [
+    {
+      "path": "poe_trade/evidence/qa/cli/seed-journal-research-backtest.txt",
+      "bytes": 442
+    },
+    {
+      "path": "poe_trade/evidence/qa/cli/seed-journal-scan-plan.txt",
+      "bytes": 1097
+    },
+    {
+      "path": "poe_trade/evidence/qa/cli/seed-research-backtest.txt",
+      "bytes": 393
+    },
+    {
+      "path": "poe_trade/evidence/qa/cli/seed-scan-plan.txt",
+      "bytes": 1098
+    },
+    {
+      "path": "poe_trade/evidence/qa/seed-journal.json",
+      "bytes": 4193
+    },
+    {
+      "path": "poe_trade/evidence/qa/seed.json",
+      "bytes": 4175
+    },
+    {
+      "path": "poe_trade/evidence/qa/state/auth-session.json",
+      "bytes": 244
+    },
+    {
+      "path": "poe_trade/evidence/qa/state/faults.json",
+      "bytes": 119
+    }
+  ],
+  "byDirectory": {
+    "qa": 2,
+    "qa/cli": 4,
+    "qa/state": 2
+  }
+}

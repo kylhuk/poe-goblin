@@ -15,7 +15,7 @@ from poe_trade.db import ClickHouseClient
 def _settings() -> Settings:
     env = {
         "POE_API_OPERATOR_TOKEN": "phase1-token",
-        "POE_API_CORS_ORIGINS": "https://app.example.com",
+        "POE_API_CORS_ORIGINS": "https://poe.lama-lan.ch",
         "POE_API_MAX_BODY_BYTES": "32768",
         "POE_API_LEAGUE_ALLOWLIST": "Mirage",
     }
@@ -30,18 +30,18 @@ def test_allowed_origin_receives_allow_origin_header() -> None:
         raw_path="/api/v1/ml/contract",
         headers={
             "Authorization": "Bearer phase1-token",
-            "Origin": "https://app.example.com",
+            "Origin": "https://poe.lama-lan.ch",
         },
         body_reader=BytesIO(b""),
     )
     assert response.status == 200
-    assert response.headers["Access-Control-Allow-Origin"] == "https://app.example.com"
+    assert response.headers["Access-Control-Allow-Origin"] == "https://poe.lama-lan.ch"
 
 
 def test_denied_origin_fails_closed() -> None:
     app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
     with pytest.raises(ApiError, match="origin is not allowed") as exc:
-        app.handle(
+        _ = app.handle(
             method="GET",
             raw_path="/api/v1/ml/contract",
             headers={
@@ -59,17 +59,17 @@ def test_options_preflight_supports_allowed_origin() -> None:
     response = app.handle(
         method="OPTIONS",
         raw_path="/api/v1/ml/leagues/Mirage/status",
-        headers={"Origin": "https://app.example.com"},
+        headers={"Origin": "https://poe.lama-lan.ch"},
         body_reader=BytesIO(b""),
     )
     assert response.status == 204
-    assert response.headers["Access-Control-Allow-Origin"] == "https://app.example.com"
+    assert response.headers["Access-Control-Allow-Origin"] == "https://poe.lama-lan.ch"
 
 
 def test_ops_route_denied_origin_fails_closed() -> None:
     app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
     with pytest.raises(ApiError, match="origin is not allowed") as exc:
-        app.handle(
+        _ = app.handle(
             method="GET",
             raw_path="/api/v1/ops/services",
             headers={

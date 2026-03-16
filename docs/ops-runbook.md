@@ -12,6 +12,7 @@
 - `poe_trade.bronze_ingest_checkpoints` is the canonical queue-cursor log; watch `queue_key`, `feed_kind`, `cursor_hash`, `status`, and `retrieved_at` to diagnose drift.
 - The `StatusReporter` entries in `poe_trade.poe_ingest_status` include `queue_key`, `feed_kind`, `stalled_since`, and `error_count` for the latest daemon health view.
 - `topOpportunities` on the dashboard are sourced from scanner recommendations; `criticalAlerts` remain message-derived diagnostics only.
+- `goldDiagnostics` in the analytics report (via `/api/v1/ops/analytics/report`) provides per-mart freshness, row-counts, and league-visibility states.
 - `poe_trade.bronze_requests` is the single source for rate-limit telemetry; repeated 429s or `retry_after_seconds` spikes show where the API is throttling the harvester.
 - ClickHouse health matters: use `system.metrics`/`system.events` plus the `clickhouse-client` query above to catch authentication or resource pressure before ingestion fails.
 
@@ -29,11 +30,12 @@
 
 ## Reference commands
 - `curl -i http://127.0.0.1:8080/healthz` for unauthenticated API health checks.
-- `curl -i -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" -H "Origin: https://app.example.com" http://127.0.0.1:8080/api/v1/ops/contract` to bootstrap frontend-facing route and capability metadata.
-- `curl -i -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" -H "Origin: https://app.example.com" http://127.0.0.1:8080/api/v1/ops/services` for visible service inventory and allowed lifecycle actions.
-- `curl -i -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" "http://127.0.0.1:8080/api/v1/ops/scanner/recommendations?sort=liquidity_score&limit=5&min_confidence=0.8"` to inspect rich opportunity contract fields (semanticKey, searchHint, itemName, etc.).
-- `curl -i -X POST -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" -H "Origin: https://app.example.com" http://127.0.0.1:8080/api/v1/actions/services/market_harvester/restart` to trigger the only supported lifecycle control path.
-- `curl -i -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" -H "Origin: https://app.example.com" "http://127.0.0.1:8080/api/v1/stash/tabs?league=Mirage&realm=pc"` to verify stash endpoint status (`feature_unavailable` is expected until stash backend rollout completes).
+- `curl -i -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" -H "Origin: https://poe.lama-lan.ch" http://127.0.0.1:8080/api/v1/ops/contract` to bootstrap frontend-facing route and capability metadata.
+- `curl -i -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" -H "Origin: https://poe.lama-lan.ch" http://127.0.0.1:8080/api/v1/ops/services` for visible service inventory and allowed lifecycle actions.
+- `curl -i -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" "http://127.0.0.1:8080/api/v1/ops/scanner/recommendations?sort=liquidity_score&limit=5&min_confidence=0.8"` to inspect rich opportunity contract fields (semanticKey, searchHint, itemName, mlInfluenceScore, effectiveConfidence, etc.).
+- `curl -i -X POST -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" -H "Origin: https://poe.lama-lan.ch" http://127.0.0.1:8080/api/v1/actions/services/market_harvester/restart` to trigger the only supported lifecycle control path.
+- `curl -i -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" -H "Origin: https://poe.lama-lan.ch" "http://127.0.0.1:8080/api/v1/stash/status?league=Mirage&realm=pc"` to verify stash gate state; when `POE_ENABLE_ACCOUNT_STASH=false`, the payload returns `status=feature_unavailable` with `featureFlag=POE_ENABLE_ACCOUNT_STASH` and a remediation `reason`.
+- `curl -i -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" -H "Origin: https://poe.lama-lan.ch" "http://127.0.0.1:8080/api/v1/stash/tabs?league=Mirage&realm=pc"` to verify tab retrieval; this route returns HTTP 503 `feature_unavailable` while `POE_ENABLE_ACCOUNT_STASH=false`.
 - `poe-ledger-cli service --name market_harvester` to launch the market sync daemon through the CLI router and inherit the shared logging configuration.
 - `poe-ledger-cli service --name market_harvester -- --once --dry-run` to run one queue cycle without writing ClickHouse rows.
 - `poe-ledger-cli sync status` to inspect the latest queue status rows when ClickHouse is reachable.

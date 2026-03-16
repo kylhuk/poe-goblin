@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -96,6 +97,55 @@ def test_resolve_account_name_uses_poe_session_cookie(tmp_path: Path) -> None:
     assert request.get_header("Cookie") == "POESESSID=POESESSID-123"
 
 
+def test_resolve_account_name_uses_plain_text_fallback_after_404(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(str(tmp_path / "auth-state"))
+    attempted_urls: list[str] = []
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"qa-exile"
+
+    def _urlopen(request, timeout: float):
+        attempted_urls.append(str(request.full_url))
+        if request.full_url.endswith("/character-window/get-account-name"):
+            return _Response()
+        raise urllib.error.URLError("not found")
+
+    with mock.patch("urllib.request.urlopen", side_effect=_urlopen):
+        account_name = resolve_account_name(settings, poe_session_id="POESESSID-123")
+
+    assert account_name == "qa-exile"
+    assert attempted_urls[0].endswith("/account/profile")
+    assert attempted_urls[-1].endswith("/character-window/get-account-name")
+
+
+def test_resolve_account_name_reads_nested_profile_shape(tmp_path: Path) -> None:
+    settings = _settings(str(tmp_path / "auth-state"))
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps({"account": {"name": "qa-exile"}}).encode("utf-8")
+
+    with mock.patch("urllib.request.urlopen", return_value=_Response()):
+        account_name = resolve_account_name(settings, poe_session_id="POESESSID-123")
+
+    assert account_name == "qa-exile"
+
+
 def test_resolve_account_name_raises_for_unresolvable_payload(tmp_path: Path) -> None:
     settings = _settings(str(tmp_path / "auth-state"))
 
@@ -108,6 +158,24 @@ def test_resolve_account_name_raises_for_unresolvable_payload(tmp_path: Path) ->
 
         def read(self) -> bytes:
             return json.dumps({"unexpected": "shape"}).encode("utf-8")
+
+    with mock.patch("urllib.request.urlopen", return_value=_Response()):
+        with pytest.raises(ValueError, match="unable to resolve"):
+            _ = resolve_account_name(settings, poe_session_id="POESESSID-123")
+
+
+def test_resolve_account_name_rejects_html_error_bodies(tmp_path: Path) -> None:
+    settings = _settings(str(tmp_path / "auth-state"))
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"<html><title>Not Found</title></html>"
 
     with mock.patch("urllib.request.urlopen", return_value=_Response()):
         with pytest.raises(ValueError, match="unable to resolve"):

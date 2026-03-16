@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 import json
 import time
 from typing import cast
 from uuid import uuid4
 
-from ..db import ClickHouseClient
+from .. import __version__
+from ..config import constants
+from ..db import ClickHouseClient, ClickHouseClientError
 from .policy import (
     CandidateRow,
     build_evidence_snapshot,
@@ -19,6 +21,74 @@ from .registry import list_strategy_packs, load_candidate_sql
 
 
 _LEGACY_COMPAT_HASH_EXPRESSION = "toString(cityHash64(concat(ifNull(source.semantic_key, ''), '|', ifNull(source.item_or_market_key, ''))))"
+
+_RECOMMENDATION_INSERT_COLUMNS = (
+    "scanner_run_id",
+    "strategy_id",
+    "league",
+    "recommendation_source",
+    "recommendation_contract_version",
+    "producer_version",
+    "producer_run_id",
+    "item_or_market_key",
+    "why_it_fired",
+    "buy_plan",
+    "max_buy",
+    "transform_plan",
+    "exit_plan",
+    "execution_venue",
+    "expected_profit_chaos",
+    "expected_roi",
+    "expected_hold_time",
+    "confidence",
+    "evidence_snapshot",
+    "recorded_at",
+)
+
+_LEGACY_RECOMMENDATION_INSERT_COLUMNS = (
+    "scanner_run_id",
+    "strategy_id",
+    "league",
+    "item_or_market_key",
+    "why_it_fired",
+    "buy_plan",
+    "max_buy",
+    "transform_plan",
+    "exit_plan",
+    "execution_venue",
+    "expected_profit_chaos",
+    "expected_roi",
+    "expected_hold_time",
+    "confidence",
+    "evidence_snapshot",
+    "recorded_at",
+)
+
+_ALERT_INSERT_COLUMNS = (
+    "alert_id",
+    "scanner_run_id",
+    "strategy_id",
+    "league",
+    "recommendation_source",
+    "recommendation_contract_version",
+    "producer_version",
+    "producer_run_id",
+    "item_or_market_key",
+    "status",
+    "evidence_snapshot",
+    "recorded_at",
+)
+
+_LEGACY_ALERT_INSERT_COLUMNS = (
+    "alert_id",
+    "scanner_run_id",
+    "strategy_id",
+    "league",
+    "item_or_market_key",
+    "status",
+    "evidence_snapshot",
+    "recorded_at",
+)
 
 
 def run_scan_once(
@@ -75,23 +145,19 @@ def run_scan_once(
             for candidate in evaluation.eligible
         ]
         if recommendation_rows:
-            _ = client.execute(
-                "INSERT INTO poe_trade.scanner_recommendations "
-                + "(scanner_run_id, strategy_id, league, item_or_market_key, why_it_fired, buy_plan, max_buy, transform_plan, exit_plan, execution_venue, expected_profit_chaos, expected_roi, expected_hold_time, confidence, evidence_snapshot, recorded_at)\n"
-                + "FORMAT JSONEachRow\n"
-                + "\n".join(
-                    json.dumps(row, separators=(",", ":"))
-                    for row in recommendation_rows
-                )
+            _insert_json_rows(
+                client,
+                table="poe_trade.scanner_recommendations",
+                rows=recommendation_rows,
+                columns=_RECOMMENDATION_INSERT_COLUMNS,
+                fallback_columns=_LEGACY_RECOMMENDATION_INSERT_COLUMNS,
             )
-            _ = client.execute(
-                "INSERT INTO poe_trade.scanner_alert_log "
-                + "(alert_id, scanner_run_id, strategy_id, league, item_or_market_key, status, evidence_snapshot, recorded_at)\n"
-                + "FORMAT JSONEachRow\n"
-                + "\n".join(
-                    json.dumps(_alert_payload(row), separators=(",", ":"))
-                    for row in recommendation_rows
-                )
+            _insert_json_rows(
+                client,
+                table="poe_trade.scanner_alert_log",
+                rows=[_alert_payload(row) for row in recommendation_rows],
+                columns=_ALERT_INSERT_COLUMNS,
+                fallback_columns=_LEGACY_ALERT_INSERT_COLUMNS,
             )
 
     return scanner_run_id
@@ -144,7 +210,16 @@ def _fetch_last_alerted_at_by_key(
     strategy_id: str,
     league: str,
 ) -> dict[str, datetime]:
-    payload = client.execute(
+    query = (
+        "SELECT item_or_market_key, max(recorded_at) AS last_recorded_at "
+        + "FROM poe_trade.scanner_alert_log "
+        + f"WHERE strategy_id = '{_escape_sql(strategy_id)}' "
+        + f"AND league = '{_escape_sql(league)}' "
+        + f"AND recommendation_contract_version = {constants.RECOMMENDATION_CONTRACT_VERSION} "
+        + "GROUP BY item_or_market_key "
+        + "FORMAT JSONEachRow"
+    )
+    legacy_query = (
         "SELECT item_or_market_key, max(recorded_at) AS last_recorded_at "
         + "FROM poe_trade.scanner_alert_log "
         + f"WHERE strategy_id = '{_escape_sql(strategy_id)}' "
@@ -152,6 +227,7 @@ def _fetch_last_alerted_at_by_key(
         + "GROUP BY item_or_market_key "
         + "FORMAT JSONEachRow"
     )
+    payload = _execute_with_legacy_fallback(client, query, legacy_query)
     rows = _parse_json_rows(payload)
     last_alerted: dict[str, datetime] = {}
     for row in rows:
@@ -206,6 +282,19 @@ def _recommendation_payload(
         "scanner_run_id": scanner_run_id,
         "strategy_id": candidate.strategy_id,
         "league": candidate.league,
+        "recommendation_source": _non_empty_text(
+            source_row.get("recommendation_source"),
+            fallback=constants.DEFAULT_RECOMMENDATION_SOURCE,
+        ),
+        "recommendation_contract_version": constants.RECOMMENDATION_CONTRACT_VERSION,
+        "producer_version": _non_empty_text(
+            source_row.get("producer_version"),
+            fallback=__version__,
+        ),
+        "producer_run_id": _non_empty_text(
+            source_row.get("producer_run_id"),
+            fallback=scanner_run_id,
+        ),
         "item_or_market_key": semantic_item_or_market_key,
         "why_it_fired": _non_empty_text(
             source_row.get("why_it_fired"),
@@ -246,6 +335,12 @@ def _alert_payload(recommendation_row: Mapping[str, object]) -> dict[str, object
         "scanner_run_id": recommendation_row.get("scanner_run_id"),
         "strategy_id": strategy_id,
         "league": league,
+        "recommendation_source": recommendation_row.get("recommendation_source"),
+        "recommendation_contract_version": recommendation_row.get(
+            "recommendation_contract_version"
+        ),
+        "producer_version": recommendation_row.get("producer_version"),
+        "producer_run_id": recommendation_row.get("producer_run_id"),
         "item_or_market_key": semantic_item_or_market_key,
         "status": "new",
         "evidence_snapshot": recommendation_row.get("evidence_snapshot"),
@@ -263,6 +358,64 @@ def _parse_json_rows(payload: str) -> list[dict[str, object]]:
         if isinstance(parsed, dict):
             rows.append(cast(dict[str, object], parsed))
     return rows
+
+
+def _insert_json_rows(
+    client: ClickHouseClient,
+    *,
+    table: str,
+    rows: Sequence[Mapping[str, object | None]],
+    columns: tuple[str, ...],
+    fallback_columns: tuple[str, ...],
+) -> None:
+    query = _insert_query(table=table, rows=rows, columns=columns)
+    try:
+        _ = client.execute(query)
+    except ClickHouseClientError as exc:
+        if not _is_missing_metadata_column_error(exc):
+            raise
+        legacy_rows = [
+            {column: row.get(column) for column in fallback_columns} for row in rows
+        ]
+        _ = client.execute(
+            _insert_query(table=table, rows=legacy_rows, columns=fallback_columns)
+        )
+
+
+def _insert_query(
+    *,
+    table: str,
+    rows: Sequence[Mapping[str, object | None]],
+    columns: tuple[str, ...],
+) -> str:
+    return (
+        f"INSERT INTO {table} ("
+        + ", ".join(columns)
+        + ")\n"
+        + "FORMAT JSONEachRow\n"
+        + "\n".join(
+            json.dumps(
+                {column: row.get(column) for column in columns}, separators=(",", ":")
+            )
+            for row in rows
+        )
+    )
+
+
+def _execute_with_legacy_fallback(
+    client: ClickHouseClient, query: str, legacy_query: str
+) -> str:
+    try:
+        return client.execute(query)
+    except ClickHouseClientError as exc:
+        if not _is_missing_metadata_column_error(exc):
+            raise
+        return client.execute(legacy_query)
+
+
+def _is_missing_metadata_column_error(exc: ClickHouseClientError) -> bool:
+    message = str(exc).lower()
+    return "column" in message and ("unknown" in message or "missing" in message)
 
 
 def _parse_datetime(value: object) -> datetime | None:

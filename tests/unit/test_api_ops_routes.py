@@ -105,6 +105,13 @@ def test_ops_contract_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     assert body["visible_service_ids"] == ["market_harvester", "api"]
     assert body["controllable_service_ids"] == ["market_harvester"]
     assert "opportunities" in body["tabs"]
+    assert body["deployment"] == {
+        "backendVersion": "0.1.0",
+        "backendSha": None,
+        "frontendBuildSha": None,
+        "recommendationContractVersion": 2,
+        "contractMatchState": "unknown",
+    }
 
 
 def test_ops_services_shape(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -128,7 +135,7 @@ def test_service_action_maps_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
 
     def _raise_not_found(_client, *, service_id: str, action: str):
-        raise ServiceControlError("failed")
+        raise ServiceControlError(f"docker compose {action} failed for {service_id}")
 
     monkeypatch.setattr(
         "poe_trade.api.app.execute_service_action",
@@ -144,6 +151,32 @@ def test_service_action_maps_errors(monkeypatch: pytest.MonkeyPatch) -> None:
         )
     assert exc.value.status == 503
     assert exc.value.code == "service_action_failed"
+    assert exc.value.details == {
+        "reason": "docker compose restart failed for market_harvester"
+    }
+    assert (
+        exc.value.headers.get("Access-Control-Allow-Origin")
+        == "https://app.example.com"
+    )
+
+
+def test_service_action_forbidden_preserves_cors_headers() -> None:
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+
+    with pytest.raises(ApiError) as exc:
+        app.handle(
+            method="POST",
+            raw_path="/api/v1/actions/services/api/stop",
+            headers=_auth_headers(),
+            body_reader=BytesIO(b""),
+        )
+
+    assert exc.value.status == 403
+    assert exc.value.code == "service_action_forbidden"
+    assert (
+        exc.value.headers.get("Access-Control-Allow-Origin")
+        == "https://app.example.com"
+    )
 
 
 def test_stash_route_is_explicitly_unavailable() -> None:
@@ -157,6 +190,23 @@ def test_stash_route_is_explicitly_unavailable() -> None:
         )
     assert exc.value.status == 503
     assert exc.value.code == "feature_unavailable"
+
+
+def test_stash_status_reports_feature_flag_when_disabled() -> None:
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+    response = app.handle(
+        method="GET",
+        raw_path="/api/v1/stash/status?league=Mirage&realm=pc",
+        headers=_auth_headers(),
+        body_reader=BytesIO(b""),
+    )
+    body = json.loads(response.body.decode("utf-8"))
+
+    assert response.status == 200
+    assert body["status"] == "feature_unavailable"
+    assert body["connected"] is False
+    assert body["reason"] == "set POE_ENABLE_ACCOUNT_STASH=true to enable stash APIs"
+    assert body["featureFlag"] == "POE_ENABLE_ACCOUNT_STASH"
 
 
 def test_stash_route_returns_empty_when_enabled(
@@ -366,6 +416,7 @@ def test_scanner_recommendations_route_forwards_sort_and_filters(
         raw_path=(
             "/api/v1/ops/scanner/recommendations?sort=expected_profit_chaos"
             "&min_confidence=0.65&league=Mirage&strategy_id=bulk_essence&limit=25"
+            "&cursor=scan-cursor"
         ),
         headers=_auth_headers(),
         body_reader=BytesIO(b""),
@@ -379,7 +430,33 @@ def test_scanner_recommendations_route_forwards_sort_and_filters(
         "min_confidence": 0.65,
         "league": "Mirage",
         "strategy_id": "bulk_essence",
+        "cursor": "scan-cursor",
     }
+
+
+def test_scanner_recommendations_route_invalid_cursor_maps_to_invalid_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _payload(_client, **kwargs):
+        assert kwargs.get("cursor") == "bad-cursor"
+        raise ValueError("invalid cursor")
+
+    monkeypatch.setattr(
+        "poe_trade.api.app.scanner_recommendations_payload",
+        _payload,
+    )
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+
+    with pytest.raises(ApiError) as exc:
+        app.handle(
+            method="GET",
+            raw_path="/api/v1/ops/scanner/recommendations?cursor=bad-cursor",
+            headers=_auth_headers(),
+            body_reader=BytesIO(b""),
+        )
+
+    assert exc.value.status == 400
+    assert exc.value.code == "invalid_input"
 
 
 def test_ack_alert_route_shape(monkeypatch: pytest.MonkeyPatch) -> None:

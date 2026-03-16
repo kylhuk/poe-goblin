@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import secrets
 import urllib.error
 import urllib.request
@@ -13,6 +14,9 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 from poe_trade.config.settings import Settings
+
+
+_ACCOUNT_NAME_TEXT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]{1,63}$")
 
 
 def _now() -> datetime:
@@ -112,14 +116,11 @@ def resolve_account_name(settings: Settings, *, poe_session_id: str) -> str:
     if not trimmed_session_id:
         raise ValueError("poeSessionId is required")
     request_headers = {
-        "Accept": "application/json",
+        "Accept": "application/json, text/plain;q=0.9",
         "Cookie": f"POESESSID={trimmed_session_id}",
         "User-Agent": settings.poe_user_agent,
     }
-    urls = (
-        f"{settings.poe_api_base_url.rstrip('/')}/account",
-        "https://www.pathofexile.com/character-window/get-account-name",
-    )
+    urls = _account_name_candidate_urls(settings)
     for url in urls:
         request = urllib.request.Request(url, headers=request_headers, method="GET")
         try:
@@ -132,11 +133,33 @@ def resolve_account_name(settings: Settings, *, poe_session_id: str) -> str:
         try:
             payload = json.loads(body)
         except json.JSONDecodeError:
+            account_name = _extract_account_name_from_text(body)
+            if account_name:
+                return account_name
             continue
         account_name = _extract_account_name(payload)
         if account_name:
             return account_name
     raise ValueError("unable to resolve account name")
+
+
+def _account_name_candidate_urls(settings: Settings) -> tuple[str, ...]:
+    base = settings.poe_api_base_url.rstrip("/")
+    candidates = (
+        f"{base}/account/profile",
+        f"{base}/account-profile",
+        f"{base}/account",
+        "https://www.pathofexile.com/api/account-profile",
+        "https://www.pathofexile.com/character-window/get-account-name",
+    )
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        deduped.append(candidate)
+        seen.add(candidate)
+    return tuple(deduped)
 
 
 def _extract_account_name(payload: Any) -> str | None:
@@ -149,6 +172,17 @@ def _extract_account_name(payload: Any) -> str | None:
         if isinstance(nested, dict):
             return _extract_account_name(nested)
     return None
+
+
+def _extract_account_name_from_text(payload: str) -> str | None:
+    candidate = payload.strip()
+    if not candidate:
+        return None
+    if "<" in candidate or "\n" in candidate or "\r" in candidate:
+        return None
+    if not _ACCOUNT_NAME_TEXT_PATTERN.match(candidate):
+        return None
+    return candidate
 
 
 @dataclass(frozen=True)

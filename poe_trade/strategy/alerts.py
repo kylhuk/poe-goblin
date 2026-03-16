@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from ..db import ClickHouseClient
+from ..db import ClickHouseClient, ClickHouseClientError
 
 
 def list_alerts(client: ClickHouseClient) -> list[dict[str, str]]:
@@ -23,7 +23,20 @@ def list_alerts(client: ClickHouseClient) -> list[dict[str, str]]:
 
 def ack_alert(client: ClickHouseClient, *, alert_id: str) -> str:
     recorded_at = _format_ts(datetime.now(timezone.utc))
-    client.execute(
+    query = (
+        "INSERT INTO poe_trade.scanner_alert_log "
+        "(alert_id, scanner_run_id, strategy_id, league, recommendation_source, recommendation_contract_version, producer_version, producer_run_id, item_or_market_key, status, evidence_snapshot, recorded_at) "
+        "SELECT "
+        f"'{alert_id}' AS alert_id, "
+        "scanner_run_id, strategy_id, league, recommendation_source, recommendation_contract_version, producer_version, producer_run_id, item_or_market_key, 'acked' AS status, evidence_snapshot, "
+        f"toDateTime64('{recorded_at}', 3, 'UTC') AS recorded_at "
+        "FROM ("
+        "SELECT scanner_run_id, strategy_id, league, recommendation_source, recommendation_contract_version, producer_version, producer_run_id, item_or_market_key, evidence_snapshot "
+        "FROM poe_trade.scanner_alert_log "
+        f"WHERE alert_id = '{alert_id}' ORDER BY recorded_at DESC LIMIT 1"
+        ")"
+    )
+    legacy_query = (
         "INSERT INTO poe_trade.scanner_alert_log "
         "SELECT "
         f"'{alert_id}' AS alert_id, "
@@ -35,6 +48,15 @@ def ack_alert(client: ClickHouseClient, *, alert_id: str) -> str:
         f"WHERE alert_id = '{alert_id}' ORDER BY recorded_at DESC LIMIT 1"
         ")"
     )
+    try:
+        _ = client.execute(query)
+    except ClickHouseClientError as exc:
+        message = str(exc).lower()
+        if "column" not in message or (
+            "unknown" not in message and "missing" not in message
+        ):
+            raise
+        _ = client.execute(legacy_query)
     return alert_id
 
 

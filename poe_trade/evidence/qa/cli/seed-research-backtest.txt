@@ -1,0 +1,7 @@
+command: /home/hal9000/docker/poe_trade/.venv/bin/python -m poe_trade.cli research backtest --strategy bulk_essence --league Mirage --days 14
+exit_code: 0
+stdout:
+run_id	strategy_id	league	lookback_days	status	opportunity_count	expected_profit_chaos	expected_roi	confidence	summary
+f68db0a57f7c496bbf9f06be293422c2	bulk_essence	Mirage	14	completed	1	30	1	1	opportunities found
+stderr:
+<empty>

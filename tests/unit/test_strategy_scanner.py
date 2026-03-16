@@ -5,6 +5,8 @@ from typing import cast
 
 import pytest
 
+from poe_trade import __version__
+from poe_trade.config import constants
 from poe_trade.db import ClickHouseClient
 import poe_trade.strategy.registry as registry
 import poe_trade.strategy.scanner as scanner
@@ -182,6 +184,7 @@ def test_run_scan_once_preserves_source_recommendation_fields_with_fallbacks(
 
     assert len(client.queries) == 4
     fetch_query = client.queries[0]
+    cooldown_query = client.queries[1]
     assert "discover-only-marker" not in fetch_query
     assert "seed-semantic" in fetch_query
     assert "semantic_key" in fetch_query
@@ -192,20 +195,120 @@ def test_run_scan_once_preserves_source_recommendation_fields_with_fallbacks(
         "cityHash64(concat(ifNull(source.semantic_key, ''), '|', ifNull(source.item_or_market_key, '')))"
         in fetch_query
     )
+    assert (
+        f"recommendation_contract_version = {constants.RECOMMENDATION_CONTRACT_VERSION}"
+        in cooldown_query
+    )
 
     recommendation_query = client.queries[2]
     assert "scanner_recommendations" in recommendation_query
-    assert '"item_or_market_key":"seed-semantic"' in recommendation_query
-    assert '"why_it_fired":"fired"' in recommendation_query
-    assert '"buy_plan":"buy"' in recommendation_query
-    assert '"exit_plan":"exit"' in recommendation_query
-    assert '"expected_hold_time":"2h"' in recommendation_query
+    recommendation_row = _extract_insert_rows(recommendation_query)[0]
+    assert recommendation_row["item_or_market_key"] == "seed-semantic"
+    assert recommendation_row["why_it_fired"] == "fired"
+    assert recommendation_row["buy_plan"] == "buy"
+    assert recommendation_row["exit_plan"] == "exit"
+    assert recommendation_row["expected_hold_time"] == "2h"
+    assert recommendation_row["recommendation_source"] == "strategy_pack"
+    assert (
+        recommendation_row["recommendation_contract_version"]
+        == constants.RECOMMENDATION_CONTRACT_VERSION
+    )
+    assert recommendation_row["producer_version"] == __version__
+    assert recommendation_row["producer_run_id"] == recommendation_row["scanner_run_id"]
     assert "123456" in recommendation_query
     assert "source_row_json" in recommendation_query
 
     alert_query = client.queries[3]
     assert "scanner_alert_log" in alert_query
-    assert '"alert_id":"demo_strategy|Mirage|seed-semantic"' in alert_query
+    alert_row = _extract_insert_rows(alert_query)[0]
+    assert alert_row["alert_id"] == "demo_strategy|Mirage|seed-semantic"
+    assert alert_row["recommendation_source"] == "strategy_pack"
+    assert (
+        alert_row["recommendation_contract_version"]
+        == constants.RECOMMENDATION_CONTRACT_VERSION
+    )
+    assert alert_row["producer_version"] == __version__
+    assert alert_row["producer_run_id"] == recommendation_row["scanner_run_id"]
+
+
+def test_run_scan_once_preserves_explicit_recommendation_provenance_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    candidate_sql = tmp_path / "candidate.sql"
+    _ = candidate_sql.write_text(
+        "SELECT 'provenance-marker'",
+        encoding="utf-8",
+    )
+    discover_sql = tmp_path / "discover.sql"
+    _ = discover_sql.write_text("SELECT 'discover-only-marker'", encoding="utf-8")
+    pack = SimpleNamespace(
+        enabled=True,
+        strategy_id="ml_anomaly",
+        execution_venue="manual_trade",
+        min_expected_profit_chaos=10.0,
+        min_expected_roi=0.2,
+        min_confidence=0.7,
+        min_sample_count=15,
+        cooldown_minutes=0,
+        requires_journal=False,
+        candidate_sql_path=candidate_sql,
+        backtest_sql_path=candidate_sql,
+        discover_sql_path=discover_sql,
+    )
+    row = {
+        "time_bucket": "2026-03-01 00:00:00",
+        "league": "Mirage",
+        "item_or_market_key": "legacy:ml:1",
+        "semantic_key": "sem:ml:1",
+        "expected_profit_chaos": 12.0,
+        "expected_roi": 0.25,
+        "confidence": 0.9,
+        "sample_count": 33,
+        "why_it_fired": "model anomaly",
+        "buy_plan": "buy",
+        "exit_plan": "sell",
+        "expected_hold_time": "30m",
+        "recommendation_source": "ml_anomaly",
+        "producer_version": "mirage-model-v2",
+        "producer_run_id": "train-42",
+        "source_row_json": '{"item_or_market_key":"legacy:ml:1","semantic_key":"sem:ml:1"}',
+        "legacy_hashed_item_or_market_key": "legacy-hash",
+    }
+    monkeypatch.setattr(scanner, "list_strategy_packs", lambda: [pack])
+    monkeypatch.setattr(
+        scanner,
+        "_fetch_candidate_source_rows",
+        lambda *_args, **_kwargs: [row],
+    )
+    client = _RecordingClient()
+
+    _ = scanner.run_scan_once(
+        _clickhouse_client(client), league="Mirage", dry_run=False
+    )
+
+    recommendation_query = next(
+        query
+        for query in client.queries
+        if "INSERT INTO poe_trade.scanner_recommendations" in query
+    )
+    alert_query = next(
+        query
+        for query in client.queries
+        if "INSERT INTO poe_trade.scanner_alert_log" in query
+    )
+    recommendation_row = _extract_insert_rows(recommendation_query)[0]
+    alert_row = _extract_insert_rows(alert_query)[0]
+
+    assert recommendation_row["recommendation_source"] == "ml_anomaly"
+    assert recommendation_row["producer_version"] == "mirage-model-v2"
+    assert recommendation_row["producer_run_id"] == "train-42"
+    assert (
+        recommendation_row["recommendation_contract_version"]
+        == constants.RECOMMENDATION_CONTRACT_VERSION
+    )
+    assert alert_row["recommendation_source"] == "ml_anomaly"
+    assert alert_row["producer_version"] == "mirage-model-v2"
+    assert alert_row["producer_run_id"] == "train-42"
 
 
 def test_run_scan_once_journal_blocks_without_active_keys(

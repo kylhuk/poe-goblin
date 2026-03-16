@@ -39,25 +39,25 @@ Set these exact env vars in `.env` before starting:
 - `POE_API_BIND_HOST` (default `127.0.0.1`)
 - `POE_API_BIND_PORT` (default `8080`)
 - `POE_API_OPERATOR_TOKEN` (required)
-- `POE_API_CORS_ORIGINS` (comma-separated allowlist, for example `https://app.example.com`)
+- `POE_API_CORS_ORIGINS` (comma-separated allowlist, defaults to `https://poe.lama-lan.ch`)
 - `POE_API_MAX_BODY_BYTES` (default `32768`)
 - `POE_API_LEAGUE_ALLOWLIST` (default `Mirage`)
 
 Manual start (for debugging):
-- `POE_API_OPERATOR_TOKEN=phase1-token POE_API_CORS_ORIGINS=https://app.example.com .venv/bin/python -m poe_trade.cli service --name api -- --host 127.0.0.1 --port 8080`
+- `POE_API_OPERATOR_TOKEN=phase1-token .venv/bin/python -m poe_trade.cli service --name api -- --host 127.0.0.1 --port 8080`
 
 Verify routes:
 - `curl -i http://127.0.0.1:8080/healthz`
-- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://app.example.com" http://127.0.0.1:8080/api/v1/ops/contract`
-- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://app.example.com" http://127.0.0.1:8080/api/v1/ops/services`
-- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://app.example.com" http://127.0.0.1:8080/api/v1/ops/messages`
-- `curl -i -X POST -H "Authorization: Bearer phase1-token" -H "Origin: https://app.example.com" http://127.0.0.1:8080/api/v1/actions/services/market_harvester/restart`
-- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://app.example.com" http://127.0.0.1:8080/api/v1/ml/contract`
-- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://app.example.com" http://127.0.0.1:8080/api/v1/ml/leagues/Mirage/status`
+- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://poe.lama-lan.ch" http://127.0.0.1:8080/api/v1/ops/contract`
+- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://poe.lama-lan.ch" http://127.0.0.1:8080/api/v1/ops/services`
+- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://poe.lama-lan.ch" http://127.0.0.1:8080/api/v1/ops/messages`
+- `curl -i -X POST -H "Authorization: Bearer phase1-token" -H "Origin: https://poe.lama-lan.ch" http://127.0.0.1:8080/api/v1/actions/services/market_harvester/restart`
+- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://poe.lama-lan.ch" http://127.0.0.1:8080/api/v1/ml/contract`
+- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://poe.lama-lan.ch" http://127.0.0.1:8080/api/v1/ml/leagues/Mirage/status`
 - `curl -i -X POST -H "Authorization: Bearer phase1-token" -H "Content-Type: application/json" --data '{"input_format":"poe-clipboard","payload":"Item Class: Maps\nRarity: Rare\nGrim Veil\nCemetery Map","output_mode":"json"}' http://127.0.0.1:8080/api/v1/ml/leagues/Mirage/predict-one`
 - `curl -i -X POST -H "Authorization: Bearer phase1-token" -H "Content-Type: application/json" --data '{"itemText":"Item Class: Maps\nRarity: Rare\nGrim Veil\nCemetery Map"}' http://127.0.0.1:8080/api/v1/ops/leagues/Mirage/price-check`
 - `curl -i -H "Authorization: Bearer phase1-token" "http://127.0.0.1:8080/api/v1/ops/scanner/recommendations?sort=liquidity_score&limit=5&min_confidence=0.8"`
-- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://app.example.com" "http://127.0.0.1:8080/api/v1/stash/tabs?league=Mirage&realm=pc"`
+- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://poe.lama-lan.ch" "http://127.0.0.1:8080/api/v1/stash/tabs?league=Mirage&realm=pc"`
 - `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://evil.example.com" http://127.0.0.1:8080/api/v1/ml/leagues/Mirage/status`
 
 Current non-goals:
@@ -84,7 +84,7 @@ Current non-goals:
 
 ## Deterministic review gates
 - `make ci-deterministic` runs the default local/CI deterministic suite: task-14 API contract regressions, full backend unit tests, frontend unit/build/scenario-inventory checks, CLI smoke checks, and QA compose config validation.
-- Browser Playwright coverage remains outside the default deterministic gate while QA browser paths are still blocked; run it separately when the blocker is cleared.
+- Browser Playwright coverage is integrated into the deterministic gate; run `make ci-deterministic` to verify frontend scenarios against the QA stack.
 
 ## CLI surface
 - `.venv/bin/python -m poe_trade.cli service --name market_harvester -- --help` to see the market sync daemon arguments and polling knobs.
@@ -122,7 +122,7 @@ Current non-goals:
 - `POE_API_BASE_URL`, `POE_AUTH_BASE_URL`, `POE_USER_AGENT`, and the rate limit controls (`POE_RATE_LIMIT_*`).
 - `POE_REALMS`, `POE_ENABLE_PSAPI`, `POE_ENABLE_CXAPI`, `POE_PSAPI_POLL_SECONDS`, and `POE_CXAPI_*` control queue-based market sync.
 - `POE_OAUTH_CLIENT_ID`, `POE_OAUTH_CLIENT_SECRET` or `_FILE`, `POE_OAUTH_SCOPE`, and `POE_OAUTH_GRANT_TYPE` for the OAuth refresh path.
-- `POE_API_BIND_HOST`, `POE_API_BIND_PORT`, `POE_API_OPERATOR_TOKEN`, `POE_API_CORS_ORIGINS`, `POE_API_MAX_BODY_BYTES`, and `POE_API_LEAGUE_ALLOWLIST` for the protected ML API service.
+- `POE_API_CORS_ORIGINS`, `POE_API_MAX_BODY_BYTES`, and `POE_API_LEAGUE_ALLOWLIST` (defaults to `https://poe.lama-lan.ch`, `32768`, and `Mirage`) for the protected ML API service.
 - Keep `POE_ENABLE_CXAPI=false` until the environment is ready for hourly Currency Exchange sync; when enabled, `POE_OAUTH_SCOPE` must include `service:cxapi`.
 - `POE_CHECKPOINT_DIR`, `POE_CURSOR_DIR`, and `POE_LEAGUES` remain compatibility-only aliases; ClickHouse checkpoint history is the canonical cursor source.
 

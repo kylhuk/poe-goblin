@@ -1,7 +1,7 @@
 {
   "status": "ok",
-  "total": 25,
-  "unique": 25,
+  "total": 28,
+  "unique": 28,
   "expectedApiMethods": [
     "getScannerSummary",
     "getScannerRecommendations",

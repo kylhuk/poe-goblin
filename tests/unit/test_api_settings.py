@@ -16,7 +16,7 @@ def test_api_settings_defaults() -> None:
     assert cfg.api_bind_host == "127.0.0.1"
     assert cfg.api_bind_port == 8080
     assert cfg.api_operator_token == ""
-    assert cfg.api_cors_origins == ()
+    assert cfg.api_cors_origins == ("https://poe.lama-lan.ch",)
     assert cfg.api_trusted_origin_bypass is False
     assert cfg.api_max_body_bytes == 32768
     assert cfg.api_league_allowlist == ("Mirage",)
@@ -77,4 +77,4 @@ def test_missing_token_fails_closed() -> None:
     with mock.patch.dict(os.environ, {}, clear=True):
         cfg = Settings.from_env()
     with pytest.raises(ValueError, match="POE_API_OPERATOR_TOKEN"):
-        create_app(cfg, clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+        _ = create_app(cfg, clickhouse_client=ClickHouseClient(endpoint="http://ch"))

@@ -95,6 +95,88 @@ def test_research_backtest_command(monkeypatch, capsys):
     assert capsys.readouterr().out.strip() == "run-123"
 
 
+def test_research_backtest_command_outputs_summary_row(monkeypatch, capsys):
+    calls = []
+
+    monkeypatch.setattr(
+        cli.settings,
+        "get_settings",
+        lambda: SimpleNamespace(clickhouse_url="http://clickhouse"),
+    )
+    monkeypatch.setattr(cli, "ClickHouseClient", _DummyClickHouseClient)
+
+    class _BacktestModule:
+        BACKTEST_SUMMARY_HEADER = "run_id\tstrategy_id\tleague\tlookback_days\tstatus\topportunity_count\texpected_profit_chaos\texpected_roi\tconfidence\tsummary"
+
+        @staticmethod
+        def run_backtest(client, *, strategy_id, league, lookback_days, dry_run=False):
+            calls.append((client.url, strategy_id, league, lookback_days, dry_run))
+            return "run-456"
+
+        @staticmethod
+        def fetch_backtest_summary_rows(client, *, run_id):
+            return [
+                {
+                    "run_id": run_id,
+                    "strategy_id": "bulk_essence",
+                    "league": "Mirage",
+                    "lookback_days": 14,
+                    "status": "no_opportunities",
+                    "opportunity_count": 0,
+                    "expected_profit_chaos": None,
+                    "expected_roi": None,
+                    "confidence": None,
+                    "summary": "source data exists but all candidates require journal state",
+                }
+            ]
+
+        @staticmethod
+        def format_summary_row(row):
+            return "\t".join(
+                str(row.get(k, ""))
+                for k in (
+                    "run_id",
+                    "strategy_id",
+                    "league",
+                    "lookback_days",
+                    "status",
+                    "opportunity_count",
+                    "expected_profit_chaos",
+                    "expected_roi",
+                    "confidence",
+                    "summary",
+                )
+            )
+
+    monkeypatch.setattr(
+        cli.importlib,
+        "import_module",
+        lambda name: _BacktestModule if name == "poe_trade.strategy.backtest" else None,
+    )
+
+    result = cli.main(
+        [
+            "research",
+            "backtest",
+            "--strategy",
+            "bulk_essence",
+            "--league",
+            "Mirage",
+            "--days",
+            "14",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [("http://clickhouse", "bulk_essence", "Mirage", 14, False)]
+    output = capsys.readouterr().out.strip().splitlines()
+    assert output[0] == _BacktestModule.BACKTEST_SUMMARY_HEADER
+    assert output[1].split("\t")[4] == "no_opportunities"
+    assert output[1].split("\t")[9] == (
+        "source data exists but all candidates require journal state"
+    )
+
+
 def test_research_backtest_all_command(monkeypatch, capsys):
     calls = []
 

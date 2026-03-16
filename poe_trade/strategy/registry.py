@@ -29,6 +29,7 @@ class StrategyPack:
     notes_path: Path
     discover_sql_path: Path
     backtest_sql_path: Path
+    candidate_sql_path: Path
 
 
 def list_strategy_packs() -> list[StrategyPack]:
@@ -43,6 +44,7 @@ def list_strategy_packs() -> list[StrategyPack]:
         sql_dir = SQL_STRATEGY_ROOT / strategy_dir.name
         discover_sql_path = sql_dir / "discover.sql"
         backtest_sql_path = sql_dir / "backtest.sql"
+        candidate_sql_path = sql_dir / "candidate.sql"
         if not metadata_path.exists() or not notes_path.exists():
             continue
         if not discover_sql_path.exists() or not backtest_sql_path.exists():
@@ -77,9 +79,20 @@ def list_strategy_packs() -> list[StrategyPack]:
                 notes_path=notes_path,
                 discover_sql_path=discover_sql_path,
                 backtest_sql_path=backtest_sql_path,
+                candidate_sql_path=candidate_sql_path,
             )
         )
     return packs
+
+
+def get_candidate_sql_path(pack: StrategyPack) -> Path:
+    if pack.candidate_sql_path.exists():
+        return pack.candidate_sql_path
+    return pack.backtest_sql_path
+
+
+def load_candidate_sql(pack: StrategyPack) -> str:
+    return get_candidate_sql_path(pack).read_text(encoding="utf-8")
 
 
 def _as_optional_float(value: object) -> float | None:

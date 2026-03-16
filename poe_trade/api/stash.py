@@ -31,6 +31,8 @@ def stash_status_payload(
             "connected": False,
             "tabCount": 0,
             "itemCount": 0,
+            "reason": "set POE_ENABLE_ACCOUNT_STASH=true to enable stash APIs",
+            "featureFlag": "POE_ENABLE_ACCOUNT_STASH",
             "session": None,
         }
     if session is None:
