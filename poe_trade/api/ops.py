@@ -245,6 +245,11 @@ def scanner_recommendations_payload(
     cursor: str | None = None,
 ) -> dict[str, Any]:
     sort_spec = _validate_scanner_sort(sort_by)
+    if min_confidence is not None and min_confidence > 1:
+        if min_confidence <= 100:
+            min_confidence = min_confidence / 100.0
+        else:
+            raise ValueError("min_confidence must be between 0 and 1")
     if min_confidence is not None and not 0 <= min_confidence <= 1:
         raise ValueError("min_confidence must be between 0 and 1")
     page_limit = max(1, min(limit, 200))
@@ -643,18 +648,28 @@ def price_check_payload(
             "output_mode": "json",
         },
     )
-    return {
-        "predictedValue": prediction.get("price_p50"),
-        "currency": "chaos",
-        "confidence": prediction.get("confidence_percent") or 0.0,
-        "comparables": [],
-        "interval": {
+    interval = prediction.get("interval")
+    if not isinstance(interval, dict):
+        interval = {
             "p10": prediction.get("price_p10"),
             "p90": prediction.get("price_p90"),
-        },
-        "saleProbabilityPercent": prediction.get("sale_probability_percent"),
-        "priceRecommendationEligible": prediction.get("price_recommendation_eligible"),
-        "fallbackReason": prediction.get("fallback_reason"),
+        }
+    return {
+        "predictedValue": prediction.get("predictedValue")
+        or prediction.get("price_p50"),
+        "currency": prediction.get("currency") or "chaos",
+        "confidence": prediction.get("confidence")
+        or prediction.get("confidence_percent")
+        or 0.0,
+        "comparables": [],
+        "interval": interval,
+        "saleProbabilityPercent": prediction.get("saleProbabilityPercent")
+        or prediction.get("sale_probability_percent"),
+        "priceRecommendationEligible": prediction.get("priceRecommendationEligible")
+        if prediction.get("priceRecommendationEligible") is not None
+        else prediction.get("price_recommendation_eligible"),
+        "fallbackReason": prediction.get("fallbackReason")
+        or prediction.get("fallback_reason"),
     }
 
 
