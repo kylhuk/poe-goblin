@@ -1,0 +1,158 @@
+--- a/poe_trade/api/ml.py
++++ b/poe_trade/api/ml.py
+@@ -63,19 +63,7 @@
+         raise BackendUnavailable("predict backend unavailable") from exc
+     except Exception as exc:
+         raise BackendUnavailable("predict backend unavailable") from exc
+-    return {
+-        "league": league,
+-        "route": str(raw.get("route") or "fallback_abstain"),
+-        "price_p10": _opt_float(raw.get("price_p10")),
+-        "price_p50": _opt_float(raw.get("price_p50")),
+-        "price_p90": _opt_float(raw.get("price_p90")),
+-        "confidence_percent": _opt_float(raw.get("confidence_percent")),
+-        "sale_probability_percent": _opt_float(raw.get("sale_probability_percent")),
+-        "price_recommendation_eligible": bool(
+-            raw.get("price_recommendation_eligible", False)
+-        ),
+-        "fallback_reason": str(raw.get("fallback_reason") or ""),
+-    }
++    return normalize_predict_one_payload(league=league, payload=raw)
+ 
+ 
+ def fetch_automation_status(client: ClickHouseClient, *, league: str) -> dict[str, Any]:
+@@ -172,11 +160,21 @@
+ 
+ 
+ def validate_predict_one_request(payload: dict[str, Any]) -> str:
+-    expected_keys = {"input_format", "payload", "output_mode"}
+-    extra = set(payload) - expected_keys
++    allowed_keys = {"input_format", "payload", "output_mode", "clipboard", "itemText"}
++    extra = set(payload) - allowed_keys
+     if extra:
+         raise ValueError("unexpected request field")
+-    if payload.get("input_format") != "poe-clipboard":
++
++    clipboard = payload.get("clipboard")
++    if isinstance(clipboard, str) and clipboard.strip():
++        return clipboard.strip()
++
++    item_text = payload.get("itemText")
++    if isinstance(item_text, str) and item_text.strip():
++        return item_text.strip()
++
++    input_format = payload.get("input_format")
++    if input_format is not None and input_format != "poe-clipboard":
+         raise ValueError("input_format must be poe-clipboard")
+     output_mode = payload.get("output_mode")
+     if output_mode is not None and output_mode != "json":
+@@ -184,7 +182,54 @@
+     raw_payload = payload.get("payload")
+     if not isinstance(raw_payload, str) or not raw_payload.strip():
+         raise ValueError("payload must be a non-empty string")
+-    return raw_payload
++    return raw_payload.strip()
++
++
++def normalize_predict_one_payload(*, league: str, payload: dict[str, Any]) -> dict[str, Any]:
++    price_p10 = _opt_float(payload.get("price_p10"))
++    price_p50 = _opt_float(payload.get("price_p50"))
++    price_p90 = _opt_float(payload.get("price_p90"))
++    predicted_value = _opt_float(payload.get("predictedValue"))
++    if predicted_value is None:
++        predicted_value = price_p50
++    confidence = _opt_float(payload.get("confidence"))
++    if confidence is None:
++        confidence = _opt_float(payload.get("confidence_percent"))
++    sale_probability_percent = _opt_float(payload.get("saleProbabilityPercent"))
++    if sale_probability_percent is None:
++        sale_probability_percent = _opt_float(payload.get("sale_probability_percent"))
++    price_recommendation_eligible = bool(
++        payload.get("priceRecommendationEligible")
++        if "priceRecommendationEligible" in payload
++        else payload.get("price_recommendation_eligible", False)
++    )
++    fallback_reason = str(
++        payload.get("fallbackReason") or payload.get("fallback_reason") or ""
++    )
++    currency = str(payload.get("currency") or "chaos")
++
++    return {
++        "league": league,
++        "route": str(payload.get("route") or "fallback_abstain"),
++        "predictedValue": predicted_value,
++        "currency": currency,
++        "confidence": confidence,
++        "interval": {
++            "p10": price_p10,
++            "p90": price_p90,
++        },
++        "saleProbabilityPercent": sale_probability_percent,
++        "priceRecommendationEligible": price_recommendation_eligible,
++        "fallbackReason": fallback_reason,
++        # Backward-compatible fields for existing clients.
++        "price_p10": price_p10,
++        "price_p50": price_p50,
++        "price_p90": price_p90,
++        "confidence_percent": confidence,
++        "sale_probability_percent": sale_probability_percent,
++        "price_recommendation_eligible": price_recommendation_eligible,
++        "fallback_reason": fallback_reason,
++    }
+ 
+ 
+ def _opt_str(value: Any) -> str | None:
+--- a/poe_trade/api/ops.py
++++ b/poe_trade/api/ops.py
+@@ -245,6 +245,11 @@
+     cursor: str | None = None,
+ ) -> dict[str, Any]:
+     sort_spec = _validate_scanner_sort(sort_by)
++    if min_confidence is not None and min_confidence > 1:
++        if min_confidence <= 100:
++            min_confidence = min_confidence / 100.0
++        else:
++            raise ValueError("min_confidence must be between 0 and 1")
+     if min_confidence is not None and not 0 <= min_confidence <= 1:
+         raise ValueError("min_confidence must be between 0 and 1")
+     page_limit = max(1, min(limit, 200))
+@@ -643,18 +648,28 @@
+             "output_mode": "json",
+         },
+     )
+-    return {
+-        "predictedValue": prediction.get("price_p50"),
+-        "currency": "chaos",
+-        "confidence": prediction.get("confidence_percent") or 0.0,
+-        "comparables": [],
+-        "interval": {
++    interval = prediction.get("interval")
++    if not isinstance(interval, dict):
++        interval = {
+             "p10": prediction.get("price_p10"),
+             "p90": prediction.get("price_p90"),
+-        },
+-        "saleProbabilityPercent": prediction.get("sale_probability_percent"),
+-        "priceRecommendationEligible": prediction.get("price_recommendation_eligible"),
+-        "fallbackReason": prediction.get("fallback_reason"),
++        }
++    return {
++        "predictedValue": prediction.get("predictedValue")
++        or prediction.get("price_p50"),
++        "currency": prediction.get("currency") or "chaos",
++        "confidence": prediction.get("confidence")
++        or prediction.get("confidence_percent")
++        or 0.0,
++        "comparables": [],
++        "interval": interval,
++        "saleProbabilityPercent": prediction.get("saleProbabilityPercent")
++        or prediction.get("sale_probability_percent"),
++        "priceRecommendationEligible": prediction.get("priceRecommendationEligible")
++        if prediction.get("priceRecommendationEligible") is not None
++        else prediction.get("price_recommendation_eligible"),
++        "fallbackReason": prediction.get("fallbackReason")
++        or prediction.get("fallback_reason"),
+     }
+ 
+ 
+
