@@ -289,7 +289,7 @@ function MlPanel() {
         <Card className="card-game">
           <CardContent className="p-4 text-center">
             <span className="text-xs text-muted-foreground">Avg MDAPE</span>
-            <p className="text-lg font-mono text-foreground">{(s.latest_avg_mdape * 100).toFixed(1)}%</p>
+            <p className="text-lg font-mono text-foreground">{s.latest_avg_mdape != null ? (s.latest_avg_mdape * 100).toFixed(1) : '—'}%</p>
           </CardContent>
         </Card>
         <Card className="card-game">
