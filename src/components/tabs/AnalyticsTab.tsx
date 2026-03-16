@@ -242,10 +242,10 @@ function MlPanel() {
   }, []);
 
   if (error) return <RenderState kind="degraded" message={error} />;
-  if (!data) return <RenderState kind="empty" message="No ML data available" />;
+  if (!data?.status) return <RenderState kind="empty" message="No ML data available" />;
 
   const s = data.status as MlStatus;
-  const cmp = s.candidate_vs_incumbent;
+  const cmp = s.candidate_vs_incumbent ?? null;
 
   return (
     <div className="space-y-4">
@@ -289,13 +289,13 @@ function MlPanel() {
         <Card className="card-game">
           <CardContent className="p-4 text-center">
             <span className="text-xs text-muted-foreground">Avg MDAPE</span>
-            <p className="text-lg font-mono text-foreground">{(s.latest_avg_mdape * 100).toFixed(1)}%</p>
+            <p className="text-lg font-mono text-foreground">{s.latest_avg_mdape != null ? (s.latest_avg_mdape * 100).toFixed(1) : '—'}%</p>
           </CardContent>
         </Card>
         <Card className="card-game">
           <CardContent className="p-4 text-center">
             <span className="text-xs text-muted-foreground">Interval Coverage</span>
-            <p className="text-lg font-mono text-foreground">{(s.latest_avg_interval_coverage * 100).toFixed(1)}%</p>
+            <p className="text-lg font-mono text-foreground">{s.latest_avg_interval_coverage != null ? (s.latest_avg_interval_coverage * 100).toFixed(1) : '—'}%</p>
           </CardContent>
         </Card>
       </div>
