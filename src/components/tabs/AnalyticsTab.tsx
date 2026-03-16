@@ -253,7 +253,7 @@ function MlPanel() {
   const [automationHistory, setAutomationHistory] = useState<MlAutomationHistory | null>(null);
   const [automationError, setAutomationError] = useState<string | null>(null);
 
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsMl()
       .then(setData)
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ML analytics'));
@@ -265,6 +265,7 @@ function MlPanel() {
       })
       .catch(err => setAutomationError(err instanceof Error ? err.message : 'Failed to load automation data'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (!data?.status) return <RenderState kind="empty" message="No ML data available" />;
