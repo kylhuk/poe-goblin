@@ -242,10 +242,10 @@ function MlPanel() {
   }, []);
 
   if (error) return <RenderState kind="degraded" message={error} />;
-  if (!data) return <RenderState kind="empty" message="No ML data available" />;
+  if (!data?.status) return <RenderState kind="empty" message="No ML data available" />;
 
   const s = data.status as MlStatus;
-  const cmp = s.candidate_vs_incumbent;
+  const cmp = s.candidate_vs_incumbent ?? null;
 
   return (
     <div className="space-y-4">
