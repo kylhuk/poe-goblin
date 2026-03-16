@@ -648,19 +648,11 @@ function SearchHistoryPanel() {
 
   const priceFloor = data?.filters.price.min ?? 0;
   const priceCeiling = Math.max(data?.filters.price.max ?? 0, priceFloor);
-  const selectedPriceMin = clampNumber(priceMin ?? priceFloor, priceFloor, priceCeiling);
-  const selectedPriceMax = clampNumber(priceMax ?? priceCeiling, selectedPriceMin, priceCeiling);
   const priceStep = calculateStep(priceFloor, priceCeiling);
 
   const timeRangeMin = toUnixMs(data?.filters.datetime.min);
   const timeRangeMax = toUnixMs(data?.filters.datetime.max);
   const hasTimeRange = timeRangeMin !== null && timeRangeMax !== null && timeRangeMax >= timeRangeMin;
-  const selectedTimeMin = hasTimeRange
-    ? clampNumber(toUnixMs(timeFrom) ?? timeRangeMin, timeRangeMin, timeRangeMax)
-    : null;
-  const selectedTimeMax = hasTimeRange
-    ? clampNumber(toUnixMs(timeTo) ?? timeRangeMax, selectedTimeMin ?? timeRangeMin, timeRangeMax)
-    : null;
   const timeStep = hasTimeRange && timeRangeMin !== null && timeRangeMax !== null
     ? calculateStep(timeRangeMin, timeRangeMax)
     : 1;
