@@ -6,6 +6,17 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Freshness } from '@/components/shared/StatusIndicators';
 import { CheckCircle2, XCircle } from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { 
   getAnalyticsIngestion, 
   getAnalyticsScanner, 
@@ -382,51 +393,206 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
     );
   }
 
+  const summary = history?.summary ?? null;
+  const qualityTrend = history?.qualityTrend ?? [];
+  const trainingCadence = history?.trainingCadence ?? [];
+  const routeMetrics = history?.routeMetrics ?? [];
+  const datasetCoverage = history?.datasetCoverage ?? null;
+  const promotions = history?.promotions ?? [];
+  const runs = history?.history ?? [];
+  const mdapeTrendData = qualityTrend
+    .filter((point) => point.avgMdape != null)
+    .map((point, index) => ({
+      label: point.updatedAt ? formatMiniDate(point.updatedAt) : `Run ${index + 1}`,
+      value: point.avgMdape != null ? Number((point.avgMdape * 100).toFixed(2)) : null,
+    }));
+  const coverageTrendData = qualityTrend
+    .filter((point) => point.avgIntervalCoverage != null)
+    .map((point, index) => ({
+      label: point.updatedAt ? formatMiniDate(point.updatedAt) : `Run ${index + 1}`,
+      value: point.avgIntervalCoverage != null ? Number((point.avgIntervalCoverage * 100).toFixed(2)) : null,
+    }));
+  const cadenceData = trainingCadence.map((point) => ({
+    label: point.date.slice(5),
+    runs: point.runs,
+  }));
+  const deltaLabel = summary?.mdapeDeltaVsPrevious != null
+    ? `${summary.mdapeDeltaVsPrevious >= 0 ? '+' : ''}${(summary.mdapeDeltaVsPrevious * 100).toFixed(1)} pts`
+    : '—';
+
   return (
     <div className="space-y-4">
-      {/* Automation Status */}
       {status && (
         <Card className="card-game">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-sans">Automation Status</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 text-xs">
               <div>
                 <span className="text-muted-foreground">League</span>
                 <p className="font-mono text-foreground">{status.league}</p>
               </div>
               <div>
                 <span className="text-muted-foreground">Active Model</span>
-                <p className="font-mono text-foreground">{status.active_model_version ?? 'None'}</p>
+                <p className="font-mono text-foreground">{status.activeModelVersion ?? 'None'}</p>
               </div>
               <div>
-                <span className="text-muted-foreground">Automation</span>
+                <span className="text-muted-foreground">Status</span>
                 <div className="mt-0.5">
-                  <Badge className={status.automation_enabled ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-destructive/20 text-destructive border-destructive/30'}>
-                    {status.automation_enabled ? 'Enabled' : 'Disabled'}
+                  <Badge className={status.status ? statusColor(status.status) : 'bg-muted text-muted-foreground border-border'}>
+                    {status.status ? humanize(status.status) : 'Unknown'}
                   </Badge>
                 </div>
               </div>
-              {status.latest_run && (
-                <>
-                  <div className="col-span-2 sm:col-span-3">
-                    <span className="text-muted-foreground">Latest Run</span>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="font-mono text-foreground truncate">{status.latest_run.run_id}</span>
-                      <Badge className={statusColor(status.latest_run.status)}>{humanize(status.latest_run.status)}</Badge>
-                      <Badge className={verdictColor(status.latest_run.promotion_verdict)}>{humanize(status.latest_run.promotion_verdict)}</Badge>
-                    </div>
+              <div>
+                <span className="text-muted-foreground">Verdict</span>
+                <div className="mt-0.5">
+                  <Badge className={status.promotionVerdict ? verdictColor(status.promotionVerdict) : 'bg-muted text-muted-foreground border-border'}>
+                    {status.promotionVerdict ? humanize(status.promotionVerdict) : 'Unknown'}
+                  </Badge>
+                </div>
+              </div>
+              {status.latestRun && (
+                <div className="col-span-2 sm:col-span-4">
+                  <span className="text-muted-foreground">Latest Run</span>
+                  <div className="flex flex-wrap items-center gap-3 mt-1">
+                    <span className="font-mono text-foreground truncate">{status.latestRun.runId ?? '—'}</span>
+                    <Badge className={status.latestRun.status ? statusColor(status.latestRun.status) : 'bg-muted text-muted-foreground border-border'}>
+                      {status.latestRun.status ? humanize(status.latestRun.status) : 'Unknown'}
+                    </Badge>
+                    <span className="text-muted-foreground">{status.latestRun.updatedAt ? formatDateTimeShort(status.latestRun.updatedAt) : '—'}</span>
                   </div>
-                </>
+                </div>
               )}
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Run History */}
-      {history && history.runs.length > 0 && (
+      {summary && (
+        <>
+          <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
+            <MlSummaryMetricCard label="Runs / 7d" value={String(summary.runsLast7d)} />
+            <MlSummaryMetricCard label="Runs / 30d" value={String(summary.runsLast30d)} />
+            <MlSummaryMetricCard label="Median cadence" value={summary.medianHoursBetweenRuns != null ? `${summary.medianHoursBetweenRuns.toFixed(1)}h` : '—'} />
+            <MlSummaryMetricCard label="Best MDAPE" value={formatPct(summary.bestAvgMdape)} />
+            <MlSummaryMetricCard label="Trend" value={humanize(summary.trendDirection)} detail={deltaLabel} />
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <MlLineChartCard title="MDAPE trend" data={mdapeTrendData} emptyMessage="No completed evaluations yet" suffix="%" />
+            <MlLineChartCard title="Coverage trend" data={coverageTrendData} emptyMessage="No interval coverage history yet" suffix="%" />
+            <MlBarChartCard title="Training cadence" data={cadenceData} emptyMessage="No training cadence history yet" />
+          </div>
+
+          {datasetCoverage && (
+            <Card className="card-game">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-sans">Dataset coverage</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 text-xs">
+                  <div>
+                    <span className="text-muted-foreground">Total Rows</span>
+                    <p className="font-mono text-foreground">{formatCompact(datasetCoverage.totalRows)}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Supported Rows</span>
+                    <p className="font-mono text-foreground">{formatCompact(datasetCoverage.supportedRows)}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Coverage Ratio</span>
+                    <p className="font-mono text-foreground">{formatPct(datasetCoverage.coverageRatio)}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Base Types</span>
+                    <p className="font-mono text-foreground">{datasetCoverage.baseTypeCount != null ? formatCompact(datasetCoverage.baseTypeCount) : '—'}</p>
+                  </div>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">Route</TableHead>
+                      <TableHead className="text-xs text-right">Rows</TableHead>
+                      <TableHead className="text-xs text-right">Share</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {datasetCoverage.routes.map((route) => (
+                      <TableRow key={route.route ?? 'unknown'}>
+                        <TableCell className="text-xs font-mono">{route.route ?? 'unknown'}</TableCell>
+                        <TableCell className="text-xs font-mono text-right">{formatCompact(route.rows)}</TableCell>
+                        <TableCell className="text-xs font-mono text-right">{formatPct(route.share)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card className="card-game">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-sans">Route metrics</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Route</TableHead>
+                    <TableHead className="text-xs text-right">Samples</TableHead>
+                    <TableHead className="text-xs text-right">MDAPE</TableHead>
+                    <TableHead className="text-xs text-right">Coverage</TableHead>
+                    <TableHead className="text-xs text-right">Abstain</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {routeMetrics.map((route) => (
+                    <TableRow key={route.route ?? 'unknown'}>
+                      <TableCell className="text-xs font-mono">{route.route ?? 'unknown'}</TableCell>
+                      <TableCell className="text-xs font-mono text-right">{route.sampleCount != null ? formatCompact(route.sampleCount) : '—'}</TableCell>
+                      <TableCell className="text-xs font-mono text-right">{formatPct(route.avgMdape)}</TableCell>
+                      <TableCell className="text-xs font-mono text-right">{formatPct(route.avgIntervalCoverage)}</TableCell>
+                      <TableCell className="text-xs font-mono text-right">{formatPct(route.avgAbstainRate)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          <Card className="card-game">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-sans">Model promotions</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Model</TableHead>
+                    <TableHead className="text-xs">Promoted At</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {promotions.length > 0 ? promotions.map((row) => (
+                    <TableRow key={`${row.modelVersion ?? 'unknown'}-${row.promotedAt ?? 'none'}`}>
+                      <TableCell className="text-xs font-mono">{row.modelVersion ?? '—'}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{row.promotedAt ? formatDateTimeShort(row.promotedAt) : '—'}</TableCell>
+                    </TableRow>
+                  )) : (
+                    <TableRow>
+                      <TableCell className="text-xs text-muted-foreground" colSpan={2}>No promoted model history</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {runs.length > 0 && (
         <Card className="card-game">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-sans">Run History</CardTitle>
@@ -438,18 +604,22 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
                   <TableHead className="text-xs">Run ID</TableHead>
                   <TableHead className="text-xs">Status</TableHead>
                   <TableHead className="text-xs">Verdict</TableHead>
-                  <TableHead className="text-xs">Model</TableHead>
-                  <TableHead className="text-xs">Stop Reason</TableHead>
+                  <TableHead className="text-xs text-right">Rows</TableHead>
+                  <TableHead className="text-xs text-right">MDAPE</TableHead>
+                  <TableHead className="text-xs text-right">Coverage</TableHead>
+                  <TableHead className="text-xs">Updated</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {history.runs.map(run => (
-                  <TableRow key={run.run_id}>
-                    <TableCell className="text-xs font-mono truncate max-w-[120px]">{run.run_id}</TableCell>
-                    <TableCell><Badge className={`text-xs ${statusColor(run.status)}`}>{humanize(run.status)}</Badge></TableCell>
-                    <TableCell><Badge className={`text-xs ${verdictColor(run.promotion_verdict)}`}>{humanize(run.promotion_verdict)}</Badge></TableCell>
-                    <TableCell className="text-xs font-mono">{run.model_version ?? '—'}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{humanize(run.stop_reason)}</TableCell>
+                {runs.map((run) => (
+                  <TableRow key={run.runId ?? 'unknown'}>
+                    <TableCell className="text-xs font-mono truncate max-w-[160px]">{run.runId ?? '—'}</TableCell>
+                    <TableCell><Badge className={`text-xs ${run.status ? statusColor(run.status) : 'bg-muted text-muted-foreground border-border'}`}>{run.status ? humanize(run.status) : 'Unknown'}</Badge></TableCell>
+                    <TableCell><Badge className={`text-xs ${run.verdict ? verdictColor(run.verdict) : 'bg-muted text-muted-foreground border-border'}`}>{run.verdict ? humanize(run.verdict) : 'Unknown'}</Badge></TableCell>
+                    <TableCell className="text-xs font-mono text-right">{run.rowsProcessed != null ? formatCompact(run.rowsProcessed) : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{formatPct(run.avgMdape)}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{formatPct(run.avgIntervalCoverage)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{run.updatedAt ? formatDateTimeShort(run.updatedAt) : '—'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -459,6 +629,89 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
       )}
     </div>
   );
+}
+
+function MlSummaryMetricCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <Card className="card-game">
+      <CardContent className="p-4">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <p className="text-lg font-mono text-foreground">{value}</p>
+        {detail ? <p className="text-[11px] text-muted-foreground mt-1">{detail}</p> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MlLineChartCard({ title, data, emptyMessage, suffix }: { title: string; data: Array<{ label: string; value: number | null }>; emptyMessage: string; suffix?: string }) {
+  return (
+    <Card className="card-game">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-sans">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="h-56">
+        {data.length > 0 ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={16} />
+              <YAxis tick={{ fontSize: 11 }} width={40} />
+              <RechartsTooltip formatter={(value: number) => [`${value.toFixed(1)}${suffix ?? ''}`, title]} />
+              <Line type="monotone" dataKey="value" stroke="#60a5fa" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <RenderState kind="empty" message={emptyMessage} />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MlBarChartCard({ title, data, emptyMessage }: { title: string; data: Array<{ label: string; runs: number }>; emptyMessage: string }) {
+  return (
+    <Card className="card-game">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-sans">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="h-56">
+        {data.length > 0 ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={12} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={32} />
+              <RechartsTooltip formatter={(value: number) => [value, 'Runs']} />
+              <Bar dataKey="runs" fill="#34d399" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <RenderState kind="empty" message={emptyMessage} />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatPct(value: number | null | undefined): string {
+  if (value == null) return '—';
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatCompact(value: number): string {
+  return Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+}
+
+function formatDateTimeShort(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function formatMiniDate(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return `${parsed.getMonth() + 1}/${parsed.getDate()}`;
 }
 
 const GOLD_LABELS: { key: keyof ReportData; label: string }[] = [

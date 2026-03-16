@@ -297,6 +297,134 @@ export async function getAnalyticsPricingOutliers(params: PricingOutliersRequest
   return request<PricingOutliersResponse>(`/api/v1/ops/analytics/pricing-outliers${queryString}`);
 }
 
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+function optString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function optNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function normalizeMlAutomationStatus(payload: unknown): MlAutomationStatus {
+  const source = asObject(payload);
+  const latest = asObject(source.latestRun);
+  const hasLatest = Object.keys(latest).length > 0;
+  return {
+    league: optString(source.league) ?? 'Mirage',
+    status: optString(source.status),
+    activeModelVersion: optString(source.activeModelVersion ?? source.active_model_version),
+    latestRun: hasLatest ? {
+      runId: optString(latest.runId ?? latest.run_id),
+      status: optString(latest.status),
+      stopReason: optString(latest.stopReason ?? latest.stop_reason),
+      updatedAt: optString(latest.updatedAt ?? latest.updated_at),
+    } : null,
+    promotionVerdict: optString(source.promotionVerdict ?? source.promotion_verdict),
+    routeHotspots: Array.isArray(source.routeHotspots ?? source.route_hotspots)
+      ? (source.routeHotspots ?? source.route_hotspots) as unknown[]
+      : [],
+  };
+}
+
+function normalizeMlAutomationHistory(payload: unknown): MlAutomationHistory {
+  const source = asObject(payload);
+  const historyRows = Array.isArray(source.history) ? source.history : [];
+  const summary = asObject(source.summary);
+  const qualityTrend = Array.isArray(source.qualityTrend) ? source.qualityTrend : [];
+  const trainingCadence = Array.isArray(source.trainingCadence) ? source.trainingCadence : [];
+  const routeMetrics = Array.isArray(source.routeMetrics) ? source.routeMetrics : [];
+  const datasetCoverage = asObject(source.datasetCoverage);
+  const promotions = Array.isArray(source.promotions) ? source.promotions : [];
+  return {
+    league: optString(source.league) ?? 'Mirage',
+    history: historyRows.map((entry) => {
+      const row = asObject(entry);
+      return {
+        runId: optString(row.runId ?? row.run_id),
+        status: optString(row.status),
+        stopReason: optString(row.stopReason ?? row.stop_reason),
+        activeModelVersion: optString(row.activeModelVersion ?? row.active_model_version),
+        tuningConfigId: optString(row.tuningConfigId ?? row.tuning_config_id),
+        evalRunId: optString(row.evalRunId ?? row.eval_run_id),
+        updatedAt: optString(row.updatedAt ?? row.updated_at),
+        rowsProcessed: optNumber(row.rowsProcessed ?? row.rows_processed),
+        avgMdape: optNumber(row.avgMdape ?? row.avg_mdape),
+        avgIntervalCoverage: optNumber(row.avgIntervalCoverage ?? row.avg_interval_coverage),
+        verdict: optString(row.verdict),
+      };
+    }),
+    summary: {
+      activeModelVersion: optString(summary.activeModelVersion ?? summary.active_model_version),
+      lastRunAt: optString(summary.lastRunAt ?? summary.last_run_at),
+      lastPromotedAt: optString(summary.lastPromotedAt ?? summary.last_promoted_at),
+      runsLast7d: optNumber(summary.runsLast7d ?? summary.runs_last_7d) ?? 0,
+      runsLast30d: optNumber(summary.runsLast30d ?? summary.runs_last_30d) ?? 0,
+      medianHoursBetweenRuns: optNumber(summary.medianHoursBetweenRuns ?? summary.median_hours_between_runs),
+      latestAvgMdape: optNumber(summary.latestAvgMdape ?? summary.latest_avg_mdape),
+      latestAvgIntervalCoverage: optNumber(summary.latestAvgIntervalCoverage ?? summary.latest_avg_interval_coverage),
+      bestAvgMdape: optNumber(summary.bestAvgMdape ?? summary.best_avg_mdape),
+      mdapeDeltaVsPrevious: optNumber(summary.mdapeDeltaVsPrevious ?? summary.mdape_delta_vs_previous),
+      trendDirection: optString(summary.trendDirection ?? summary.trend_direction) ?? 'unknown',
+    },
+    qualityTrend: qualityTrend.map((entry) => {
+      const row = asObject(entry);
+      return {
+        runId: optString(row.runId ?? row.run_id),
+        updatedAt: optString(row.updatedAt ?? row.updated_at),
+        avgMdape: optNumber(row.avgMdape ?? row.avg_mdape),
+        avgIntervalCoverage: optNumber(row.avgIntervalCoverage ?? row.avg_interval_coverage),
+        verdict: optString(row.verdict),
+        activeModelVersion: optString(row.activeModelVersion ?? row.active_model_version),
+      };
+    }),
+    trainingCadence: trainingCadence.map((entry) => {
+      const row = asObject(entry);
+      return {
+        date: optString(row.date) ?? '',
+        runs: optNumber(row.runs) ?? 0,
+      };
+    }),
+    routeMetrics: routeMetrics.map((entry) => {
+      const row = asObject(entry);
+      return {
+        route: optString(row.route),
+        sampleCount: optNumber(row.sampleCount ?? row.sample_count),
+        avgMdape: optNumber(row.avgMdape ?? row.avg_mdape),
+        avgIntervalCoverage: optNumber(row.avgIntervalCoverage ?? row.avg_interval_coverage),
+        avgAbstainRate: optNumber(row.avgAbstainRate ?? row.avg_abstain_rate),
+        recordedAt: optString(row.recordedAt ?? row.recorded_at),
+      };
+    }),
+    datasetCoverage: {
+      totalRows: optNumber(datasetCoverage.totalRows ?? datasetCoverage.total_rows) ?? 0,
+      supportedRows: optNumber(datasetCoverage.supportedRows ?? datasetCoverage.supported_rows) ?? 0,
+      coverageRatio: optNumber(datasetCoverage.coverageRatio ?? datasetCoverage.coverage_ratio) ?? 0,
+      baseTypeCount: optNumber(datasetCoverage.baseTypeCount ?? datasetCoverage.base_type_count),
+      routes: Array.isArray(datasetCoverage.routes) ? datasetCoverage.routes.map((entry) => {
+        const row = asObject(entry);
+        return {
+          route: optString(row.route),
+          rows: optNumber(row.rows) ?? 0,
+          share: optNumber(row.share) ?? 0,
+        };
+      }) : [],
+    },
+    promotions: promotions.map((entry) => {
+      const row = asObject(entry);
+      return {
+        modelVersion: optString(row.modelVersion ?? row.model_version),
+        promotedAt: optString(row.promotedAt ?? row.promoted_at),
+      };
+    }),
+  };
+}
+
+
 export const api: ApiService = {
   async getDashboard() {
     return request<DashboardResponse>('/api/v1/ops/dashboard');
@@ -349,12 +477,14 @@ export const api: ApiService = {
 
   async getMlAutomationStatus() {
     const league = await primaryLeague();
-    return request<MlAutomationStatus>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/automation/status`);
+    const payload = await request<Record<string, unknown>>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/automation/status`);
+    return normalizeMlAutomationStatus(payload);
   },
 
   async getMlAutomationHistory() {
     const league = await primaryLeague();
-    return request<MlAutomationHistory>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/automation/history`);
+    const payload = await request<Record<string, unknown>>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/automation/history`);
+    return normalizeMlAutomationHistory(payload);
   },
 
   async getServices() {

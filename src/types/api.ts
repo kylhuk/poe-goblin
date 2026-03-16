@@ -367,22 +367,84 @@ export interface DashboardResponse {
 // ========== ML Automation ==========
 export interface MlAutomationStatus {
   league: string;
-  active_model_version: string | null;
-  automation_enabled: boolean;
-  latest_run?: {
-    run_id: string;
-    status: string;
-    promotion_verdict: string;
-  };
+  status?: string | null;
+  activeModelVersion: string | null;
+  latestRun?: {
+    runId: string | null;
+    status: string | null;
+    stopReason?: string | null;
+    updatedAt?: string | null;
+  } | null;
+  promotionVerdict?: string | null;
+  routeHotspots?: unknown[];
+}
+
+export interface MlAutomationHistoryRun {
+  runId: string | null;
+  status: string | null;
+  stopReason: string | null;
+  activeModelVersion: string | null;
+  tuningConfigId?: string | null;
+  evalRunId?: string | null;
+  updatedAt: string | null;
+  rowsProcessed?: number | null;
+  avgMdape?: number | null;
+  avgIntervalCoverage?: number | null;
+  verdict?: string | null;
+}
+
+export interface MlAutomationHistoryTrendPoint {
+  runId: string | null;
+  updatedAt: string | null;
+  avgMdape: number | null;
+  avgIntervalCoverage: number | null;
+  verdict: string | null;
+  activeModelVersion: string | null;
 }
 
 export interface MlAutomationHistory {
-  runs: Array<{
-    run_id: string;
-    status: string;
-    promotion_verdict: string;
-    model_version: string;
-    stop_reason: string;
+  league: string;
+  history: MlAutomationHistoryRun[];
+  summary: {
+    activeModelVersion: string | null;
+    lastRunAt: string | null;
+    lastPromotedAt: string | null;
+    runsLast7d: number;
+    runsLast30d: number;
+    medianHoursBetweenRuns: number | null;
+    latestAvgMdape: number | null;
+    latestAvgIntervalCoverage: number | null;
+    bestAvgMdape: number | null;
+    mdapeDeltaVsPrevious: number | null;
+    trendDirection: string;
+  };
+  qualityTrend: MlAutomationHistoryTrendPoint[];
+  trainingCadence: Array<{
+    date: string;
+    runs: number;
+  }>;
+  routeMetrics: Array<{
+    route: string | null;
+    sampleCount: number | null;
+    avgMdape: number | null;
+    avgIntervalCoverage: number | null;
+    avgAbstainRate: number | null;
+    recordedAt: string | null;
+  }>;
+  datasetCoverage: {
+    totalRows: number;
+    supportedRows: number;
+    coverageRatio: number;
+    baseTypeCount: number | null;
+    routes: Array<{
+      route: string | null;
+      rows: number;
+      share: number;
+    }>;
+  };
+  promotions: Array<{
+    modelVersion: string | null;
+    promotedAt: string | null;
   }>;
 }
 
