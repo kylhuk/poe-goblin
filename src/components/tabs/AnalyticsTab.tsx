@@ -755,7 +755,8 @@ function SearchHistoryPanel() {
       </Card>
 
       {error && <RenderState kind="degraded" message={error} />}
-      {!error && !data && (
+      {loading && <RenderState kind="loading" message="Querying ClickHouse…" />}
+      {!error && !loading && !data && (
         <RenderState kind="empty" message="Type at least two characters to search the historical listings index." />
       )}
 
