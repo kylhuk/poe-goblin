@@ -588,6 +588,348 @@ def build_comps(
     return {"league": league, "output_table": output_table, "rows_written": rows}
 
 
+def _bucket_ilvl(value: object) -> float:
+    numeric = max(0, int(_to_float(value, 0.0)))
+    return float((numeric // 5) * 5)
+
+
+def _bucket_stack_size(value: object) -> float:
+    numeric = max(1, int(_to_float(value, 1.0)))
+    return float(min(numeric, 20))
+
+
+def _bucket_mod_token_count(value: object) -> float:
+    numeric = max(0, int(_to_float(value, 0.0)))
+    return float(min(numeric, 16))
+
+
+def _route_feature_select_sql(prefix: str = "") -> list[str]:
+    qualifier = f"{prefix}." if prefix else ""
+    return [
+        f"{qualifier}category AS category,",
+        f"{qualifier}base_type AS base_type,",
+        f"ifNull({qualifier}rarity, '') AS rarity,",
+        f"toFloat64(intDiv(toUInt16(ifNull({qualifier}ilvl, 0)), 5) * 5) AS ilvl,",
+        f"toFloat64(multiIf(ifNull({qualifier}stack_size, 1) < 1, 1, ifNull({qualifier}stack_size, 1) > 20, 20, ifNull({qualifier}stack_size, 1))) AS stack_size,",
+        f"toFloat64(ifNull({qualifier}corrupted, 0)) AS corrupted,",
+        f"toFloat64(ifNull({qualifier}fractured, 0)) AS fractured,",
+        f"toFloat64(ifNull({qualifier}synthesised, 0)) AS synthesised,",
+        f"toFloat64(multiIf(ifNull({qualifier}mod_token_count, 0) < 0, 0, ifNull({qualifier}mod_token_count, 0) > 16, 16, ifNull({qualifier}mod_token_count, 0))) AS mod_token_count,",
+    ]
+
+
+def _training_aggregate_rows(
+    client: ClickHouseClient,
+    *,
+    route: str,
+    league: str,
+    dataset_table: str,
+    before_as_of_ts: str | None = None,
+) -> list[dict[str, Any]]:
+    filters = [
+        f"league = {_quote(league)}",
+        "normalized_price_chaos IS NOT NULL",
+        "normalized_price_chaos > 0",
+        _route_training_predicate(route),
+    ]
+    if before_as_of_ts:
+        cutoff = _to_ch_timestamp(before_as_of_ts)
+        filters.append(
+            f"as_of_ts < toDateTime64({_quote(cutoff)}, 3, 'UTC')"
+        )
+    where_clause = " AND ".join(filters)
+    query = " ".join(
+        [
+            "SELECT",
+            *_route_feature_select_sql(),
+            "quantileTDigest(0.1)(normalized_price_chaos) AS target_p10,",
+            "quantileTDigest(0.5)(normalized_price_chaos) AS target_p50,",
+            "quantileTDigest(0.9)(normalized_price_chaos) AS target_p90,",
+            "avg(toFloat64(ifNull(sale_probability_label, 0.0))) AS sale_probability_label,",
+            "count() AS sample_count",
+            f"FROM {dataset_table}",
+            f"WHERE {where_clause}",
+            "GROUP BY category, base_type, rarity, ilvl, stack_size, corrupted, fractured, synthesised, mod_token_count",
+            "FORMAT JSONEachRow",
+        ]
+    )
+    return _query_rows(client, query)
+
+
+def _route_raw_row_count(
+    client: ClickHouseClient,
+    *,
+    route: str,
+    league: str,
+    dataset_table: str,
+) -> int:
+    return _scalar_count(
+        client,
+        " ".join(
+            [
+                "SELECT count() AS value",
+                f"FROM {dataset_table}",
+                f"WHERE league = {_quote(league)}",
+                "AND normalized_price_chaos IS NOT NULL",
+                "AND normalized_price_chaos > 0",
+                f"AND {_route_training_predicate(route)}",
+            ]
+        ),
+    )
+
+
+def _evaluation_rows(
+    client: ClickHouseClient,
+    *,
+    route: str,
+    league: str,
+    dataset_table: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    query = " ".join(
+        [
+            "SELECT",
+            *_route_feature_select_sql(),
+            "toFloat64(normalized_price_chaos) AS normalized_price_chaos,",
+            "toFloat64(ifNull(sale_probability_label, 0.0)) AS sale_probability_label,",
+            "category AS family,",
+            "toString(as_of_ts) AS as_of_ts",
+            f"FROM {dataset_table}",
+            f"WHERE league = {_quote(league)}",
+            "AND normalized_price_chaos IS NOT NULL",
+            "AND normalized_price_chaos > 0",
+            f"AND {_route_training_predicate(route)}",
+            "ORDER BY as_of_ts DESC",
+            f"LIMIT {max(1, limit)}",
+            "FORMAT JSONEachRow",
+        ]
+    )
+    rows = _query_rows(client, query)
+    rows.reverse()
+    return rows
+
+
+def _weighted_median(values: list[float], weights: list[float]) -> float:
+    if not values or not weights or len(values) != len(weights):
+        return 0.0
+    ordered = sorted(zip(values, weights), key=lambda pair: pair[0])
+    total_weight = sum(max(weight, 0.0) for _, weight in ordered)
+    if total_weight <= 0:
+        return _median(values)
+    threshold = total_weight / 2.0
+    seen = 0.0
+    for value, weight in ordered:
+        seen += max(weight, 0.0)
+        if seen >= threshold:
+            return float(value)
+    return float(ordered[-1][0])
+
+
+def _fit_route_bundle_from_aggregates(
+    aggregate_rows: list[dict[str, Any]],
+    *,
+    trained_at: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    usable_rows = [
+        row
+        for row in aggregate_rows
+        if _to_float(row.get("target_p50"), 0.0) > 0.0
+        and _to_int(row.get("sample_count"), 0) > 0
+    ]
+    sample_weights = [max(1.0, _to_float(row.get("sample_count"), 1.0)) for row in usable_rows]
+    train_row_count = int(sum(sample_weights))
+    stats: dict[str, Any] = {
+        "train_row_count": train_row_count,
+        "feature_row_count": len(usable_rows),
+        "support_reference_p50": _weighted_median(
+            [_to_float(row.get("target_p50"), 0.0) for row in usable_rows],
+            sample_weights,
+        ),
+        "sale_model_available": False,
+        "model_backend": "heuristic_fallback",
+    }
+    if len(usable_rows) < 5 or train_row_count < 25:
+        return None, stats
+
+    feature_rows = [_feature_dict_from_row(row) for row in usable_rows]
+    vectorizer = DictVectorizer(sparse=True)
+    X = vectorizer.fit_transform(feature_rows)
+    y_p10 = [_to_float(row.get("target_p10"), 0.0) for row in usable_rows]
+    y_p50 = [_to_float(row.get("target_p50"), 0.0) for row in usable_rows]
+    y_p90 = [_to_float(row.get("target_p90"), 0.0) for row in usable_rows]
+    y_sale = [
+        min(1.0, max(0.0, _to_float(row.get("sale_probability_label"), 0.0)))
+        for row in usable_rows
+    ]
+
+    model_p10 = GradientBoostingRegressor(
+        loss="quantile",
+        alpha=0.10,
+        n_estimators=120,
+        learning_rate=0.05,
+        max_depth=3,
+        min_samples_leaf=5,
+        random_state=42,
+    )
+    model_p50 = GradientBoostingRegressor(
+        loss="quantile",
+        alpha=0.50,
+        n_estimators=120,
+        learning_rate=0.05,
+        max_depth=3,
+        min_samples_leaf=5,
+        random_state=43,
+    )
+    model_p90 = GradientBoostingRegressor(
+        loss="quantile",
+        alpha=0.90,
+        n_estimators=120,
+        learning_rate=0.05,
+        max_depth=3,
+        min_samples_leaf=5,
+        random_state=44,
+    )
+    model_p10.fit(X, y_p10, sample_weight=sample_weights)
+    model_p50.fit(X, y_p50, sample_weight=sample_weights)
+    model_p90.fit(X, y_p90, sample_weight=sample_weights)
+
+    sale_model = None
+    if len({round(value, 4) for value in y_sale}) > 1:
+        sale_model = GradientBoostingRegressor(
+            loss="squared_error",
+            n_estimators=80,
+            learning_rate=0.05,
+            max_depth=2,
+            min_samples_leaf=5,
+            random_state=45,
+        )
+        sale_model.fit(X, y_sale, sample_weight=sample_weights)
+
+    bundle = {
+        "vectorizer": vectorizer,
+        "price_models": {"p10": model_p10, "p50": model_p50, "p90": model_p90},
+        "sale_model": sale_model,
+        "feature_fields": list(MODEL_FEATURE_FIELDS),
+        "trained_at": trained_at,
+    }
+    stats["sale_model_available"] = sale_model is not None
+    stats["model_backend"] = "sklearn_gradient_boosting"
+    return bundle, stats
+
+
+def _prediction_records_from_rows(
+    rows: list[dict[str, Any]],
+    *,
+    bundle: dict[str, Any] | None,
+    reference_price: float,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    fallback_price = max(0.1, reference_price or 0.1)
+    for row in rows:
+        actual = _to_float(row.get("normalized_price_chaos"), 0.0)
+        if actual <= 0.0:
+            continue
+        predicted = _predict_with_bundle(bundle=bundle, parsed_item=row) if bundle else None
+        if predicted is None:
+            price_p50 = fallback_price
+            price_p10 = max(0.1, price_p50 * 0.8)
+            price_p90 = max(price_p50, price_p50 * 1.2)
+            used_model = False
+        else:
+            price_p10 = max(0.1, _to_float(predicted.get("price_p10"), fallback_price * 0.8))
+            price_p50 = max(price_p10, _to_float(predicted.get("price_p50"), fallback_price))
+            price_p90 = max(price_p50, _to_float(predicted.get("price_p90"), fallback_price * 1.2))
+            used_model = True
+        records.append(
+            {
+                "family": str(row.get("family") or row.get("category") or "unknown"),
+                "actual": actual,
+                "price_p10": price_p10,
+                "price_p50": price_p50,
+                "price_p90": price_p90,
+                "used_model": used_model,
+            }
+        )
+    return records
+
+
+def _metrics_from_prediction_records(records: list[dict[str, Any]]) -> dict[str, Any]:
+    if not records:
+        return {
+            "sample_count": 0,
+            "mdape": 1.0,
+            "wape": 1.0,
+            "rmsle": 1.0,
+            "abstain_rate": 1.0,
+            "interval_80_coverage": 0.0,
+        }
+    apes: list[float] = []
+    abs_errors: list[float] = []
+    actuals: list[float] = []
+    log_errors: list[float] = []
+    interval_hits = 0
+    predictions_made = 0
+    for record in records:
+        actual = _to_float(record.get("actual"), 0.0)
+        pred = max(0.1, _to_float(record.get("price_p50"), 0.1))
+        p10 = max(0.1, _to_float(record.get("price_p10"), pred * 0.8))
+        p90 = max(pred, _to_float(record.get("price_p90"), pred * 1.2))
+        error = abs(pred - actual)
+        ape = error / max(actual, 0.01)
+        apes.append(ape)
+        abs_errors.append(error)
+        actuals.append(actual)
+        log_errors.append((math.log1p(pred) - math.log1p(actual)) ** 2)
+        if p10 <= actual <= p90:
+            interval_hits += 1
+        if bool(record.get("used_model")):
+            predictions_made += 1
+    sample_count = len(records)
+    return {
+        "sample_count": sample_count,
+        "mdape": _median(apes),
+        "wape": sum(abs_errors) / max(sum(actuals), 0.01),
+        "rmsle": math.sqrt(sum(log_errors) / sample_count),
+        "abstain_rate": 1.0 - (predictions_made / sample_count),
+        "interval_80_coverage": interval_hits / sample_count,
+    }
+
+
+def _support_bucket_for_count(sample_count: int) -> str:
+    if sample_count >= 250:
+        return "high"
+    if sample_count >= 50:
+        return "medium"
+    return "low"
+
+
+def _route_default_confidence(route: str) -> float:
+    if route == "fungible_reference":
+        return 0.70
+    if route == "structured_boosted":
+        return 0.62
+    if route == "sparse_retrieval":
+        return 0.45
+    return 0.25
+
+
+def _route_confidence_cap(route: str) -> float:
+    if route == "fungible_reference":
+        return 0.78
+    if route == "structured_boosted":
+        return 0.70
+    if route == "sparse_retrieval":
+        return 0.62
+    return 0.55
+
+
+def _model_confidence(route: str, *, support: int, train_row_count: int) -> float:
+    support_factor = min(1.0, math.log1p(max(support, 0)) / math.log1p(250.0))
+    training_factor = min(1.0, max(train_row_count, 0) / 1000.0)
+    raw_confidence = 0.30 + 0.30 * support_factor + 0.25 * training_factor
+    return min(_route_confidence_cap(route), raw_confidence)
+
+
 def train_route(
     client: ClickHouseClient,
     *,
@@ -602,29 +944,17 @@ def train_route(
     model_path = Path(model_dir)
     model_path.mkdir(parents=True, exist_ok=True)
 
-    query = " ".join(
-        [
-            "SELECT",
-            "category,",
-            "base_type,",
-            "ifNull(rarity, '') AS rarity,",
-            "toFloat64(ifNull(ilvl, 0)) AS ilvl,",
-            "toFloat64(ifNull(stack_size, 1)) AS stack_size,",
-            "toFloat64(ifNull(corrupted, 0)) AS corrupted,",
-            "toFloat64(ifNull(fractured, 0)) AS fractured,",
-            "toFloat64(ifNull(synthesised, 0)) AS synthesised,",
-            "toFloat64(ifNull(mod_token_count, 0)) AS mod_token_count,",
-            "toFloat64(normalized_price_chaos) AS normalized_price_chaos,",
-            "toFloat64(ifNull(sale_probability_label, 0.0)) AS sale_probability_label",
-            f"FROM {dataset_table}",
-            f"WHERE league = {_quote(league)}",
-            "AND normalized_price_chaos IS NOT NULL",
-            f"AND {_route_training_predicate(route)}",
-            "FORMAT JSONEachRow",
-        ]
+    aggregate_rows = _training_aggregate_rows(
+        client,
+        route=route,
+        league=league,
+        dataset_table=dataset_table,
     )
-    rows = _query_rows(client, query)
-    train_rows = [row for row in rows if _to_float(row.get('normalized_price_chaos'), 0.0) > 0.0]
+    trained_at = _now_ts()
+    bundle, bundle_stats = _fit_route_bundle_from_aggregates(
+        aggregate_rows,
+        trained_at=trained_at,
+    )
 
     artifact_file = _route_artifact_path(model_dir=model_dir, route=route, league=league)
     model_bundle_path = _route_model_bundle_path(model_dir=model_dir, route=route, league=league)
@@ -637,13 +967,14 @@ def train_route(
         "league": league,
         "dataset_table": dataset_table,
         "comps_table": comps_table,
-        "trained_at": _now_ts(),
+        "trained_at": trained_at,
         "fit_round": fit_round,
         "warm_start_from": str(artifact_file) if previous_artifact else None,
         "objective": _route_objective(route),
-        "model_backend": "heuristic_fallback",
+        "model_backend": bundle_stats.get("model_backend") or "heuristic_fallback",
         "features": list(MODEL_FEATURE_FIELDS),
-        "train_row_count": len(train_rows),
+        "train_row_count": _to_int(bundle_stats.get("train_row_count"), 0),
+        "feature_row_count": _to_int(bundle_stats.get("feature_row_count"), 0),
         "family_counts": _query_rows(
             client,
             " ".join(
@@ -651,79 +982,22 @@ def train_route(
                     "SELECT category AS family, count() AS rows",
                     f"FROM {dataset_table}",
                     f"WHERE league = {_quote(league)}",
+                    f"AND {_route_training_predicate(route)}",
                     "GROUP BY family",
                     "FORMAT JSONEachRow",
                 ]
             ),
         ),
-        "sale_model_available": False,
+        "sale_model_available": bool(bundle_stats.get("sale_model_available")),
         "model_bundle_path": None,
+        "support_reference_p50": _to_float(bundle_stats.get("support_reference_p50"), 0.0),
+        "support_reference_row_count": _to_int(bundle_stats.get("train_row_count"), 0),
     }
 
-    if len(train_rows) >= 25:
-        feature_rows = [_feature_dict_from_row(row) for row in train_rows]
-        vectorizer = DictVectorizer(sparse=True)
-        X = vectorizer.fit_transform(feature_rows)
-        y_price = [_to_float(row.get("normalized_price_chaos"), 0.0) for row in train_rows]
-        y_sale = [min(1.0, max(0.0, _to_float(row.get("sale_probability_label"), 0.0))) for row in train_rows]
-
-        model_p10 = GradientBoostingRegressor(
-            loss="quantile",
-            alpha=0.10,
-            n_estimators=120,
-            learning_rate=0.05,
-            max_depth=3,
-            min_samples_leaf=5,
-            random_state=42,
-        )
-        model_p50 = GradientBoostingRegressor(
-            loss="quantile",
-            alpha=0.50,
-            n_estimators=120,
-            learning_rate=0.05,
-            max_depth=3,
-            min_samples_leaf=5,
-            random_state=43,
-        )
-        model_p90 = GradientBoostingRegressor(
-            loss="quantile",
-            alpha=0.90,
-            n_estimators=120,
-            learning_rate=0.05,
-            max_depth=3,
-            min_samples_leaf=5,
-            random_state=44,
-        )
-        model_p10.fit(X, y_price)
-        model_p50.fit(X, y_price)
-        model_p90.fit(X, y_price)
-
-        sale_model = None
-        if len({round(value, 4) for value in y_sale}) > 1:
-            sale_model = GradientBoostingRegressor(
-                loss="squared_error",
-                n_estimators=80,
-                learning_rate=0.05,
-                max_depth=2,
-                min_samples_leaf=5,
-                random_state=45,
-            )
-            sale_model.fit(X, y_sale)
-
-        bundle = {
-            "vectorizer": vectorizer,
-            "price_models": {"p10": model_p10, "p50": model_p50, "p90": model_p90},
-            "sale_model": sale_model,
-            "feature_fields": list(MODEL_FEATURE_FIELDS),
-            "trained_at": artifact["trained_at"],
-        }
+    if bundle is not None:
         joblib.dump(bundle, model_bundle_path)
         _MODEL_BUNDLE_CACHE[str(model_bundle_path)] = bundle
-        artifact["model_backend"] = "sklearn_gradient_boosting"
         artifact["model_bundle_path"] = str(model_bundle_path)
-        artifact["sale_model_available"] = sale_model is not None
-        artifact["support_reference_p50"] = _median(y_price)
-        artifact["support_reference_row_count"] = len(train_rows)
     else:
         artifact["training_status"] = "insufficient_rows"
 
@@ -734,7 +1008,7 @@ def train_route(
         "route": route,
         "league": league,
         "artifact": str(artifact_file),
-        "rows_trained": len(train_rows),
+        "rows_trained": _to_int(bundle_stats.get("train_row_count"), 0),
         "model_backend": artifact.get("model_backend"),
     }
 
@@ -754,72 +1028,70 @@ def evaluate_route(
     _ensure_route_eval_table(client)
     eval_run_id = run_id or f"eval-{route}-{int(time.time())}"
     now = _now_ts()
-    rows = _query_rows(
+
+    total_rows = _route_raw_row_count(
         client,
-        " ".join(
-            [
-                "SELECT category AS family, count() AS sample_count,",
-                "quantileTDigest(0.5)(abs(normalized_price_chaos - confidence_hint * normalized_price_chaos)) AS mdape_proxy",
-                f"FROM {dataset_table}",
-                f"WHERE league = {_quote(league)}",
-                "AND normalized_price_chaos IS NOT NULL",
-                "GROUP BY family",
-                "FORMAT JSONEachRow",
-            ]
-        ),
+        route=route,
+        league=league,
+        dataset_table=dataset_table,
     )
+    holdout_limit = max(10, min(2000, int(total_rows * 0.2) if total_rows else 0))
+    holdout_rows = _evaluation_rows(
+        client,
+        route=route,
+        league=league,
+        dataset_table=dataset_table,
+        limit=holdout_limit,
+    )
+    cutoff = str(holdout_rows[0].get("as_of_ts") or "") if holdout_rows else None
+    aggregate_rows = _training_aggregate_rows(
+        client,
+        route=route,
+        league=league,
+        dataset_table=dataset_table,
+        before_as_of_ts=cutoff,
+    )
+    bundle, bundle_stats = _fit_route_bundle_from_aggregates(
+        aggregate_rows,
+        trained_at=now,
+    )
+    records = _prediction_records_from_rows(
+        holdout_rows,
+        bundle=bundle,
+        reference_price=_to_float(bundle_stats.get("support_reference_p50"), 0.0) or 1.0,
+    )
+    overall_metrics = _metrics_from_prediction_records(records)
+
+    by_family: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        family = str(record.get("family") or "unknown")
+        by_family.setdefault(family, []).append(record)
+
     insert_rows: list[dict[str, Any]] = []
-    for row in rows:
-        family = str(row.get("family") or "unknown")
-        sample_count = _to_int(row.get("sample_count"), 0)
-        mdape = _to_float(row.get("mdape_proxy"), 0.0)
+    for family, family_records in by_family.items():
+        family_metrics = _metrics_from_prediction_records(family_records)
+        sample_count = _to_int(family_metrics.get("sample_count"), 0)
         insert_rows.append(
             {
                 "run_id": eval_run_id,
                 "route": route,
                 "family": family,
-                "variant": "residual_adjusted"
-                if route == "sparse_retrieval"
-                else "route_main",
+                "variant": "route_main",
                 "league": league,
                 "split_kind": "rolling",
                 "sample_count": sample_count,
-                "mdape": mdape,
-                "wape": mdape,
-                "rmsle": mdape,
-                "abstain_rate": 0.05 if route != "fallback_abstain" else 1.0,
-                "interval_80_coverage": 0.8,
-                "freshness_minutes": 30.0,
-                "support_bucket": "high"
-                if sample_count >= 250
-                else ("medium" if sample_count >= 50 else "low"),
+                "mdape": _to_float(family_metrics.get("mdape"), 1.0),
+                "wape": _to_float(family_metrics.get("wape"), 1.0),
+                "rmsle": _to_float(family_metrics.get("rmsle"), 1.0),
+                "abstain_rate": _to_float(family_metrics.get("abstain_rate"), 1.0),
+                "interval_80_coverage": _to_float(family_metrics.get("interval_80_coverage"), 0.0),
+                "freshness_minutes": 0.0,
+                "support_bucket": _support_bucket_for_count(sample_count),
                 "recorded_at": now,
             }
         )
-        if route == "sparse_retrieval":
-            insert_rows.append(
-                {
-                    "run_id": eval_run_id,
-                    "route": route,
-                    "family": family,
-                    "variant": "comp_baseline",
-                    "league": league,
-                    "split_kind": "rolling",
-                    "sample_count": sample_count,
-                    "mdape": mdape + 0.01,
-                    "wape": mdape + 0.01,
-                    "rmsle": mdape + 0.01,
-                    "abstain_rate": 0.1,
-                    "interval_80_coverage": 0.78,
-                    "freshness_minutes": 45.0,
-                    "support_bucket": "high"
-                    if sample_count >= 250
-                    else ("medium" if sample_count >= 50 else "low"),
-                    "recorded_at": now,
-                }
-            )
     _insert_json_rows(client, "poe_trade.ml_route_eval_v1", insert_rows)
-    artifact = {
+    return {
         "run_id": eval_run_id,
         "route": route,
         "league": league,
@@ -827,8 +1099,16 @@ def evaluate_route(
         "comps_table": comps_table,
         "model_dir": model_dir,
         "rows": len(insert_rows),
+        "sample_count": _to_int(overall_metrics.get("sample_count"), 0),
+        "mdape": _to_float(overall_metrics.get("mdape"), 1.0),
+        "wape": _to_float(overall_metrics.get("wape"), 1.0),
+        "rmsle": _to_float(overall_metrics.get("rmsle"), 1.0),
+        "abstain_rate": _to_float(overall_metrics.get("abstain_rate"), 1.0),
+        "interval_80_coverage": _to_float(overall_metrics.get("interval_80_coverage"), 0.0),
+        "train_row_count": _to_int(bundle_stats.get("train_row_count"), 0),
+        "feature_row_count": _to_int(bundle_stats.get("feature_row_count"), 0),
+        "model_backend": bundle_stats.get("model_backend") or "heuristic_fallback",
     }
-    return artifact
 
 
 def train_saleability(
@@ -909,7 +1189,7 @@ def train_all_routes(
     comps_table: str,
 ) -> dict[str, Any]:
     trained: list[dict[str, Any]] = []
-    for route in ("fungible_reference", "structured_boosted", "sparse_retrieval"):
+    for route in ROUTES:
         trained.append(
             train_route(
                 client,
@@ -958,25 +1238,9 @@ def evaluate_stack(
             run_id=run_id,
         )
         route_results.append(route_eval)
-        metric_row = _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT",
-                    "count() AS sample_count,",
-                    "quantileTDigest(0.5)(abs(normalized_price_chaos - confidence_hint * normalized_price_chaos)) AS mdape,",
-                    "sum(outlier_status = 'trainable') / greatest(count(), 1) AS clean_coverage",
-                    f"FROM {dataset_table}",
-                    f"WHERE league = {_quote(league)}",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
-        row = metric_row[0] if metric_row else {}
-        sample_count = _to_int(row.get("sample_count"), 0)
-        clean_coverage = _to_float(row.get("clean_coverage"), 0.0)
-        raw_coverage = 1.0
-        outlier_drop_rate = max(raw_coverage - clean_coverage, 0.0)
+        sample_count = _to_int(route_eval.get("sample_count"), 0)
+        abstain_rate = _to_float(route_eval.get("abstain_rate"), 1.0)
+        clean_coverage = max(0.0, 1.0 - abstain_rate)
         _insert_json_rows(
             client,
             "poe_trade.ml_eval_runs",
@@ -986,14 +1250,14 @@ def evaluate_stack(
                     "route": route,
                     "league": league,
                     "split_kind": contract.split_kind,
-                    "raw_coverage": raw_coverage,
+                    "raw_coverage": 1.0,
                     "clean_coverage": clean_coverage,
-                    "outlier_drop_rate": outlier_drop_rate,
-                    "mdape": _to_float(row.get("mdape"), 0.0),
-                    "wape": _to_float(row.get("mdape"), 0.0),
-                    "rmsle": _to_float(row.get("mdape"), 0.0),
-                    "abstain_rate": 0.05 if sample_count > 0 else 1.0,
-                    "interval_80_coverage": 0.8,
+                    "outlier_drop_rate": 0.0,
+                    "mdape": _to_float(route_eval.get("mdape"), 1.0),
+                    "wape": _to_float(route_eval.get("wape"), 1.0),
+                    "rmsle": _to_float(route_eval.get("rmsle"), 1.0),
+                    "abstain_rate": abstain_rate if sample_count > 0 else 1.0,
+                    "interval_80_coverage": _to_float(route_eval.get("interval_80_coverage"), 0.0),
                     "leakage_violations": 0,
                     "leakage_audit_path": str(leakage_path),
                     "recorded_at": _now_ts(),
@@ -1112,8 +1376,8 @@ def train_loop(
             stage="dataset",
             current_route="",
             routes_done=0,
-            routes_total=4,
-            rows_processed=0,
+            routes_total=len(ROUTES) + 1,
+            rows_processed=_dataset_row_count(client, dataset_table, league),
             eta_seconds=None,
             status="running",
             active_model_version=current_version,
@@ -1134,9 +1398,9 @@ def train_loop(
             league=league,
             stage="evaluate",
             current_route="",
-            routes_done=3,
-            routes_total=4,
-            rows_processed=0,
+            routes_done=len(ROUTES),
+            routes_total=len(ROUTES) + 1,
+            rows_processed=_dataset_row_count(client, dataset_table, league),
             eta_seconds=None,
             status="running",
             active_model_version=current_version,
@@ -1198,9 +1462,9 @@ def train_loop(
             league=league,
             stage="done",
             current_route="",
-            routes_done=4,
-            routes_total=4,
-            rows_processed=0,
+            routes_done=len(ROUTES) + 1,
+            routes_total=len(ROUTES) + 1,
+            rows_processed=_dataset_row_count(client, dataset_table, league),
             eta_seconds=0,
             status=status,
             active_model_version=current_version,
@@ -1445,28 +1709,22 @@ def predict_one(
     )
 
     if model_prediction is None:
-        if route == "fallback_abstain":
-            confidence = 0.25
-        elif route == "sparse_retrieval":
-            confidence = 0.45
-        elif route == "structured_boosted":
-            confidence = 0.62
-        else:
-            confidence = 0.7
+        confidence = _route_default_confidence(route)
         price_p50 = base_price
         price_p10 = max(0.1, price_p50 * 0.8)
         price_p90 = price_p50 * 1.2
         sale_probability = 0.6 if route != "fallback_abstain" else 0.3
-        fallback_reason = "low_support" if route == "fallback_abstain" else ""
+        fallback_reason = "no_trained_model" if route == "fallback_abstain" else ""
     else:
         price_p10 = max(0.1, float(model_prediction["price_p10"]))
         price_p50 = max(price_p10, float(model_prediction["price_p50"]))
         price_p90 = max(price_p50, float(model_prediction["price_p90"]))
         sale_probability = min(1.0, max(0.0, float(model_prediction["sale_probability"])))
-        support_factor = min(1.0, math.log1p(max(support, 0)) / math.log1p(250.0))
-        confidence = min(0.95, 0.35 + 0.35 * support_factor + 0.25 * min(1.0, float(artifact.get("train_row_count") or 0) / 500.0))
-        if route == "fallback_abstain":
-            confidence = min(confidence, 0.35)
+        confidence = _model_confidence(
+            route,
+            support=support,
+            train_row_count=_to_int(artifact.get("train_row_count"), 0),
+        )
         fallback_reason = ""
 
     recommendation_eligible = sale_probability >= 0.5
@@ -1508,9 +1766,7 @@ def predict_batch(
             [
                 "SELECT",
                 "toString(item_id) AS item_id,",
-                "category,",
-                "base_type,",
-                "ifNull(rarity, '') AS rarity,",
+                *_route_feature_select_sql(),
                 "toFloat64(ifNull(normalized_price_chaos, 1.0)) AS base_price",
                 f"FROM {source_table}",
                 f"WHERE ifNull(league, '') = {_quote(league)}",
@@ -1523,9 +1779,7 @@ def predict_batch(
             [
                 "SELECT",
                 "toString(item_id) AS item_id,",
-                "category,",
-                "base_type,",
-                "ifNull(rarity, '') AS rarity,",
+                *_route_feature_select_sql(),
                 "toFloat64(ifNull(normalized_price_chaos, 1.0)) AS base_price",
                 f"FROM {source_table}",
                 f"WHERE ifNull(league, '') = {_quote(league)}",
@@ -1539,9 +1793,7 @@ def predict_batch(
             [
                 "SELECT",
                 "toString(item_id) AS item_id,",
-                "category,",
-                "base_type,",
-                "ifNull(rarity, '') AS rarity,",
+                *_route_feature_select_sql(),
                 "toFloat64(ifNull(price_amount, 1.0)) AS base_price",
                 f"FROM {source_table}",
                 f"WHERE ifNull(league, '') = {_quote(league)}",
@@ -1558,27 +1810,36 @@ def predict_batch(
             "category": str(row.get("category") or "other"),
             "base_type": str(row.get("base_type") or "unknown"),
             "rarity": str(row.get("rarity") or ""),
+            "ilvl": row.get("ilvl"),
+            "stack_size": row.get("stack_size"),
+            "corrupted": row.get("corrupted"),
+            "fractured": row.get("fractured"),
+            "synthesised": row.get("synthesised"),
+            "mod_token_count": row.get("mod_token_count"),
         }
         bundle = _route_for_item(parsed)
         route = bundle["route"]
-        base_price = _to_float(row.get("base_price"), 1.0)
-        confidence = (
-            0.7
-            if route == "fungible_reference"
-            else (
-                0.62
-                if route == "structured_boosted"
-                else (0.45 if route == "sparse_retrieval" else 0.25)
+        base_price = max(0.1, _to_float(row.get("base_price"), 1.0))
+        artifact = _load_active_route_artifact(client, league=league, route=route)
+        model_prediction = _predict_with_artifact(artifact=artifact, parsed_item=parsed)
+        if model_prediction is None:
+            price_p50 = base_price
+            price_p10 = max(0.1, price_p50 * 0.8)
+            price_p90 = price_p50 * 1.2
+            sale_probability = 0.6 if route != "fallback_abstain" else 0.3
+            confidence = _route_default_confidence(route)
+            fallback_reason = "no_trained_model" if route == "fallback_abstain" else ""
+        else:
+            price_p10 = max(0.1, float(model_prediction["price_p10"]))
+            price_p50 = max(price_p10, float(model_prediction["price_p50"]))
+            price_p90 = max(price_p50, float(model_prediction["price_p90"]))
+            sale_probability = min(1.0, max(0.0, float(model_prediction["sale_probability"])))
+            confidence = _model_confidence(
+                route,
+                support=_to_int(bundle.get("support_count_recent"), 0),
+                train_row_count=_to_int(artifact.get("train_row_count"), 0),
             )
-        )
-        comp_count = 8 if route == "sparse_retrieval" else None
-        base_comp_p50 = base_price if route == "sparse_retrieval" else None
-        residual = (
-            0.0
-            if route != "sparse_retrieval" or (comp_count or 0) < 3
-            else base_price * 0.03
-        )
-        price_p50 = base_price + residual
+            fallback_reason = ""
         pred = PredictionRow(
             prediction_id=str(uuid.uuid4()),
             prediction_as_of_ts=now,
@@ -1587,24 +1848,18 @@ def predict_batch(
             item_id=str(row.get("item_id") or ""),
             route=route,
             price_chaos=price_p50,
-            price_p10=price_p50 * 0.8,
+            price_p10=price_p10,
             price_p50=price_p50,
-            price_p90=price_p50 * 1.2,
-            sale_probability_24h=0.6 if route != "fallback_abstain" else 0.3,
-            sale_probability=0.6 if route != "fallback_abstain" else 0.3,
+            price_p90=price_p90,
+            sale_probability_24h=sale_probability,
+            sale_probability=sale_probability,
             confidence=confidence,
-            comp_count=comp_count,
+            comp_count=None,
             support_count_recent=_to_int(bundle["support_count_recent"], 0),
             freshness_minutes=30.0,
-            base_comp_price_p50=base_comp_p50,
-            residual_adjustment=residual,
-            fallback_reason="low_support"
-            if route == "fallback_abstain"
-            else (
-                "low_comp_count"
-                if route == "sparse_retrieval" and (comp_count or 0) < 3
-                else ""
-            ),
+            base_comp_price_p50=base_price if route == "sparse_retrieval" else None,
+            residual_adjustment=(price_p50 - base_price) if route == "sparse_retrieval" else 0.0,
+            fallback_reason=fallback_reason,
             prediction_explainer_json=json.dumps(
                 {
                     "route_reason": bundle["route_reason"],
@@ -1786,7 +2041,7 @@ def _route_objective(route: str) -> str:
         return "comparable_residual"
     if route == "fungible_reference":
         return "reference_quantiles"
-    return "abstain"
+    return "generalized_fallback_quantiles"
 
 
 def _ensure_route(route: str) -> None:
@@ -2782,12 +3037,12 @@ def _feature_dict_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "category": str(row.get("category") or "other"),
         "base_type": str(row.get("base_type") or "unknown"),
         "rarity": str(row.get("rarity") or ""),
-        "ilvl": _to_float(row.get("ilvl"), 0.0),
-        "stack_size": max(1.0, _to_float(row.get("stack_size"), 1.0)),
+        "ilvl": _bucket_ilvl(row.get("ilvl")),
+        "stack_size": _bucket_stack_size(row.get("stack_size")),
         "corrupted": _to_float(row.get("corrupted"), 0.0),
         "fractured": _to_float(row.get("fractured"), 0.0),
         "synthesised": _to_float(row.get("synthesised"), 0.0),
-        "mod_token_count": _to_float(row.get("mod_token_count"), 0.0),
+        "mod_token_count": _bucket_mod_token_count(row.get("mod_token_count")),
     }
 
 
@@ -2796,12 +3051,12 @@ def _feature_dict_from_parsed_item(item: dict[str, Any]) -> dict[str, Any]:
         "category": str(item.get("category") or "other"),
         "base_type": str(item.get("base_type") or "unknown"),
         "rarity": str(item.get("rarity") or ""),
-        "ilvl": _to_float(item.get("ilvl"), 0.0),
-        "stack_size": max(1.0, _to_float(item.get("stack_size"), 1.0)),
+        "ilvl": _bucket_ilvl(item.get("ilvl")),
+        "stack_size": _bucket_stack_size(item.get("stack_size")),
         "corrupted": _to_float(item.get("corrupted"), 0.0),
         "fractured": _to_float(item.get("fractured"), 0.0),
         "synthesised": _to_float(item.get("synthesised"), 0.0),
-        "mod_token_count": _to_float(item.get("mod_token_count"), _to_float(item.get("mod_count"), 0.0)),
+        "mod_token_count": _bucket_mod_token_count(item.get("mod_token_count", item.get("mod_count"))),
     }
 
 
@@ -2858,13 +3113,9 @@ def _load_model_bundle(bundle_path: str) -> dict[str, Any] | None:
     return loaded
 
 
-def _predict_with_artifact(
-    *, artifact: dict[str, Any], parsed_item: dict[str, Any]
+def _predict_with_bundle(
+    *, bundle: dict[str, Any] | None, parsed_item: dict[str, Any]
 ) -> dict[str, float] | None:
-    bundle_path = str(artifact.get("model_bundle_path") or "")
-    if not bundle_path:
-        return None
-    bundle = _load_model_bundle(bundle_path)
     if bundle is None:
         return None
     vectorizer = bundle.get("vectorizer")
@@ -2893,6 +3144,29 @@ def _predict_with_artifact(
         "price_p90": ordered[2],
         "sale_probability": sale_probability,
     }
+
+
+def _predict_with_artifact(
+    *, artifact: dict[str, Any], parsed_item: dict[str, Any]
+) -> dict[str, float] | None:
+    bundle_path = str(artifact.get("model_bundle_path") or "")
+    if not bundle_path:
+        return None
+    bundle = _load_model_bundle(bundle_path)
+    return _predict_with_bundle(bundle=bundle, parsed_item=parsed_item)
+
+
+def _dataset_row_count(client: ClickHouseClient, dataset_table: str, league: str) -> int:
+    return _scalar_count(
+        client,
+        " ".join(
+            [
+                "SELECT count() AS value",
+                f"FROM {dataset_table}",
+                f"WHERE league = {_quote(league)}",
+            ]
+        ),
+    )
 
 
 def _support_count_recent(

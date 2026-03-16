@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from poe_trade.config.settings import Settings
@@ -102,30 +103,211 @@ def fetch_automation_status(client: ClickHouseClient, *, league: str) -> dict[st
 def fetch_automation_history(
     client: ClickHouseClient, *, league: str, limit: int = 20
 ) -> dict[str, Any]:
-    rows = _query_rows(
+    run_rows = _query_rows(
         client,
-        "SELECT run_id, status, stop_reason, active_model_version, tuning_config_id, eval_run_id, updated_at "
-        "FROM poe_trade.ml_train_runs "
-        f"WHERE league = {_quote(league)} ORDER BY updated_at DESC LIMIT {max(1, limit)} FORMAT JSONEachRow",
+        " ".join(
+            [
+                "SELECT run_id,",
+                "argMax(status, updated_at) AS status,",
+                "argMax(stop_reason, updated_at) AS stop_reason,",
+                "argMax(active_model_version, updated_at) AS active_model_version,",
+                "argMax(tuning_config_id, updated_at) AS tuning_config_id,",
+                "argMax(eval_run_id, updated_at) AS eval_run_id,",
+                "max(updated_at) AS updated_at,",
+                "max(rows_processed) AS rows_processed",
+                "FROM poe_trade.ml_train_runs",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY run_id",
+                "ORDER BY updated_at DESC",
+                f"LIMIT {max(1, limit)}",
+                "FORMAT JSONEachRow",
+            ]
+        ),
     )
-    return {
-        "league": league,
-        "history": [
+    eval_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT run_id, avg(mdape) AS avg_mdape, avg(interval_80_coverage) AS avg_cov, max(recorded_at) AS recorded_at",
+                "FROM poe_trade.ml_eval_runs",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY run_id",
+                "ORDER BY recorded_at DESC",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    promotion_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT candidate_run_id, verdict, candidate_model_version, max(recorded_at) AS recorded_at",
+                "FROM poe_trade.ml_promotion_audit_v1",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY candidate_run_id, verdict, candidate_model_version",
+                "ORDER BY recorded_at DESC",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    model_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT model_version, max(promoted_at) AS promoted_at",
+                "FROM poe_trade.ml_model_registry_v1",
+                f"WHERE league = {_quote(league)} AND promoted = 1",
+                "GROUP BY model_version",
+                "ORDER BY promoted_at DESC",
+                f"LIMIT {max(1, limit)}",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    route_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT route, sum(sample_count) AS sample_count, avg(mdape) AS avg_mdape, avg(interval_80_coverage) AS avg_cov, avg(abstain_rate) AS avg_abstain_rate, max(recorded_at) AS recorded_at",
+                "FROM poe_trade.ml_route_eval_v1",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY route",
+                "ORDER BY sample_count DESC, route ASC",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    dataset_route_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "WITH multiIf(category IN ('essence','fossil','scarab','map','logbook'), 'fungible_reference', ifNull(rarity, '') = 'Unique', 'structured_boosted', ifNull(rarity, '') = 'Rare' OR category = 'cluster_jewel', 'sparse_retrieval', 'fallback_abstain') AS route",
+                "SELECT route, count() AS rows",
+                "FROM poe_trade.ml_price_dataset_v1",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY route",
+                "ORDER BY rows DESC, route ASC",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    dataset_totals = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT count() AS total_rows, uniqExact(base_type) AS base_type_count",
+                "FROM poe_trade.ml_price_dataset_v1",
+                f"WHERE league = {_quote(league)}",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+
+    eval_by_run = {str(row.get("run_id") or ""): row for row in eval_rows}
+    promotion_by_run = {
+        str(row.get("candidate_run_id") or ""): row for row in promotion_rows
+    }
+
+    history: list[dict[str, Any]] = []
+    for row in run_rows:
+        eval_run_id = _opt_str(row.get("eval_run_id")) or _opt_str(row.get("run_id")) or ""
+        eval_row = eval_by_run.get(eval_run_id, {})
+        promotion_row = promotion_by_run.get(eval_run_id, {})
+        history.append(
             {
                 "runId": row.get("run_id"),
                 "status": row.get("status"),
                 "stopReason": row.get("stop_reason"),
-                "activeModelVersion": _opt_model_version(
-                    row.get("active_model_version")
-                ),
+                "activeModelVersion": _opt_model_version(row.get("active_model_version")),
                 "tuningConfigId": row.get("tuning_config_id"),
                 "evalRunId": row.get("eval_run_id"),
-                "updatedAt": str(row.get("updated_at") or "").replace(" ", "T") + "Z"
-                if row.get("updated_at")
-                else None,
+                "updatedAt": _as_iso_utc(row.get("updated_at")),
+                "rowsProcessed": _opt_int(row.get("rows_processed")),
+                "avgMdape": _opt_float(eval_row.get("avg_mdape")),
+                "avgIntervalCoverage": _opt_float(eval_row.get("avg_cov")),
+                "verdict": _opt_str(promotion_row.get("verdict")),
             }
-            for row in rows
-        ],
+        )
+
+    quality_trend = [
+        {
+            "runId": row.get("runId"),
+            "updatedAt": row.get("updatedAt"),
+            "avgMdape": row.get("avgMdape"),
+            "avgIntervalCoverage": row.get("avgIntervalCoverage"),
+            "verdict": row.get("verdict"),
+            "activeModelVersion": row.get("activeModelVersion"),
+        }
+        for row in sorted(history, key=lambda item: str(item.get("updatedAt") or ""))
+        if row.get("avgMdape") is not None
+    ]
+
+    route_metrics = [
+        {
+            "route": _opt_str(row.get("route")),
+            "sampleCount": _opt_int(row.get("sample_count")),
+            "avgMdape": _opt_float(row.get("avg_mdape")),
+            "avgIntervalCoverage": _opt_float(row.get("avg_cov")),
+            "avgAbstainRate": _opt_float(row.get("avg_abstain_rate")),
+            "recordedAt": _as_iso_utc(row.get("recorded_at")),
+        }
+        for row in route_rows
+    ]
+
+    total_rows = _opt_int((dataset_totals[0] if dataset_totals else {}).get("total_rows")) or 0
+    dataset_routes = [
+        {
+            "route": _opt_str(row.get("route")),
+            "rows": _opt_int(row.get("rows")) or 0,
+            "share": (( _opt_int(row.get("rows")) or 0) / total_rows) if total_rows > 0 else 0.0,
+        }
+        for row in dataset_route_rows
+    ]
+    supported_rows = sum(route.get("rows") or 0 for route in dataset_routes)
+
+    promotions = [
+        {
+            "modelVersion": _opt_model_version(row.get("model_version")),
+            "promotedAt": _as_iso_utc(row.get("promoted_at")),
+        }
+        for row in model_rows
+        if _opt_model_version(row.get("model_version"))
+    ]
+
+    anchor = _latest_history_timestamp(history)
+    previous_mdape = quality_trend[-2]["avgMdape"] if len(quality_trend) >= 2 else None
+    latest_mdape = quality_trend[-1]["avgMdape"] if quality_trend else None
+    mdape_delta = None
+    if previous_mdape is not None and latest_mdape is not None:
+        mdape_delta = round(float(previous_mdape) - float(latest_mdape), 6)
+
+    return {
+        "league": league,
+        "history": history,
+        "summary": {
+            "activeModelVersion": history[0].get("activeModelVersion") if history else None,
+            "lastRunAt": history[0].get("updatedAt") if history else None,
+            "lastPromotedAt": promotions[0].get("promotedAt") if promotions else None,
+            "runsLast7d": _count_runs_since(history, anchor, days=7),
+            "runsLast30d": _count_runs_since(history, anchor, days=30),
+            "medianHoursBetweenRuns": _median_run_gap_hours(history),
+            "latestAvgMdape": latest_mdape,
+            "latestAvgIntervalCoverage": quality_trend[-1].get("avgIntervalCoverage") if quality_trend else None,
+            "bestAvgMdape": min((row.get("avgMdape") for row in quality_trend if row.get("avgMdape") is not None), default=None),
+            "mdapeDeltaVsPrevious": mdape_delta,
+            "trendDirection": _trend_direction(mdape_delta),
+        },
+        "qualityTrend": quality_trend,
+        "trainingCadence": _training_cadence_series(history),
+        "routeMetrics": route_metrics,
+        "datasetCoverage": {
+            "totalRows": total_rows,
+            "supportedRows": supported_rows,
+            "coverageRatio": (supported_rows / total_rows) if total_rows > 0 else 0.0,
+            "baseTypeCount": _opt_int((dataset_totals[0] if dataset_totals else {}).get("base_type_count")),
+            "routes": dataset_routes,
+        },
+        "promotions": promotions,
     }
 
 
@@ -257,6 +439,97 @@ def _opt_model_version(value: Any) -> str | None:
     if compact.lower() in {"none", "null", "no_model"}:
         return None
     return compact
+
+
+def _opt_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_iso_utc(value: Any) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00").replace(" ", "T"))
+    except ValueError:
+        return raw.replace(" ", "T") + ("Z" if "T" in raw and not raw.endswith("Z") else "")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    else:
+        dt = dt.astimezone(UTC)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+def _history_datetimes(history: list[dict[str, Any]]) -> list[datetime]:
+    values: list[datetime] = []
+    for row in history:
+        iso = row.get("updatedAt")
+        if not iso:
+            continue
+        try:
+            values.append(datetime.fromisoformat(str(iso).replace("Z", "+00:00")))
+        except ValueError:
+            continue
+    return sorted(values)
+
+
+def _latest_history_timestamp(history: list[dict[str, Any]]) -> datetime | None:
+    values = _history_datetimes(history)
+    return values[-1] if values else None
+
+
+def _count_runs_since(history: list[dict[str, Any]], anchor: datetime | None, *, days: int) -> int:
+    values = _history_datetimes(history)
+    if not values:
+        return 0
+    reference = anchor or values[-1]
+    cutoff = reference.timestamp() - (days * 86400)
+    return sum(1 for value in values if value.timestamp() >= cutoff)
+
+
+def _median_run_gap_hours(history: list[dict[str, Any]]) -> float | None:
+    values = _history_datetimes(history)
+    if len(values) < 2:
+        return None
+    gaps = []
+    for earlier, later in zip(values, values[1:]):
+        gaps.append((later - earlier).total_seconds() / 3600.0)
+    ordered = sorted(gaps)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return round(float(ordered[mid]), 3)
+    return round(float((ordered[mid - 1] + ordered[mid]) / 2.0), 3)
+
+
+def _training_cadence_series(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    buckets: dict[str, int] = {}
+    for row in history:
+        iso = row.get("updatedAt")
+        if not iso:
+            continue
+        day = str(iso)[:10]
+        buckets[day] = buckets.get(day, 0) + 1
+    return [
+        {"date": day, "runs": buckets[day]}
+        for day in sorted(buckets)
+    ]
+
+
+def _trend_direction(mdape_delta: float | None) -> str:
+    if mdape_delta is None:
+        return "unknown"
+    if mdape_delta > 0.005:
+        return "improving"
+    if mdape_delta < -0.005:
+        return "regressing"
+    return "flat"
 
 
 def _as_dict(value: Any) -> dict[str, Any]:

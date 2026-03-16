@@ -105,6 +105,21 @@ class ApiApp:
             self._ops_ack_alert,
         )
         self.router.add(
+            "/api/v1/ops/analytics/search-suggestions",
+            ("GET", "OPTIONS"),
+            self._ops_analytics_search_suggestions,
+        )
+        self.router.add(
+            "/api/v1/ops/analytics/search-history",
+            ("GET", "OPTIONS"),
+            self._ops_analytics_search_history,
+        )
+        self.router.add(
+            "/api/v1/ops/analytics/pricing-outliers",
+            ("GET", "OPTIONS"),
+            self._ops_analytics_pricing_outliers,
+        )
+        self.router.add(
             "/api/v1/ops/analytics/{kind}",
             ("GET", "OPTIONS"),
             self._ops_analytics,
@@ -392,6 +407,69 @@ class ApiApp:
                 status=400, code="invalid_input", message="invalid input"
             ) from None
         except Exception:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        return json_response(payload)
+
+
+    def _ops_analytics_search_suggestions(self, context: Mapping[str, object]) -> Response:
+        league = (
+            self.settings.api_league_allowlist[0]
+            if self.settings.api_league_allowlist
+            else ""
+        )
+        query_params = cast(dict[str, list[str]], context.get("query_params") or {})
+        try:
+            payload = analytics_search_suggestions(
+                self.client,
+                query=str((query_params.get("query") or [""])[0] or ""),
+            )
+        except OpsBackendUnavailable:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        return json_response(payload)
+
+    def _ops_analytics_search_history(self, context: Mapping[str, object]) -> Response:
+        league = (
+            self.settings.api_league_allowlist[0]
+            if self.settings.api_league_allowlist
+            else ""
+        )
+        query_params = cast(dict[str, list[str]], context.get("query_params") or {})
+        try:
+            payload = analytics_search_history(
+                self.client,
+                query_params=query_params,
+                default_league=league,
+            )
+        except OpsBackendUnavailable:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        return json_response(payload)
+
+    def _ops_analytics_pricing_outliers(self, context: Mapping[str, object]) -> Response:
+        league = (
+            self.settings.api_league_allowlist[0]
+            if self.settings.api_league_allowlist
+            else ""
+        )
+        query_params = cast(dict[str, list[str]], context.get("query_params") or {})
+        try:
+            payload = analytics_pricing_outliers(
+                self.client,
+                query_params=query_params,
+                default_league=league,
+            )
+        except OpsBackendUnavailable:
             raise ApiError(
                 status=503,
                 code="backend_unavailable",

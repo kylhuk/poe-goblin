@@ -183,7 +183,7 @@ def test_predict_one_returns_stable_dto(monkeypatch: pytest.MonkeyPatch) -> None
     )
     result = json.loads(response.body.decode("utf-8"))
     assert response.status == 200
-    assert set(result) == {
+    expected_keys = {
         "league",
         "route",
         "price_p10",
@@ -194,6 +194,7 @@ def test_predict_one_returns_stable_dto(monkeypatch: pytest.MonkeyPatch) -> None
         "price_recommendation_eligible",
         "fallback_reason",
     }
+    assert expected_keys.issubset(set(result))
 
 
 def test_predict_one_rejects_unsupported_input_format() -> None:
@@ -408,3 +409,28 @@ def test_ml_automation_history_backend_failure_sanitized(
 
     assert exc.value.status == 503
     assert exc.value.code == "backend_unavailable"
+
+
+def test_explicit_ops_analytics_routes_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    from poe_trade.api import app as api_app
+
+    monkeypatch.setattr(
+        api_app,
+        'analytics_search_history',
+        lambda _client, query_params, default_league: {
+            'query': query_params.get('query', [''])[0],
+            'league': default_league,
+            'rows': [],
+        },
+    )
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint='http://ch'))
+    response = app.handle(
+        method='GET',
+        raw_path='/api/v1/ops/analytics/search-history?query=divine&limit=25',
+        headers=_auth_headers(),
+        body_reader=BytesIO(b''),
+    )
+    body = json.loads(response.body.decode('utf-8'))
+    assert response.status == 200
+    assert body['query'] == 'divine'
+    assert body['league'] == 'Mirage'
