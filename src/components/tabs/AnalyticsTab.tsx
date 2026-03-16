@@ -567,13 +567,18 @@ function SearchHistoryPanel() {
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [data, setData] = useState<SearchHistoryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [league, setLeague] = useState('');
   const [sort, setSort] = useState('added_on');
   const [order, setOrder] = useState<'asc' | 'desc'>('desc');
   const [priceMin, setPriceMin] = useState<number | undefined>();
   const [priceMax, setPriceMax] = useState<number | undefined>();
+  const [committedPriceMin, setCommittedPriceMin] = useState<number | undefined>();
+  const [committedPriceMax, setCommittedPriceMax] = useState<number | undefined>();
   const [timeFrom, setTimeFrom] = useState<string | undefined>();
   const [timeTo, setTimeTo] = useState<string | undefined>();
+  const [committedTimeFrom, setCommittedTimeFrom] = useState<string | undefined>();
+  const [committedTimeTo, setCommittedTimeTo] = useState<string | undefined>();
 
   useEffect(() => {
     const normalizedQuery = query.trim();
@@ -609,16 +614,17 @@ function SearchHistoryPanel() {
       return;
     }
     let cancelled = false;
+    setLoading(true);
     const timer = window.setTimeout(() => {
       getAnalyticsSearchHistory({
         query: normalizedQuery,
         league,
         sort,
         order,
-        priceMin,
-        priceMax,
-        timeFrom,
-        timeTo,
+        priceMin: committedPriceMin,
+        priceMax: committedPriceMax,
+        timeFrom: committedTimeFrom,
+        timeTo: committedTimeTo,
         limit: 100,
       })
         .then(payload => {
@@ -631,13 +637,14 @@ function SearchHistoryPanel() {
           if (!cancelled) {
             setError(err instanceof Error ? err.message : 'Failed to load search history');
           }
-        });
+        })
+        .finally(() => { if (!cancelled) setLoading(false); });
     }, 250);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, league, sort, order, priceMin, priceMax, timeFrom, timeTo]);
+  }, [query, league, sort, order, committedPriceMin, committedPriceMax, committedTimeFrom, committedTimeTo]);
 
   const priceFloor = data?.filters.price.min ?? 0;
   const priceCeiling = Math.max(data?.filters.price.max ?? 0, priceFloor);
