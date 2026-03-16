@@ -33,6 +33,27 @@ ML verdict vocabulary:
 - `stopped_no_improvement`: train-loop stopped because candidate-vs-incumbent deltas stayed below patience policy.
 - `stopped_budget`: train-loop stopped because iteration or wall-clock budget was exhausted.
 
+## poeninja_snapshot Service
+The `poeninja_snapshot` service automatically fetches PoeNinja currency data and rebuilds the ML dataset pipeline. It runs by default with `make up`.
+
+**What it does:**
+1. Snapshots PoeNinja currency overview data
+2. Builds FX rates from the snapshot
+3. Normalizes prices using FX rates
+4. Builds listing events and labels
+5. Rebuilds the ML dataset
+6. Builds comps for comparison pricing
+
+**Environment variables:**
+- `POE_ENABLE_POENINJA_SNAPSHOT` (default `true`) - enable/disable the service
+- `POE_POENINJA_SNAPSHOT_LEAGUE` (default from `POE_ML_AUTOMATION_LEAGUE`) - league to process
+- `POE_ML_DATASET_REBUILD_INTERVAL_SECONDS` (default `900`) - rebuild interval in seconds (15 min)
+
+**Troubleshooting:**
+- Check logs: `docker compose logs poeninja_snapshot`
+- Verify FX data: `docker compose exec clickhouse clickhouse-client --query "SELECT count() FROM poe_trade.raw_poeninja_currency_overview WHERE league='Mirage'"`
+- Verify dataset: `docker compose exec clickhouse clickhouse-client --query "SELECT count() FROM poe_trade.ml_price_dataset_v1 WHERE league='Mirage'"`
+
 ## Protected API Foundation
 The API service is started by default with `make up` and exposes authenticated ML, Ops read models, and guarded service actions.
 Set these exact env vars in `.env` before starting:

@@ -37,6 +37,12 @@ services:
       POE_ML_AUTOMATION_NO_IMPROVEMENT_PATIENCE: "1"
       POE_ML_AUTOMATION_MIN_MDAPE_IMPROVEMENT: "0.001"
 
+  poeninja_snapshot:
+    environment:
+      POE_CLICKHOUSE_URL: http://clickhouse:8123
+      POE_ML_AUTOMATION_LEAGUE: Mirage
+      POE_ML_DATASET_REBUILD_INTERVAL_SECONDS: "900"
+
   api:
     ports:
       - "18080:8080"

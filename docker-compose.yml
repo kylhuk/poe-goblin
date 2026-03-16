@@ -124,6 +124,26 @@ services:
     networks:
       - default
 
+  poeninja_snapshot:
+    build: .
+    command: ["service", "--name", "poeninja_snapshot"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      schema_migrator:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      POE_CLICKHOUSE_URL: ${POE_CLICKHOUSE_URL:-http://clickhouse:8123}
+      POE_ML_AUTOMATION_LEAGUE: ${POE_ML_AUTOMATION_LEAGUE:-Mirage}
+      POE_ML_DATASET_REBUILD_INTERVAL_SECONDS: ${POE_ML_DATASET_REBUILD_INTERVAL_SECONDS:-900}
+    volumes:
+      - ./.state:/app/.state
+      - ./artifacts:/app/artifacts
+    networks:
+      - default
+
   api:
     build: .
     command: ["service", "--name", "api"]
