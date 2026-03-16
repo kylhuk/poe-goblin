@@ -35,6 +35,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue>({
   supabaseUser: null,
   isAuthenticated: false,
+  isApproved: false,
   signIn: async () => null,
   signUp: async () => null,
   signOut: async () => {},
