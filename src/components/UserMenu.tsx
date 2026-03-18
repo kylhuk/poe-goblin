@@ -58,6 +58,15 @@ const UserMenu = () => {
 
   if (isLoading) return null;
 
+  // Public (not logged in): show a simple Sign In link
+  if (!isAuthenticated) {
+    return (
+      <a href="/login" className="text-xs text-primary hover:text-primary/80 font-medium transition-colors">
+        Sign In
+      </a>
+    );
+  }
+
   const connected = sessionState === 'connected' && !!user;
   return (
     <div className="flex items-center gap-2">

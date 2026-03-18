@@ -35,8 +35,17 @@ const AppGate = () => {
     return <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">Loading…</div>;
   }
 
+  // Public users: show Index with limited tabs (ML Price only)
   if (!isAuthenticated) {
-    return <Login />;
+    return (
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route path="*" element={<Index />} />
+        </Routes>
+      </BrowserRouter>
+    );
   }
 
   if (!isApproved) {

@@ -20,49 +20,63 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  // 1. Validate Supabase JWT
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader) {
-    return new Response(JSON.stringify({ error: "Missing authorization" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    global: { headers: { Authorization: authHeader } },
-  });
-
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError || !user) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  // 2. Check approval status
-  const { data: approval } = await supabase
-    .from("approved_users")
-    .select("id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (!approval) {
-    return new Response(JSON.stringify({ error: "Account not approved" }), {
-      status: 403,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  // 3. Get the target path from the header
+  // 0. Get the target path early for public endpoint check
   const proxyPath = req.headers.get("x-proxy-path");
+  if (!proxyPath) {
+    return new Response(JSON.stringify({ error: "Missing x-proxy-path header" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Public endpoints that don't require auth (ML Price)
+  const isPublicEndpoint =
+    /^\/api\/v1\/ops\/leagues\/[^/]+\/price-check/.test(proxyPath) ||
+    /^\/api\/v1\/ml\/leagues\/[^/]+\/predict-one/.test(proxyPath);
+
+  // 1. Validate Supabase JWT (skip for public endpoints)
+  const authHeader = req.headers.get("authorization");
+
+  if (!isPublicEndpoint) {
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Missing authorization" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // 2. Check approval status
+    const { data: approval } = await supabase
+      .from("approved_users")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!approval) {
+      return new Response(JSON.stringify({ error: "Account not approved" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  }
   if (!proxyPath) {
     return new Response(JSON.stringify({ error: "Missing x-proxy-path header" }), {
       status: 400,
