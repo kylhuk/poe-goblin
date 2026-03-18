@@ -56,6 +56,7 @@ const AuthContext = createContext<AuthContextValue>({
   supabaseUser: null,
   isAuthenticated: false,
   isApproved: false,
+  userRole: 'public',
   signIn: async () => null,
   signUp: async () => null,
   signOut: async () => {},
