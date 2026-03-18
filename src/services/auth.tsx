@@ -121,9 +121,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSupabaseUser(session?.user ?? null);
       if (session?.user) {
-        checkApproval(session.user.id);
+        checkApprovalAndRole(session.user.id);
       } else {
         setIsApproved(false);
+        setUserRole('public');
       }
     });
 
@@ -131,14 +132,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSupabaseUser(session?.user ?? null);
       if (session?.user) {
-        checkApproval(session.user.id).then(() => setSupabaseReady(true));
+        checkApprovalAndRole(session.user.id).then(() => setSupabaseReady(true));
       } else {
         setSupabaseReady(true);
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [checkApproval]);
+  }, [checkApprovalAndRole]);
 
   const signIn = useCallback(async (email: string, password: string): Promise<string | null> => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
