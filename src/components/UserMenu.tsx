@@ -10,7 +10,7 @@ import { API_BASE } from '@/services/config';
 import { toast } from 'sonner';
 
 const UserMenu = () => {
-  const { user, login, logout, sessionState, isLoading, supabaseUser, signOut } = useAuth();
+  const { user, login, logout, sessionState, isLoading, supabaseUser, signOut, isAuthenticated } = useAuth();
   const [value, setValue] = useState('');
   const [showValue, setShowValue] = useState(false);
   const [open, setOpen] = useState(false);
