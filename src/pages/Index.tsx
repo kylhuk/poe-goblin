@@ -10,6 +10,7 @@ import { LayoutDashboard, Server, BarChart3, Search, Grid3X3, MessageSquare, Tre
 import UserMenu from "@/components/UserMenu";
 import ApiErrorPanel from "@/components/ApiErrorPanel";
 import { useAuth, type UserRole } from "@/services/auth";
+import { useNavigate, useParams } from "react-router-dom";
 
 type TabDef = {
   id: string;
@@ -79,8 +80,18 @@ const DEFAULT_TAB: Record<UserRole, string> = {
 
 const Index = () => {
   const { userRole } = useAuth();
+  const { tab } = useParams<{ tab?: string }>();
+  const navigate = useNavigate();
+
   const visibleTabs = TABS.filter((t) => t.roles.includes(userRole));
   const defaultTab = DEFAULT_TAB[userRole] || "pricecheck";
+
+  // Resolve active tab: use URL param if valid, otherwise default
+  const activeTab = tab && visibleTabs.some((t) => t.id === tab) ? tab : defaultTab;
+
+  const handleTabChange = (value: string) => {
+    navigate(`/${value}`, { replace: false });
+  };
 
   return (
     <div className="min-h-screen bg-background vignette">
@@ -101,23 +112,23 @@ const Index = () => {
 
       {/* Main content */}
       <main className="container px-4 py-4">
-        <Tabs defaultValue={defaultTab} className="space-y-4" data-testid="panel-shell-root">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4" data-testid="panel-shell-root">
           <TabsList className="w-full justify-start h-auto flex-wrap gap-1 bg-card border border-border p-1">
-            {visibleTabs.map((tab) => (
+            {visibleTabs.map((t) => (
               <TabsTrigger
-                key={tab.id}
-                data-testid={`tab-${tab.id}`}
-                value={tab.id}
+                key={t.id}
+                data-testid={`tab-${t.id}`}
+                value={t.id}
                 className="tab-game gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
               >
-                {tab.icon} {tab.label}
+                {t.icon} {t.label}
               </TabsTrigger>
             ))}
           </TabsList>
 
-          {visibleTabs.map((tab) => (
-            <TabsContent key={tab.id} data-testid={`panel-${tab.id}`} value={tab.id}>
-              {tab.content}
+          {visibleTabs.map((t) => (
+            <TabsContent key={t.id} data-testid={`panel-${t.id}`} value={t.id}>
+              {t.content}
             </TabsContent>
           ))}
         </Tabs>
