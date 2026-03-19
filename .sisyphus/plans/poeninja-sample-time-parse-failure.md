@@ -86,8 +86,8 @@ Wave 2: service-path verification + final audit (Tasks 4-5)
   - API/Type: `schema/migrations/0032_ml_pricing_v1.sql` — `sample_time_utc DateTime64(3, 'UTC')`
 
   **Acceptance Criteria**:
-  - [ ] Insert payload timestamp for `sample_time_utc` is timezone-free millisecond string.
-  - [ ] No `+00:00` suffix is emitted from snapshot row construction.
+  - [x] Insert payload timestamp for `sample_time_utc` is timezone-free millisecond string.
+  - [x] No `+00:00` suffix is emitted from snapshot row construction.
 
   **QA Scenarios**:
   ```text
@@ -123,8 +123,8 @@ Wave 2: service-path verification + final audit (Tasks 4-5)
   - Pattern: `tests/unit/test_poeninja_snapshot.py` — poeninja client fixtures
 
   **Acceptance Criteria**:
-  - [ ] Test suite includes explicit assertion that `sample_time_utc` lacks timezone suffix.
-  - [ ] Regression test fails on prior buggy format.
+  - [x] Test suite includes explicit assertion that `sample_time_utc` lacks timezone suffix.
+  - [x] Regression test fails on prior buggy format.
 
   **QA Scenarios**:
   ```text
@@ -160,8 +160,8 @@ Wave 2: service-path verification + final audit (Tasks 4-5)
   - Test: `tests/unit/test_service_poeninja_snapshot.py`
 
   **Acceptance Criteria**:
-  - [ ] Service test covers successful snapshot insert path with normalized timestamp.
-  - [ ] Service test asserts parse-failure path is not triggered for valid rows.
+  - [x] Service test covers successful snapshot insert path with normalized timestamp.
+  - [x] Service test asserts parse-failure path is not triggered for valid rows.
 
   **QA Scenarios**:
   ```text
@@ -197,8 +197,8 @@ Wave 2: service-path verification + final audit (Tasks 4-5)
   - Service: `poe_trade/services/poeninja_snapshot.py`
 
   **Acceptance Criteria**:
-  - [ ] Targeted tests pass.
-  - [ ] Runtime path evidence contains no DateTime parse assertion failure.
+  - [x] Targeted tests pass.
+  - [x] Runtime path evidence contains no DateTime parse assertion failure.
 
   **QA Scenarios**:
   ```text
@@ -234,8 +234,8 @@ Wave 2: service-path verification + final audit (Tasks 4-5)
   - Evidence: `.sisyphus/evidence/task-1-*` through `.sisyphus/evidence/task-4-*`
 
   **Acceptance Criteria**:
-  - [ ] Review returns PASS for code quality, QA, and scope.
-  - [ ] Explicit go/no-go recommendation issued with rationale.
+  - [x] Review returns PASS for code quality, QA, and scope.
+  - [x] Explicit go/no-go recommendation issued with rationale.
 
   **QA Scenarios**:
   ```text
@@ -255,10 +255,10 @@ Wave 2: service-path verification + final audit (Tasks 4-5)
   **Commit**: NO | Message: `n/a` | Files: `n/a`
 
 ## Final Verification Wave (MANDATORY — after ALL implementation tasks)
-- [ ] F1. Plan Compliance Audit — oracle
-- [ ] F2. Code Quality Review — unspecified-high
-- [ ] F3. Real Manual QA — unspecified-high
-- [ ] F4. Scope Fidelity Check — deep
+- [x] F1. Plan Compliance Audit — oracle
+- [x] F2. Code Quality Review — unspecified-high
+- [x] F3. Real Manual QA — unspecified-high
+- [x] F4. Scope Fidelity Check — deep
 
 ## Commit Strategy
 - `fix(ml): normalize poeninja sample_time_utc for clickhouse`
