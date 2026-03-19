@@ -3,10 +3,23 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+import pytest
 
+from poe_trade.ingestion.poeninja_snapshot import PoeNinjaClient
+from poe_trade.ml import workflows
 from poe_trade.services import poeninja_snapshot
+
+
+class _ServiceFixedDatetime(datetime):
+    _value: datetime = datetime(1970, 1, 1, tzinfo=UTC)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls._value
 
 
 class TestPoeninjaSnapshotService:
@@ -217,3 +230,69 @@ class TestPoeninjaSnapshotService:
 
         result = poeninja_snapshot.main(["--once"])
         assert result == 1
+
+
+def test_service_normalizes_sample_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = MagicMock()
+    cfg.clickhouse_url = "http://localhost:8123"
+    cfg.ml_automation_league = "Mirage"
+    monkeypatch.setattr(
+        poeninja_snapshot.config_settings,
+        "get_settings",
+        lambda: cfg,
+    )
+
+    class DummyClient:
+        def execute(self, query: str) -> str:
+            return ""
+
+    class DummyClickHouseClient:
+        @classmethod
+        def from_env(cls, url: str) -> DummyClient:
+            return DummyClient()
+
+    monkeypatch.setattr(
+        poeninja_snapshot,
+        "ClickHouseClient",
+        DummyClickHouseClient,
+    )
+
+    captured: list[dict[str, object]] = []
+
+    def _capture_insert(_client, _table, rows: list[dict[str, object]]) -> None:
+        captured.extend(rows)
+
+    monkeypatch.setattr(workflows, "_insert_json_rows", _capture_insert)
+
+    response = SimpleNamespace(
+        payload={
+            "lines": [
+                {
+                    "detailsId": "Currency",
+                    "currencyTypeName": "Mirror of Kalandra",
+                    "chaosEquivalent": 1.0,
+                    "count": 1,
+                }
+            ]
+        },
+        stale=False,
+        reason="test",
+    )
+
+    monkeypatch.setattr(
+        PoeNinjaClient,
+        "fetch_currency_overview",
+        lambda *_args, **_kwargs: response,
+    )
+
+    fake_dt = datetime(2026, 3, 19, 10, 0, 0, 0, tzinfo=UTC)
+    _ServiceFixedDatetime._value = fake_dt
+    monkeypatch.setattr(workflows, "datetime", _ServiceFixedDatetime)
+
+    result = poeninja_snapshot.main(["--once", "--league", "Mirage"])
+    assert result == 0
+    assert captured, "Service path should emit rows"
+    timestamp = str(captured[0]["sample_time_utc"])
+    assert timestamp == "2026-03-19 10:00:00.000"
+    assert "+" not in timestamp
+    assert "T" not in timestamp

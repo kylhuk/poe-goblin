@@ -28,6 +28,11 @@ from .contract import MIRAGE_EVAL_CONTRACT, TARGET_CONTRACT
 logger = logging.getLogger(__name__)
 
 
+def _clickhouse_datetime(dt: datetime) -> str:
+    normalized = dt.astimezone(UTC)
+    return normalized.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
 ROUTES = (
     "fungible_reference",
     "structured_boosted",
@@ -358,7 +363,7 @@ def snapshot_poeninja(
             lines = response.payload["lines"]
         if not lines:
             continue
-        sample_ts = datetime.now(UTC).isoformat()
+        sample_ts = _clickhouse_datetime(datetime.now(UTC))
         rows: list[dict[str, Any]] = []
         for line in lines:
             if not isinstance(line, dict):
