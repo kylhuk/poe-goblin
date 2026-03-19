@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 from email.message import Message
 from io import BytesIO
@@ -104,6 +105,48 @@ class TestPoeNinjaClient:
         assert resp2.status_code == 429
         assert resp2.stale is True
         assert resp2.payload is not None
+
+    def test_fetch_http_error_logs_warning(self, caplog) -> None:
+        """Test that HTTP errors are logged at WARNING level."""
+        opener = lambda url, timeout: FakeResponse("not found", code=404)
+        client = PoeNinjaClient(opener=opener)
+        with caplog.at_level(logging.WARNING):
+            resp = client.fetch_currency_overview("Mirage")
+            assert resp.status_code == 404
+            # Check that a WARNING was logged
+            assert any(
+                "poe.ninja request failed" in record.message and record.levelno == logging.WARNING
+                for record in caplog.records
+            )
+
+    def test_fetch_network_error_logs_error(self, caplog) -> None:
+        """Test that network errors are logged at ERROR level."""
+        def failing_opener(url: str, timeout: float) -> FakeResponse:
+            raise urllib.error.URLError("connection refused")
+
+        client = PoeNinjaClient(opener=failing_opener)
+        with caplog.at_level(logging.ERROR):
+            resp = client.fetch_currency_overview("Mirage")
+            assert resp.status_code == 0
+            # Check that an ERROR was logged
+            assert any(
+                "poe.ninja request failed" in record.message and record.levelno == logging.ERROR
+                for record in caplog.records
+            )
+
+    def test_fetch_invalid_json_logs_warning(self, caplog) -> None:
+        """Test that invalid JSON responses are logged at WARNING level."""
+        opener = lambda url, timeout: FakeResponse("invalid json", code=200)
+        client = PoeNinjaClient(opener=opener)
+        with caplog.at_level(logging.WARNING):
+            resp = client.fetch_currency_overview("Mirage")
+            assert resp.status_code == 200
+            assert resp.reason == "empty"
+            # Check that a WARNING was logged
+            assert any(
+                "poe.ninja league=" in record.message and "returned invalid JSON" in record.message and record.levelno == logging.WARNING
+                for record in caplog.records
+            )
 
 
 class TestPoeNinjaSnapshotScheduler:

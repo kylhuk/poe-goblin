@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from io import BufferedIOBase
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections.abc import Mapping
@@ -33,8 +34,11 @@ from .ml import (
     fetch_automation_history,
     fetch_automation_status,
     fetch_predict_one,
+    fetch_rollout_controls,
     fetch_status,
+    update_rollout_controls,
 )
+from poe_trade.ml import workflows
 from .ops import (
     OpsBackendUnavailable,
     ack_alert_payload,
@@ -80,6 +84,7 @@ class ApiApp:
         self.client = clickhouse_client
         self.router = Router()
         self._register_routes()
+        self._warmup_models()
 
     def _register_routes(self) -> None:
         self.router.add("/healthz", ("GET",), self._healthz)
@@ -168,6 +173,11 @@ class ApiApp:
             self._ml_predict_one,
         )
         self.router.add(
+            "/api/v1/ml/leagues/{league}/rollout",
+            ("GET", "POST", "OPTIONS"),
+            self._ml_rollout,
+        )
+        self.router.add(
             "/api/v1/ml/leagues/{league}/automation/status",
             ("GET", "OPTIONS"),
             self._ml_automation_status,
@@ -177,6 +187,17 @@ class ApiApp:
             ("GET", "OPTIONS"),
             self._ml_automation_history,
         )
+
+    def _warmup_models(self) -> None:
+        for league in self.settings.api_league_allowlist:
+            try:
+                workflows.warmup_active_models(self.client, league=league)
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "ml service warmup failed for league=%s: %s",
+                    league,
+                    exc,
+                )
 
     def handle(
         self,
@@ -414,8 +435,9 @@ class ApiApp:
             ) from None
         return json_response(payload)
 
-
-    def _ops_analytics_search_suggestions(self, context: Mapping[str, object]) -> Response:
+    def _ops_analytics_search_suggestions(
+        self, context: Mapping[str, object]
+    ) -> Response:
         league = (
             self.settings.api_league_allowlist[0]
             if self.settings.api_league_allowlist
@@ -456,7 +478,9 @@ class ApiApp:
             ) from None
         return json_response(payload)
 
-    def _ops_analytics_pricing_outliers(self, context: Mapping[str, object]) -> Response:
+    def _ops_analytics_pricing_outliers(
+        self, context: Mapping[str, object]
+    ) -> Response:
         league = (
             self.settings.api_league_allowlist[0]
             if self.settings.api_league_allowlist
@@ -745,9 +769,13 @@ class ApiApp:
 
         if not self.settings.oauth_client_id:
             if not validate_state(self.settings, state=state):
-                raise ApiError(status=400, code="invalid_state", message="invalid state")
+                raise ApiError(
+                    status=400, code="invalid_state", message="invalid state"
+                )
             session = create_session(self.settings, account_name="qa-exile")
-            location = f"{self.settings.poe_account_frontend_complete_uri}?status=success"
+            location = (
+                f"{self.settings.poe_account_frontend_complete_uri}?status=success"
+            )
             cookie = _session_set_cookie(
                 self.settings.auth_cookie_name,
                 str(session.get("session_id") or ""),
@@ -945,6 +973,70 @@ class ApiApp:
         try:
             payload = fetch_predict_one(
                 self.client, league=league, request_payload=body
+            )
+        except ValueError:
+            raise ApiError(
+                status=400,
+                code="invalid_input",
+                message="invalid input",
+                headers=cors,
+            ) from None
+        except BackendUnavailable:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+                headers=cors,
+            ) from None
+        return json_response(payload)
+
+    def _ml_rollout(self, context: Mapping[str, object]) -> Response:
+        league = str(context.get("league") or "")
+        cors = _cors_from_context(context)
+        try:
+            ensure_allowed_league(league, self.settings)
+        except ValueError:
+            raise ApiError(
+                status=400,
+                code="league_not_allowed",
+                message="league is not allowed",
+                headers=cors,
+            ) from None
+
+        method = str(context.get("method") or "GET")
+        if method == "GET":
+            try:
+                return json_response(fetch_rollout_controls(self.client, league=league))
+            except ValueError:
+                raise ApiError(
+                    status=400,
+                    code="invalid_input",
+                    message="invalid input",
+                    headers=cors,
+                ) from None
+            except BackendUnavailable:
+                raise ApiError(
+                    status=503,
+                    code="backend_unavailable",
+                    message="backend unavailable",
+                    headers=cors,
+                ) from None
+
+        try:
+            body = _read_json_body(
+                _headers_from_context(context),
+                _body_reader_from_context(context),
+                max_body_bytes=self.settings.api_max_body_bytes,
+            )
+        except ApiError as exc:
+            if not exc.headers:
+                exc.headers = dict(cors)
+            raise
+        try:
+            payload = update_rollout_controls(
+                self.client,
+                league=league,
+                request_payload=body,
             )
         except ValueError:
             raise ApiError(

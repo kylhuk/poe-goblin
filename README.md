@@ -105,6 +105,10 @@ Current non-goals:
 
 ## Deterministic review gates
 - `make ci-deterministic` runs the default local/CI deterministic suite: task-14 API contract regressions, full backend unit tests, frontend unit/build/scenario-inventory checks, CLI smoke checks, and QA compose config validation.
+- `make ci-deterministic` now also enforces the ML deterministic evidence pack by running `scripts/verify_ml_deterministic_pack.py` and writing `.sisyphus/evidence/task-12-deterministic-pack.log`.
+- Evidence verification now checks both artifact presence and minimal JSON shape for required files to prevent false-positive passes.
+- Required ML artifacts for the deterministic evidence pack are: `.sisyphus/evidence/task-1-baseline.json`, `.sisyphus/evidence/task-10-promotion-gates.json`, `.sisyphus/evidence/task-11-rollout-cutover.json`, and `.sisyphus/evidence/task-11-rollout-rollback.json`.
+- Missing artifacts cause a non-zero exit with an explicit `missing required artifact(s)` error and a detailed JSON log at `.sisyphus/evidence/task-12-deterministic-pack.log`.
 - Browser Playwright coverage is integrated into the deterministic gate; run `make ci-deterministic` to verify frontend scenarios against the QA stack.
 
 ## CLI surface

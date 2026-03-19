@@ -1,4 +1,4 @@
-.PHONY: up down qa-up qa-down qa-seed qa-fault-scanner qa-fault-stash-empty qa-fault-api-unavailable qa-fault-service-action-failure qa-fault-clear qa-frontend qa-verify-product ci-deterministic ci-smoke-cli ci-api-contract backtest-all
+.PHONY: up down qa-up qa-down qa-seed qa-fault-scanner qa-fault-stash-empty qa-fault-api-unavailable qa-fault-service-action-failure qa-fault-clear qa-frontend qa-verify-product ci-deterministic ci-deterministic-ml-evidence ci-smoke-cli ci-api-contract backtest-all
 
 COMPOSE := docker compose
 QA_COMPOSE := $(COMPOSE) -f docker-compose.yml -f docker-compose.qa.yml --env-file .env.qa
@@ -7,6 +7,8 @@ PYTHON := .venv/bin/python
 BACKTEST_LEAGUE ?= Mirage
 BACKTEST_DAYS ?= 14
 BACKTEST_FLAGS ?=
+ML_EVIDENCE_ROOT ?= .sisyphus/evidence
+ML_EVIDENCE_LOG ?= .sisyphus/evidence/task-12-deterministic-pack.log
 
 up:
 	$(COMPOSE) up --build --detach $(SERVICES)
@@ -68,8 +70,12 @@ ci-smoke-cli:
 	$(PYTHON) -m poe_trade.cli alerts list --help
 	$(PYTHON) -m poe_trade.cli sync psapi-once --help
 
+ci-deterministic-ml-evidence:
+	$(PYTHON) scripts/verify_ml_deterministic_pack.py --evidence-root "$(ML_EVIDENCE_ROOT)" --output-log "$(ML_EVIDENCE_LOG)"
+
 ci-deterministic: ci-api-contract
 	.venv/bin/pytest tests/unit
 	npm --prefix frontend run test:deterministic
 	$(MAKE) ci-smoke-cli
 	docker compose -f docker-compose.yml -f docker-compose.qa.yml --env-file .env.qa.example config
+	$(MAKE) ci-deterministic-ml-evidence

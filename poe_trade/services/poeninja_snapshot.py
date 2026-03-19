@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,6 +25,23 @@ def _configure_logging() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+def _load_previous_rebuild_window_id(status_file: Path, *, league: str) -> str:
+    if not status_file.exists():
+        return ""
+    try:
+        payload = json.loads(status_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    if str(payload.get("league") or "") != league:
+        return ""
+    rebuild_window = payload.get("rebuild_window")
+    if not isinstance(rebuild_window, dict):
+        return ""
+    return str(rebuild_window.get("window_id") or "")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -124,6 +140,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         while True:
             start_time = time.time()
             LOGGER.info("%s: Starting pipeline cycle", SERVICE_NAME)
+            previous_rebuild_window_id = _load_previous_rebuild_window_id(
+                status_file,
+                league=league,
+            )
 
             # Step 1: Snapshot PoeNinja currency data
             LOGGER.info("Step 1: Snapshot PoeNinja currency")
@@ -158,37 +178,92 @@ def main(argv: Sequence[str] | None = None) -> int:
             labels_rows = labels_result.get("rows_written", 0)
             LOGGER.info("Normalization complete: %d rows", labels_rows)
 
-            # Step 4: Build listing events and labels
-            LOGGER.info("Step 4: Build listing events and labels")
-            events_result = ml_workflows.build_listing_events_and_labels(
+            rebuild_window = ml_workflows.dataset_rebuild_window(
                 ck_client,
                 league=league,
+                labels_table=args.labels_table,
             )
-            events_rows = events_result.get("rows_written", 0)
-            LOGGER.info("Events built: %d rows", events_rows)
-
-            # Step 5: Build dataset
-            LOGGER.info("Step 5: Build dataset")
-            as_of_ts = datetime.now(UTC).isoformat()
-            dataset_result = ml_workflows.build_dataset(
-                ck_client,
-                league=league,
-                as_of_ts=as_of_ts,
-                output_table=args.dataset_table,
+            if not isinstance(rebuild_window, dict):
+                rebuild_window = {}
+            current_rebuild_window_id = str(rebuild_window.get("window_id") or "")
+            rebuild_skipped = bool(
+                previous_rebuild_window_id
+                and current_rebuild_window_id
+                and previous_rebuild_window_id == current_rebuild_window_id
             )
-            dataset_rows = dataset_result.get("rows_written", 0)
-            LOGGER.info("Dataset built: %d rows", dataset_rows)
+            rebuild_skip_reason = ""
 
-            # Step 6: Build comps (optional)
-            LOGGER.info("Step 6: Build comps")
-            comps_result = ml_workflows.build_comps(
+            if rebuild_skipped:
+                rebuild_skip_reason = "unchanged_snapshot_window"
+                LOGGER.info(
+                    "Step 4-6: Skipping listing events/dataset/comps rebuild "
+                    "reason=%s window_id=%s",
+                    rebuild_skip_reason,
+                    current_rebuild_window_id,
+                )
+                events_rows = 0
+                dataset_rows = 0
+                comps_rows = 0
+            else:
+                if previous_rebuild_window_id and current_rebuild_window_id:
+                    LOGGER.info(
+                        "Snapshot window changed; rebuilding downstream tables "
+                        "previous_window_id=%s current_window_id=%s",
+                        previous_rebuild_window_id,
+                        current_rebuild_window_id,
+                    )
+                else:
+                    LOGGER.info(
+                        "Snapshot window baseline unavailable; rebuilding downstream tables"
+                    )
+
+                # Step 4: Build listing events and labels
+                LOGGER.info("Step 4: Build listing events and labels")
+                events_result = ml_workflows.build_listing_events_and_labels(
+                    ck_client,
+                    league=league,
+                )
+                events_rows = events_result.get(
+                    "rows_written",
+                    events_result.get("listing_rows", 0),
+                )
+                LOGGER.info("Events built: %d rows", events_rows)
+
+                # Step 5: Build dataset
+                LOGGER.info("Step 5: Build dataset")
+                as_of_ts = datetime.now(UTC).isoformat()
+                dataset_result = ml_workflows.build_dataset(
+                    ck_client,
+                    league=league,
+                    as_of_ts=as_of_ts,
+                    output_table=args.dataset_table,
+                )
+                dataset_rows = dataset_result.get("rows_written", 0)
+                LOGGER.info("Dataset built: %d rows", dataset_rows)
+
+                # Step 6: Build comps (optional)
+                LOGGER.info("Step 6: Build comps")
+                comps_result = ml_workflows.build_comps(
+                    ck_client,
+                    league=league,
+                    dataset_table=args.dataset_table,
+                    output_table=args.comps_table,
+                )
+                comps_rows = comps_result.get("rows_written", 0)
+                LOGGER.info("Comps built: %d rows", comps_rows)
+
+            LOGGER.info("Step 7: Refresh serving profile aggregates")
+            serving_profile_result = ml_workflows.build_serving_profile(
                 ck_client,
                 league=league,
                 dataset_table=args.dataset_table,
-                output_table=args.comps_table,
+                snapshot_window_id=current_rebuild_window_id,
             )
-            comps_rows = comps_result.get("rows_written", 0)
-            LOGGER.info("Comps built: %d rows", comps_rows)
+            serving_profile_rows = serving_profile_result.get("rows_written", 0)
+            serving_profile_as_of_ts = serving_profile_result.get(
+                "profile_as_of_ts", ""
+            )
+            LOGGER.info("Serving profile refreshed: %d rows", serving_profile_rows)
 
             # Write status
             elapsed = time.time() - start_time
@@ -201,6 +276,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "events_rows": events_rows,
                 "dataset_rows": dataset_rows,
                 "comps_rows": comps_rows,
+                "serving_profile_rows": serving_profile_rows,
+                "serving_profile_as_of_ts": serving_profile_as_of_ts,
+                "rebuild_window": rebuild_window,
+                "previous_rebuild_window_id": previous_rebuild_window_id,
+                "rebuild_skipped": rebuild_skipped,
+                "rebuild_skip_reason": rebuild_skip_reason,
                 "elapsed_seconds": round(elapsed, 2),
             }
             with open(status_file, "w") as f:

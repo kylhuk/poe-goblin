@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import logging
 import math
 import os
+import re
 import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import joblib
@@ -21,6 +25,8 @@ from poe_trade.ingestion.poeninja_snapshot import PoeNinjaClient
 from .audit import VALIDATED_LEAGUES
 from .contract import MIRAGE_EVAL_CONTRACT, TARGET_CONTRACT
 
+logger = logging.getLogger(__name__)
+
 
 ROUTES = (
     "fungible_reference",
@@ -29,7 +35,34 @@ ROUTES = (
     "fallback_abstain",
 )
 
-MODEL_FEATURE_FIELDS = (
+PROTECTED_COHORT_DIMENSIONS = (
+    "route",
+    "family",
+    "support_bucket",
+)
+
+PROTECTED_COHORT_MIN_SUPPORT_COUNT = 50
+
+PROTECTED_COHORT_ELIGIBLE_SUPPORT_BUCKETS = (
+    "medium",
+    "high",
+)
+
+PROMOTION_LEAKAGE_REASON_CODE = "hold_integrity_leakage_overlap"
+PROMOTION_FRESHNESS_REASON_CODE = "hold_integrity_stale_source_watermarks"
+PROMOTION_SHADOW_SLICE_MISMATCH_REASON_CODE = "hold_shadow_slice_mismatch"
+PROMOTION_SHADOW_MISSING_INCUMBENT_REASON_CODE = "hold_shadow_missing_incumbent"
+PROMOTION_SHADOW_MDAPE_REASON_CODE = "hold_no_material_improvement"
+PROMOTION_SHADOW_MIN_RELATIVE_MDAPE_IMPROVEMENT = 0.20
+PROMOTION_PROTECTED_COHORT_MAX_REGRESSION = 0.0
+PROMOTION_FRESHNESS_MAX_LAG_MINUTES = 180.0
+PROMOTION_FRESHNESS_WATERMARK_KEYS = (
+    "dataset_max_as_of_ts",
+    "poeninja_max_sample_time_utc",
+    "price_labels_max_updated_at",
+)
+
+BASE_FEATURE_FIELDS = (
     "category",
     "base_type",
     "rarity",
@@ -39,9 +72,233 @@ MODEL_FEATURE_FIELDS = (
     "fractured",
     "synthesised",
     "mod_token_count",
+    "base_type_price_tier",
+    "category_price_tier",
 )
 
 _MODEL_BUNDLE_CACHE: dict[str, dict[str, Any]] = {}
+_ACTIVE_ROUTE_MODEL_DIRS: dict[tuple[str, str], str] = {}
+_ACTIVE_ROUTE_MODEL_META: dict[tuple[str, str], dict[str, Any]] = {}
+_ACTIVE_MODEL_VERSION_HINT: dict[str, str] = {}
+_SERVING_PROFILE_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
+_SERVING_PROFILE_SNAPSHOT_META: dict[str, dict[str, str]] = {}
+_WARMUP_STATE: dict[str, "WarmupState"] = {}
+_WARMUP_LOCK = Lock()
+_ACTIVE_MODEL_CACHE_LOCK = Lock()
+_SERVING_PROFILE_CACHE_LOCK = Lock()
+_ROLLOUT_CONTROL_LOCK = Lock()
+_ROLLOUT_CONTROLS: dict[str, dict[str, Any]] = {}
+
+_ACTIVE_MODEL_CACHE_MAX_AGE_SECONDS = 30.0
+_SERVING_PROFILE_CACHE_MAX_AGE_SECONDS = 30.0
+
+
+@dataclass(frozen=True)
+class WarmupState:
+    last_attempt: str | None
+    routes: dict[str, str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"lastAttemptAt": self.last_attempt, "routes": dict(self.routes)}
+
+
+_DEFAULT_SERVING_PROFILE_TABLE = "poe_trade.ml_serving_profile_v1"
+
+_MOD_FEATURES_CACHE_PATH = Path("/tmp/mod_features_cache.json")
+
+_MOD_FEATURE_BATCH_SIZE = 5000
+
+_MOD_FEATURE_RULES: tuple[tuple[str, tuple[str, ...], float, float], ...] = (
+    ("Strength", ("to strength",), 6.0, 60.0),
+    ("Dexterity", ("to dexterity",), 6.0, 60.0),
+    ("Intelligence", ("to intelligence",), 6.0, 60.0),
+    ("MaximumLife", ("maximum life", "to life"), 12.0, 120.0),
+    ("MaximumMana", ("maximum mana", "to mana"), 10.0, 100.0),
+    (
+        "MaximumEnergyShield",
+        ("maximum energy shield", "energy shield"),
+        10.0,
+        100.0,
+    ),
+    ("EvasionRating", ("evasion",), 12.0, 120.0),
+    ("Armor", ("armor", "armour"), 12.0, 120.0),
+    ("MovementSpeed", ("movement speed",), 3.0, 30.0),
+    ("CriticalStrikeChance", ("critical strike chance",), 6.0, 60.0),
+    (
+        "CriticalStrikeMultiplier",
+        ("critical strike multiplier",),
+        6.0,
+        60.0,
+    ),
+    ("AttackSpeed", ("attack speed",), 2.0, 20.0),
+    ("CastSpeed", ("cast speed",), 2.0, 20.0),
+    ("PhysicalDamage", ("physical damage",), 10.0, 100.0),
+    ("FireDamage", ("fire damage",), 10.0, 100.0),
+    ("ColdDamage", ("cold damage",), 10.0, 100.0),
+    ("LightningDamage", ("lightning damage",), 10.0, 100.0),
+    ("ChaosDamage", ("chaos damage",), 10.0, 100.0),
+    ("ElementalDamage", ("elemental damage",), 10.0, 100.0),
+    ("SpellDamage", ("spell damage",), 10.0, 100.0),
+    ("FireResistance", ("fire resistance",), 3.0, 30.0),
+    ("ColdResistance", ("cold resistance",), 3.0, 30.0),
+    ("LightningResistance", ("lightning resistance",), 3.0, 30.0),
+    ("ChaosResistance", ("chaos resistance",), 2.0, 20.0),
+    (
+        "AllElementalResistances",
+        ("all elemental resistances", "to all elemental resistances"),
+        3.0,
+        30.0,
+    ),
+)
+
+_MOD_FEATURE_RULE_BY_NAME: dict[str, tuple[str, tuple[str, ...], float, float]] = {
+    rule[0]: rule for rule in _MOD_FEATURE_RULES
+}
+
+
+def discover_mod_features(
+    client: ClickHouseClient | None = None,
+    *,
+    league: str = "Mirage",
+    min_frequency: int = 100,
+    use_cache: bool = True,
+) -> list[str]:
+    """
+    Discover mod features from dataset with frequency >= min_frequency.
+
+    Returns sorted list of mod feature names (e.g., "MaximumLife_tier", "MaximumLife_roll").
+    Results are cached to avoid repeated expensive queries.
+    """
+    if use_cache and _MOD_FEATURES_CACHE_PATH.exists():
+        try:
+            cache_data = json.loads(
+                _MOD_FEATURES_CACHE_PATH.read_text(encoding="utf-8")
+            )
+            cached_features = cache_data.get("features", [])
+            cached_league = cache_data.get("league", "")
+            cached_min_freq = cache_data.get("min_frequency", 0)
+
+            if (
+                cached_league == league
+                and cached_min_freq == min_frequency
+                and cached_features
+            ):
+                logger.info(
+                    f"Using cached mod features: {len(cached_features)} features from cache"
+                )
+                return cached_features
+        except (json.JSONDecodeError, KeyError, IOError):
+            pass
+
+    if client is None:
+        logger.warning(
+            "No ClickHouse client provided for mod feature discovery, using empty list"
+        )
+        return []
+
+    try:
+        query = f"""
+        SELECT
+          arrayJoin(JSONExtractKeys(mod_features_json)) as feature_key,
+          count() as feature_count
+        FROM poe_trade.ml_price_dataset_v1
+        WHERE league = {_quote(league)} AND mod_features_json != '{{}}'
+        GROUP BY feature_key
+        HAVING feature_count >= {min_frequency}
+        ORDER BY feature_key
+        FORMAT JSONEachRow
+        """
+
+        rows = _query_rows(client, query)
+
+        mod_features: list[str] = []
+        for row in rows:
+            feature_key = str(row.get("feature_key", ""))
+            if feature_key:
+                mod_features.append(feature_key)
+
+        mod_features.sort()
+
+        if use_cache:
+            try:
+                cache_data = {
+                    "league": league,
+                    "min_frequency": min_frequency,
+                    "features": mod_features,
+                    "discovered_at": datetime.now(UTC).isoformat(),
+                }
+                _MOD_FEATURES_CACHE_PATH.write_text(
+                    json.dumps(cache_data, indent=2), encoding="utf-8"
+                )
+                logger.info(
+                    f"Cached {len(mod_features)} mod features to {_MOD_FEATURES_CACHE_PATH}"
+                )
+            except IOError as e:
+                logger.warning(f"Failed to cache mod features: {e}")
+
+        logger.info(f"Discovered {len(mod_features)} mod features from dataset")
+        return mod_features
+
+    except Exception as e:
+        logger.error(f"Failed to discover mod features: {e}")
+        return []
+
+
+_discovered_mod_features: list[str] = []
+
+
+def _get_model_feature_fields() -> tuple[str, ...]:
+    if _discovered_mod_features:
+        return (*BASE_FEATURE_FIELDS, *_discovered_mod_features)
+    return BASE_FEATURE_FIELDS
+
+
+MODEL_FEATURE_FIELDS: list[str] = list(BASE_FEATURE_FIELDS)
+
+FEATURE_SCHEMA_VERSION = "v1"
+
+
+class FeatureSchemaMismatchError(ValueError):
+    pass
+
+
+def _build_feature_schema(
+    feature_fields: list[str] | tuple[str, ...],
+) -> dict[str, Any]:
+    ordered_fields = [str(field) for field in feature_fields]
+    fingerprint = hashlib.sha256(
+        json.dumps(ordered_fields, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "version": FEATURE_SCHEMA_VERSION,
+        "fields": ordered_fields,
+        "field_count": len(ordered_fields),
+        "fingerprint": fingerprint,
+    }
+
+
+def initialize_mod_features(
+    client: ClickHouseClient | None = None,
+    *,
+    league: str = "Mirage",
+    min_frequency: int = 100,
+) -> None:
+    global _discovered_mod_features, MODEL_FEATURE_FIELDS
+    discovered = discover_mod_features(
+        client,
+        league=league,
+        min_frequency=min_frequency,
+        use_cache=True,
+    )
+    _discovered_mod_features = discovered
+    MODEL_FEATURE_FIELDS.clear()
+    MODEL_FEATURE_FIELDS.extend(BASE_FEATURE_FIELDS)
+    MODEL_FEATURE_FIELDS.extend(discovered)
+    logger.info(
+        f"ML feature initialization complete: "
+        f"{len(BASE_FEATURE_FIELDS)} base + {len(discovered)} mod = "
+        f"{len(MODEL_FEATURE_FIELDS)} total features"
+    )
 
 
 @dataclass(frozen=True)
@@ -382,6 +639,7 @@ def build_dataset(
         ]
     )
     client.execute(item_tokens_sql)
+    mod_feature_result = _populate_item_mod_features_from_tokens(client, league=league)
 
     now = _now_ts()
     dataset_sql = " ".join(
@@ -402,7 +660,7 @@ def build_dataset(
             "items.corrupted,",
             "items.fractured,",
             "items.synthesised,",
-            "items.category,",
+            f"{_derive_category_sql('items')} AS category,",
             "labels.normalized_price_chaos,",
             "exec_labels.sale_probability_label,",
             "ifNull(exec_labels.label_source, labels.label_source) AS label_source,",
@@ -416,7 +674,8 @@ def build_dataset(
             "toFloat64(0) AS fx_freshness_minutes,",
             "toUInt16(mods.mod_count) AS mod_token_count,",
             "multiIf(labels.normalized_price_chaos IS NULL, 0.25, 0.6) AS confidence_hint,",
-            f"toDateTime64('{now}', 3, 'UTC') AS updated_at",
+            f"toDateTime64('{now}', 3, 'UTC') AS updated_at,",
+            "ifNull(features.mod_features_json, '{}') AS mod_features_json",
             "FROM poe_trade.v_ps_items_enriched AS items",
             f"INNER JOIN {labels_table} AS labels",
             "ON labels.item_id = items.item_id",
@@ -429,7 +688,8 @@ def build_dataset(
             "SELECT league, item_id, count() AS mod_count",
             "FROM poe_trade.ml_item_mod_tokens_v1",
             "GROUP BY league, item_id",
-            ") AS mods ON mods.league = ifNull(items.league, '') AND mods.item_id = ifNull(items.item_id, concat(items.stash_id, '|', items.base_type, '|', toString(items.observed_at)))",
+            ") AS mods ON mods.league = ifNull(items.league, '') AND mods.item_id = items.item_id",
+            "LEFT JOIN poe_trade.ml_item_mod_features_v1 AS features ON features.league = ifNull(items.league, '') AND features.item_id = items.item_id",
             f"WHERE ifNull(items.league, '') = {_quote(league)}",
             f"AND items.observed_at <= toDateTime64({_quote(as_of_ch)}, 3, 'UTC')",
             "AND labels.outlier_status = 'trainable'",
@@ -448,6 +708,281 @@ def build_dataset(
         "output_table": output_table,
         "rows_written": rows,
         "mod_catalog_scope": "observed-priced-only",
+        "mod_features_rows_written": _to_int(
+            mod_feature_result.get("rows_written"),
+            0,
+        ),
+        "mod_features_non_empty_rows": _to_int(
+            mod_feature_result.get("non_empty_rows"),
+            0,
+        ),
+    }
+
+
+_DIRECT_CATEGORY_FAMILIES = {
+    "essence",
+    "fossil",
+    "scarab",
+    "map",
+    "logbook",
+    "cluster_jewel",
+    "flask",
+    "jewel",
+    "ring",
+    "amulet",
+    "belt",
+}
+
+_MODEL_CATEGORY_COLLAPSE_TO_OTHER = {"jewel", "ring", "amulet", "belt"}
+
+
+def _derive_category(
+    category: object,
+    *,
+    item_class: object = "",
+    base_type: object = "",
+    item_type_line: object = "",
+) -> str:
+    raw_category = str(category or "").strip().lower()
+    if raw_category in _DIRECT_CATEGORY_FAMILIES:
+        return raw_category
+
+    lowered = " ".join(
+        part.strip().lower()
+        for part in (
+            str(item_class or ""),
+            str(base_type or ""),
+            str(item_type_line or ""),
+        )
+        if str(part or "").strip()
+    )
+
+    if re.search(r"\bcluster\s+jewel\b", lowered):
+        return "cluster_jewel"
+    if re.search(r"\b(?:abyss\s+)?jewel\b", lowered):
+        return "jewel"
+    if re.search(r"\bring\b", lowered):
+        return "ring"
+    if re.search(r"\bamulet\b", lowered):
+        return "amulet"
+    if re.search(r"\bbelt\b", lowered):
+        return "belt"
+    if re.search(r"\bmap\b", lowered):
+        return "map"
+
+    if raw_category and raw_category != "other":
+        return raw_category
+    return "other"
+
+
+def _canonical_model_category(category: object) -> str:
+    normalized = str(category or "other").strip().lower() or "other"
+    if normalized in _MODEL_CATEGORY_COLLAPSE_TO_OTHER:
+        return "other"
+    return normalized
+
+
+def _derive_category_sql(prefix: str = "") -> str:
+    qualifier = f"{prefix}." if prefix else ""
+    raw_category = f"lowerUTF8(trimBoth(ifNull({qualifier}category, '')))"
+    lowered = (
+        "lowerUTF8(concat(ifNull(" + qualifier + "item_type_line, ''), ' ', "
+        "ifNull(" + qualifier + "base_type, '')))"
+    )
+    return (
+        "multiIf("
+        f"{raw_category} IN ('essence','fossil','scarab','map','logbook','cluster_jewel','flask','jewel','ring','amulet','belt'), {raw_category}, "
+        f"match({lowered}, '(^|\\\\W)cluster\\\\s+jewel(\\\\W|$)'), 'cluster_jewel', "
+        f"match({lowered}, '(^|\\\\W)(abyss\\\\s+)?jewel(\\\\W|$)'), 'jewel', "
+        f"match({lowered}, '(^|\\\\W)ring(\\\\W|$)'), 'ring', "
+        f"match({lowered}, '(^|\\\\W)amulet(\\\\W|$)'), 'amulet', "
+        f"match({lowered}, '(^|\\\\W)belt(\\\\W|$)'), 'belt', "
+        f"match({lowered}, '(^|\\\\W)map(\\\\W|$)'), 'map', "
+        f"{raw_category} != '' AND {raw_category} != 'other', {raw_category}, "
+        "'other')"
+    )
+
+
+def _max_numeric_from_token(token: str) -> float:
+    matches = re.findall(r"\d+(?:\.\d+)?", token)
+    if not matches:
+        return 0.0
+    return max(float(raw) for raw in matches)
+
+
+def _normalize_mod_token(raw_token: str) -> str:
+    token = raw_token.strip().lower()
+    token = token.strip('"').strip("'")
+    token = token.replace('\\"', '"')
+    return re.sub(r"\s+", " ", token)
+
+
+def _extract_added_damage_value(token: str, damage_type: str) -> float:
+    pattern = (
+        r"adds\s+(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)\s+"
+        + re.escape(damage_type)
+        + r"\s+damage"
+    )
+    match = re.search(pattern, token)
+    if not match:
+        return 0.0
+    return max(float(match.group(1)), float(match.group(2)))
+
+
+def _extract_primary_numeric(token: str) -> float:
+    plus_or_plain = re.search(r"(?:^|\s)[+-]?(\d+(?:\.\d+)?)\s*%?", token)
+    if plus_or_plain:
+        return float(plus_or_plain.group(1))
+    return _max_numeric_from_token(token)
+
+
+def _token_numeric_for_mod(mod_name: str, token: str) -> float:
+    if mod_name == "PhysicalDamage":
+        added_value = _extract_added_damage_value(token, "physical")
+        if added_value > 0.0:
+            return added_value
+    if mod_name == "FireDamage":
+        added_value = _extract_added_damage_value(token, "fire")
+        if added_value > 0.0:
+            return added_value
+    if mod_name == "ColdDamage":
+        added_value = _extract_added_damage_value(token, "cold")
+        if added_value > 0.0:
+            return added_value
+    if mod_name == "LightningDamage":
+        added_value = _extract_added_damage_value(token, "lightning")
+        if added_value > 0.0:
+            return added_value
+    if mod_name == "ChaosDamage":
+        added_value = _extract_added_damage_value(token, "chaos")
+        if added_value > 0.0:
+            return added_value
+    return _extract_primary_numeric(token)
+
+
+def _mod_features_from_tokens(mod_tokens: list[str]) -> dict[str, Any]:
+    best_values: dict[str, float] = {}
+
+    def _record(mod_name: str, numeric: float) -> None:
+        if numeric <= 0.0:
+            return
+        previous = best_values.get(mod_name, 0.0)
+        if numeric > previous:
+            best_values[mod_name] = numeric
+
+    for raw_token in mod_tokens:
+        token = _normalize_mod_token(raw_token)
+        if not token:
+            continue
+
+        numeric = _extract_primary_numeric(token)
+
+        if "all attributes" in token:
+            _record("Strength", numeric)
+            _record("Dexterity", numeric)
+            _record("Intelligence", numeric)
+        if "attack and cast speed" in token:
+            _record("AttackSpeed", numeric)
+            _record("CastSpeed", numeric)
+
+        for (
+            mod_name,
+            token_snippets,
+            _tier_divisor,
+            _roll_divisor,
+        ) in _MOD_FEATURE_RULES:
+            if any(snippet in token for snippet in token_snippets):
+                _record(mod_name, _token_numeric_for_mod(mod_name, token))
+
+    feature_payload: dict[str, Any] = {}
+    for mod_name, token_value in best_values.items():
+        rule = _MOD_FEATURE_RULE_BY_NAME[mod_name]
+        tier_divisor = max(rule[2], 1.0)
+        roll_divisor = max(rule[3], 1.0)
+        tier = max(1, min(10, int(math.ceil(token_value / tier_divisor))))
+        roll = max(0.0, min(1.0, token_value / roll_divisor))
+        feature_payload[f"{mod_name}_tier"] = tier
+        feature_payload[f"{mod_name}_roll"] = round(roll, 4)
+    return feature_payload
+
+
+def _populate_item_mod_features_from_tokens(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    page_size: int = _MOD_FEATURE_BATCH_SIZE,
+) -> dict[str, int]:
+    _ensure_mod_feature_table(client)
+    client.execute(
+        " ".join(
+            [
+                "ALTER TABLE poe_trade.ml_item_mod_features_v1",
+                f"DELETE WHERE league = {_quote(league)}",
+                "SETTINGS mutations_sync = 2",
+            ]
+        )
+    )
+
+    now = _now_ts()
+    rows_written = 0
+    non_empty_rows = 0
+    next_item_id = ""
+
+    while True:
+        token_rows = _query_rows(
+            client,
+            " ".join(
+                [
+                    "SELECT",
+                    "item_id,",
+                    "groupArray(mod_token) AS mod_tokens,",
+                    "max(as_of_ts) AS max_as_of_ts",
+                    "FROM poe_trade.ml_item_mod_tokens_v1",
+                    f"WHERE league = {_quote(league)}",
+                    f"AND item_id > {_quote(next_item_id)}",
+                    "GROUP BY item_id",
+                    "ORDER BY item_id",
+                    f"LIMIT {max(1, page_size)}",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        )
+        if not token_rows:
+            break
+
+        batch: list[dict[str, Any]] = []
+        for row in token_rows:
+            item_id = str(row.get("item_id") or "")
+            if not item_id:
+                continue
+            token_values = row.get("mod_tokens")
+            mod_tokens = (
+                [str(token) for token in token_values]
+                if isinstance(token_values, list)
+                else []
+            )
+            mod_features = _mod_features_from_tokens(mod_tokens)
+            mod_features_json = json.dumps(mod_features, separators=(",", ":"))
+            if mod_features:
+                non_empty_rows += 1
+            batch.append(
+                {
+                    "league": league,
+                    "item_id": item_id,
+                    "mod_features_json": mod_features_json,
+                    "mod_count": len(mod_tokens),
+                    "as_of_ts": str(row.get("max_as_of_ts") or now),
+                    "updated_at": now,
+                }
+            )
+            next_item_id = item_id
+
+        _insert_json_rows(client, "poe_trade.ml_item_mod_features_v1", batch)
+        rows_written += len(batch)
+
+    return {
+        "rows_written": rows_written,
+        "non_empty_rows": non_empty_rows,
     }
 
 
@@ -588,6 +1123,95 @@ def build_comps(
     return {"league": league, "output_table": output_table, "rows_written": rows}
 
 
+def build_serving_profile(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    dataset_table: str = "poe_trade.ml_price_dataset_v1",
+    output_table: str = _DEFAULT_SERVING_PROFILE_TABLE,
+    snapshot_window_id: str = "",
+) -> dict[str, Any]:
+    _ensure_supported_league(league)
+    _ensure_serving_profile_table(client, output_table)
+    delete_sql = f"ALTER TABLE {output_table} DELETE WHERE league = {_quote(league)}"
+    try:
+        client.execute(delete_sql, settings={"mutations_sync": "2"})
+    except TypeError:
+        client.execute(delete_sql)
+
+    profile_as_of_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT max(as_of_ts) AS profile_as_of_ts",
+                f"FROM {dataset_table}",
+                f"WHERE league = {_quote(league)}",
+                "AND normalized_price_chaos IS NOT NULL",
+                "AND normalized_price_chaos > 0",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    profile_as_of_ts = ""
+    if profile_as_of_rows:
+        profile_as_of_ts = str(profile_as_of_rows[0].get("profile_as_of_ts") or "")
+    if not profile_as_of_ts:
+        profile_as_of_ts = _now_ts()
+
+    now = _now_ts()
+    client.execute(
+        " ".join(
+            [
+                f"INSERT INTO {output_table}",
+                "SELECT",
+                f"toDateTime64('{profile_as_of_ts}', 3, 'UTC') AS profile_as_of_ts,",
+                f"{_quote(snapshot_window_id)} AS snapshot_window_id,",
+                "league,",
+                "category,",
+                "base_type,",
+                "count() AS support_count_recent,",
+                "quantileTDigest(0.1)(normalized_price_chaos) AS reference_price_p10,",
+                "quantileTDigest(0.5)(normalized_price_chaos) AS reference_price_p50,",
+                "quantileTDigest(0.9)(normalized_price_chaos) AS reference_price_p90,",
+                f"toDateTime64('{now}', 3, 'UTC') AS updated_at",
+                f"FROM {dataset_table}",
+                f"WHERE league = {_quote(league)}",
+                "AND normalized_price_chaos IS NOT NULL",
+                "AND normalized_price_chaos > 0",
+                "GROUP BY league, category, base_type",
+            ]
+        )
+    )
+    rows = _scalar_count(
+        client,
+        " ".join(
+            [
+                "SELECT count() AS value FROM (",
+                "SELECT category, base_type",
+                f"FROM {dataset_table}",
+                f"WHERE league = {_quote(league)}",
+                "AND normalized_price_chaos IS NOT NULL",
+                "AND normalized_price_chaos > 0",
+                "GROUP BY category, base_type",
+                ")",
+            ]
+        ),
+    )
+    result = {
+        "league": league,
+        "output_table": output_table,
+        "rows_written": rows,
+        "snapshot_window_id": snapshot_window_id,
+        "profile_as_of_ts": profile_as_of_ts,
+    }
+    _invalidate_serving_profile_cache(
+        league=league,
+        snapshot_window_id=snapshot_window_id,
+        profile_as_of_ts=profile_as_of_ts,
+    )
+    return result
+
+
 def _bucket_ilvl(value: object) -> float:
     numeric = max(0, int(_to_float(value, 0.0)))
     return float((numeric // 5) * 5)
@@ -603,6 +1227,56 @@ def _bucket_mod_token_count(value: object) -> float:
     return float(min(numeric, 16))
 
 
+def _compute_price_tiers(
+    aggregate_rows: list[dict[str, Any]],
+) -> dict[str, dict[str, float]]:
+    """Compute target encoding: percentile rank of base_type/category prices."""
+    from collections import defaultdict
+    import math
+
+    base_type_prices: dict[str, list[float]] = defaultdict(list)
+    category_prices: dict[str, list[float]] = defaultdict(list)
+
+    for row in aggregate_rows:
+        target_p50 = _to_float(row.get("target_p50"), 0.0)
+        sample_count = max(1, _to_int(row.get("sample_count"), 1))
+        if target_p50 <= 0:
+            continue
+        log_price = math.log1p(target_p50)
+        base_type = str(row.get("base_type") or "unknown")
+        category = str(row.get("category") or "other")
+        base_type_prices[base_type].extend([log_price] * sample_count)
+        category_prices[category].extend([log_price] * sample_count)
+
+    def compute_percentiles(prices_dict):
+        if not prices_dict:
+            return {}
+        all_prices = []
+        for prices in prices_dict.values():
+            all_prices.extend(prices)
+        all_prices.sort()
+        n_total = len(all_prices)
+
+        result = {}
+        for key, prices in prices_dict.items():
+            if not prices:
+                result[key] = 0.5
+                continue
+            prices_sorted = sorted(prices)
+            median_idx = len(prices_sorted) // 2
+            median_price = prices_sorted[median_idx]
+            import bisect
+
+            rank = bisect.bisect_left(all_prices, median_price)
+            result[key] = rank / max(n_total, 1)
+        return result
+
+    return {
+        "base_type": compute_percentiles(base_type_prices),
+        "category": compute_percentiles(category_prices),
+    }
+
+
 def _route_feature_select_sql(prefix: str = "") -> list[str]:
     qualifier = f"{prefix}." if prefix else ""
     return [
@@ -615,6 +1289,7 @@ def _route_feature_select_sql(prefix: str = "") -> list[str]:
         f"toFloat64(ifNull({qualifier}fractured, 0)) AS fractured,",
         f"toFloat64(ifNull({qualifier}synthesised, 0)) AS synthesised,",
         f"toFloat64(multiIf(ifNull({qualifier}mod_token_count, 0) < 0, 0, ifNull({qualifier}mod_token_count, 0) > 16, 16, ifNull({qualifier}mod_token_count, 0))) AS mod_token_count,",
+        f"ifNull({qualifier}mod_features_json, '{{}}') AS mod_features_json,",
     ]
 
 
@@ -640,6 +1315,7 @@ def _training_aggregate_rows(
         [
             "SELECT",
             *_route_feature_select_sql(),
+            "max(as_of_ts) AS max_as_of_ts,",
             "quantileTDigest(0.1)(normalized_price_chaos) AS target_p10,",
             "quantileTDigest(0.5)(normalized_price_chaos) AS target_p50,",
             "quantileTDigest(0.9)(normalized_price_chaos) AS target_p90,",
@@ -647,11 +1323,42 @@ def _training_aggregate_rows(
             "count() AS sample_count",
             f"FROM {dataset_table}",
             f"WHERE {where_clause}",
-            "GROUP BY category, base_type, rarity, ilvl, stack_size, corrupted, fractured, synthesised, mod_token_count",
+            "GROUP BY category, base_type, rarity, ilvl, stack_size, corrupted, fractured, synthesised, mod_token_count, mod_features_json",
             "FORMAT JSONEachRow",
         ]
     )
     return _query_rows(client, query)
+
+
+def _family_counts_from_aggregate_rows(
+    aggregate_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    for row in aggregate_rows:
+        family = str(row.get("category") or "")
+        if not family:
+            continue
+        counts[family] = counts.get(family, 0) + max(
+            0,
+            _to_int(row.get("sample_count"), 0),
+        )
+    return [{"family": family, "rows": counts[family]} for family in sorted(counts)]
+
+
+def _max_as_of_ts_from_aggregate_rows(aggregate_rows: list[dict[str, Any]]) -> str:
+    latest: datetime | None = None
+    latest_raw = ""
+    for row in aggregate_rows:
+        raw = str(row.get("max_as_of_ts") or "").strip()
+        if not raw:
+            continue
+        parsed = _parse_manifest_timestamp(raw)
+        if parsed is None:
+            continue
+        if latest is None or parsed > latest:
+            latest = parsed
+            latest_raw = raw
+    return latest_raw
 
 
 def _route_raw_row_count(
@@ -726,6 +1433,7 @@ def _weighted_median(values: list[float], weights: list[float]) -> float:
 def _fit_route_bundle_from_aggregates(
     aggregate_rows: list[dict[str, Any]],
     *,
+    route: str,
     trained_at: str,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     usable_rows = [
@@ -751,7 +1459,10 @@ def _fit_route_bundle_from_aggregates(
     if len(usable_rows) < 5 or train_row_count < 25:
         return None, stats
 
-    feature_rows = [_feature_dict_from_row(row) for row in usable_rows]
+    # Compute target encoding
+    price_tiers = _compute_price_tiers(usable_rows)
+
+    feature_rows = [_feature_dict_from_row(row, price_tiers) for row in usable_rows]
     vectorizer = DictVectorizer(sparse=True)
     X = vectorizer.fit_transform(feature_rows)
     y_p10 = [_to_float(row.get("target_p10"), 0.0) for row in usable_rows]
@@ -762,31 +1473,86 @@ def _fit_route_bundle_from_aggregates(
         for row in usable_rows
     ]
 
+    price_model_params_by_route: dict[str, dict[str, Any]] = {
+        "structured_boosted": {
+            "n_estimators": 160,
+            "learning_rate": 0.035,
+            "max_depth": 3,
+            "min_samples_leaf": 4,
+            "min_samples_split": 8,
+            "subsample": 0.85,
+            "max_features": "sqrt",
+        },
+        "sparse_retrieval": {
+            "n_estimators": 120,
+            "learning_rate": 0.04,
+            "max_depth": 2,
+            "min_samples_leaf": 6,
+            "min_samples_split": 12,
+            "subsample": 0.9,
+            "max_features": "sqrt",
+        },
+    }
+    default_price_model_params = {
+        "n_estimators": 180,
+        "learning_rate": 0.035,
+        "max_depth": 4,
+        "min_samples_leaf": 3,
+        "min_samples_split": 6,
+        "subsample": 0.8,
+        "max_features": "sqrt",
+    }
+    price_model_params = price_model_params_by_route.get(
+        route, default_price_model_params
+    )
+
+    sale_model_params_by_route: dict[str, dict[str, Any]] = {
+        "structured_boosted": {
+            "n_estimators": 100,
+            "learning_rate": 0.04,
+            "max_depth": 2,
+            "min_samples_leaf": 5,
+            "min_samples_split": 10,
+            "subsample": 0.9,
+            "max_features": "sqrt",
+        },
+        "sparse_retrieval": {
+            "n_estimators": 80,
+            "learning_rate": 0.05,
+            "max_depth": 2,
+            "min_samples_leaf": 6,
+            "min_samples_split": 12,
+            "subsample": 0.95,
+            "max_features": "sqrt",
+        },
+    }
+    default_sale_model_params = {
+        "n_estimators": 120,
+        "learning_rate": 0.04,
+        "max_depth": 3,
+        "min_samples_leaf": 4,
+        "min_samples_split": 8,
+        "subsample": 0.85,
+        "max_features": "sqrt",
+    }
+    sale_model_params = sale_model_params_by_route.get(route, default_sale_model_params)
+
     model_p10 = GradientBoostingRegressor(
         loss="quantile",
         alpha=0.10,
-        n_estimators=120,
-        learning_rate=0.05,
-        max_depth=3,
-        min_samples_leaf=5,
+        **price_model_params,
         random_state=42,
     )
     model_p50 = GradientBoostingRegressor(
         loss="quantile",
         alpha=0.50,
-        n_estimators=120,
-        learning_rate=0.05,
-        max_depth=3,
-        min_samples_leaf=5,
+        **price_model_params,
         random_state=43,
     )
     model_p90 = GradientBoostingRegressor(
         loss="quantile",
         alpha=0.90,
-        n_estimators=120,
-        learning_rate=0.05,
-        max_depth=3,
-        min_samples_leaf=5,
+        **price_model_params,
         random_state=44,
     )
     model_p10.fit(X, y_p10, sample_weight=sample_weights)
@@ -797,10 +1563,7 @@ def _fit_route_bundle_from_aggregates(
     if len({round(value, 4) for value in y_sale}) > 1:
         sale_model = GradientBoostingRegressor(
             loss="squared_error",
-            n_estimators=80,
-            learning_rate=0.05,
-            max_depth=2,
-            min_samples_leaf=5,
+            **sale_model_params,
             random_state=45,
         )
         sale_model.fit(X, y_sale, sample_weight=sample_weights)
@@ -810,6 +1573,7 @@ def _fit_route_bundle_from_aggregates(
         "price_models": {"p10": model_p10, "p50": model_p50, "p90": model_p90},
         "sale_model": sale_model,
         "feature_fields": list(MODEL_FEATURE_FIELDS),
+        "price_tiers": price_tiers,
         "trained_at": trained_at,
     }
     stats["sale_model_available"] = sale_model is not None
@@ -961,6 +1725,7 @@ def train_route(
     trained_at = _now_ts()
     bundle, bundle_stats = _fit_route_bundle_from_aggregates(
         aggregate_rows,
+        route=route,
         trained_at=trained_at,
     )
 
@@ -985,21 +1750,10 @@ def train_route(
         "objective": _route_objective(route),
         "model_backend": bundle_stats.get("model_backend") or "heuristic_fallback",
         "features": list(MODEL_FEATURE_FIELDS),
+        "feature_schema": _build_feature_schema(MODEL_FEATURE_FIELDS),
         "train_row_count": _to_int(bundle_stats.get("train_row_count"), 0),
         "feature_row_count": _to_int(bundle_stats.get("feature_row_count"), 0),
-        "family_counts": _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT category AS family, count() AS rows",
-                    f"FROM {dataset_table}",
-                    f"WHERE league = {_quote(league)}",
-                    f"AND {_route_training_predicate(route)}",
-                    "GROUP BY family",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        ),
+        "family_counts": _family_counts_from_aggregate_rows(aggregate_rows),
         "sale_model_available": bool(bundle_stats.get("sale_model_available")),
         "model_bundle_path": None,
         "support_reference_p50": _to_float(
@@ -1065,8 +1819,10 @@ def evaluate_route(
         dataset_table=dataset_table,
         before_as_of_ts=cutoff,
     )
+    train_max_as_of_ts = _max_as_of_ts_from_aggregate_rows(aggregate_rows)
     bundle, bundle_stats = _fit_route_bundle_from_aggregates(
         aggregate_rows,
+        route=route,
         trained_at=now,
     )
     records = _prediction_records_from_rows(
@@ -1127,6 +1883,14 @@ def evaluate_route(
         "train_row_count": _to_int(bundle_stats.get("train_row_count"), 0),
         "feature_row_count": _to_int(bundle_stats.get("feature_row_count"), 0),
         "model_backend": bundle_stats.get("model_backend") or "heuristic_fallback",
+        "eval_slice_id": _route_slice_id(route, holdout_rows),
+        "eval_min_as_of_ts": str(
+            (holdout_rows[0] if holdout_rows else {}).get("as_of_ts") or ""
+        ),
+        "eval_max_as_of_ts": str(
+            (holdout_rows[-1] if holdout_rows else {}).get("as_of_ts") or ""
+        ),
+        "train_max_as_of_ts": train_max_as_of_ts,
     }
 
 
@@ -1230,6 +1994,7 @@ def evaluate_stack(
     model_dir: str,
     split: str,
     output_dir: str,
+    run_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _ensure_supported_league(league)
     _ensure_eval_contract_split(split)
@@ -1237,10 +2002,28 @@ def evaluate_stack(
     _ensure_promotion_audit_table(client)
     _ensure_route_hotspots_table(client)
     run_id = f"stack-{int(time.time())}"
-    leakage_path = _write_leakage_artifact(Path(output_dir), run_id, league)
+    leakage_path = _write_leakage_artifact(
+        Path(output_dir),
+        run_id,
+        league,
+        violations=0,
+        reason_codes=[],
+        details={},
+    )
     contract = MIRAGE_EVAL_CONTRACT
+    manifest = dict(
+        run_manifest
+        or _run_manifest(
+            client,
+            league=league,
+            dataset_table=dataset_table,
+            split_kind=split,
+            fallback_seed=run_id,
+        )
+    )
 
     route_results = []
+    eval_rows: list[dict[str, Any]] = []
     for route in (
         "fungible_reference",
         "structured_boosted",
@@ -1260,52 +2043,117 @@ def evaluate_stack(
         sample_count = _to_int(route_eval.get("sample_count"), 0)
         abstain_rate = _to_float(route_eval.get("abstain_rate"), 1.0)
         clean_coverage = max(0.0, 1.0 - abstain_rate)
-        _insert_json_rows(
-            client,
-            "poe_trade.ml_eval_runs",
-            [
-                {
-                    "run_id": run_id,
-                    "route": route,
-                    "league": league,
-                    "split_kind": contract.split_kind,
-                    "raw_coverage": 1.0,
-                    "clean_coverage": clean_coverage,
-                    "outlier_drop_rate": 0.0,
-                    "mdape": _to_float(route_eval.get("mdape"), 1.0),
-                    "wape": _to_float(route_eval.get("wape"), 1.0),
-                    "rmsle": _to_float(route_eval.get("rmsle"), 1.0),
-                    "abstain_rate": abstain_rate if sample_count > 0 else 1.0,
-                    "interval_80_coverage": _to_float(
-                        route_eval.get("interval_80_coverage"), 0.0
-                    ),
-                    "leakage_violations": 0,
-                    "leakage_audit_path": str(leakage_path),
-                    "recorded_at": _now_ts(),
-                }
-            ],
+        eval_rows.append(
+            {
+                "run_id": run_id,
+                "route": route,
+                "league": league,
+                "split_kind": contract.split_kind,
+                "raw_coverage": 1.0,
+                "clean_coverage": clean_coverage,
+                "outlier_drop_rate": 0.0,
+                "mdape": _to_float(route_eval.get("mdape"), 1.0),
+                "wape": _to_float(route_eval.get("wape"), 1.0),
+                "rmsle": _to_float(route_eval.get("rmsle"), 1.0),
+                "abstain_rate": abstain_rate if sample_count > 0 else 1.0,
+                "interval_80_coverage": _to_float(
+                    route_eval.get("interval_80_coverage"), 0.0
+                ),
+                "leakage_violations": 0,
+                "leakage_audit_path": str(leakage_path),
+                "dataset_snapshot_id": str(manifest.get("dataset_snapshot_id") or ""),
+                "eval_slice_id": str(manifest.get("eval_slice_id") or ""),
+                "source_watermarks_json": _source_watermarks_json(
+                    manifest.get("source_watermarks")
+                ),
+                "recorded_at": _now_ts(),
+            }
         )
+    route_slice_ids = [
+        str(route_result.get("eval_slice_id") or "")
+        for route_result in route_results
+        if str(route_result.get("eval_slice_id") or "")
+    ]
+    manifest["eval_slice_id"] = _eval_slice_id(
+        league=league,
+        split_kind=split,
+        dataset_snapshot_id=str(manifest.get("dataset_snapshot_id") or ""),
+        route_slice_ids=route_slice_ids,
+        fallback_seed=run_id,
+    )
+    integrity_gate = _integrity_gate_assessment(manifest, route_results)
+    leakage_violations = _to_int(
+        (integrity_gate.get("leakage") or {}).get("violations"),
+        0,
+    )
+    _write_leakage_artifact(
+        Path(output_dir),
+        run_id,
+        league,
+        violations=leakage_violations,
+        reason_codes=integrity_gate.get("reason_codes") or [],
+        details=integrity_gate.get("leakage") or {},
+    )
+    for row in eval_rows:
+        row["eval_slice_id"] = str(manifest.get("eval_slice_id") or "")
+        row["leakage_violations"] = leakage_violations
+    try:
+        _insert_json_rows(client, "poe_trade.ml_eval_runs", eval_rows)
+    except ClickHouseClientError:
+        for row in eval_rows:
+            row.pop("dataset_snapshot_id", None)
+            row.pop("eval_slice_id", None)
+            row.pop("source_watermarks_json", None)
+        _insert_json_rows(client, "poe_trade.ml_eval_runs", eval_rows)
     baseline = _latest_promoted_run_excluding(
         client, league=league, run_id=run_id
     ) or _latest_run_excluding(client, league=league, run_id=run_id)
-    candidate = _aggregate_eval_run(client, league=league, run_id=run_id)
+    eval_slice_id = str(manifest.get("eval_slice_id") or "")
+    candidate = _aggregate_eval_run_for_slice(
+        client,
+        league=league,
+        run_id=run_id,
+        eval_slice_id=eval_slice_id,
+    ) or _aggregate_eval_run(client, league=league, run_id=run_id)
+    baseline_for_slice: dict[str, Any] | None = None
+    if baseline:
+        baseline_for_slice = _aggregate_eval_run_for_slice(
+            client,
+            league=league,
+            run_id=str(baseline.get("run_id") or ""),
+            eval_slice_id=eval_slice_id,
+        )
+        if baseline_for_slice is None:
+            baseline_for_slice = {
+                "run_id": str(baseline.get("run_id") or ""),
+                "avg_mdape": _to_float(baseline.get("avg_mdape"), 1.0),
+                "avg_cov": _to_float(baseline.get("avg_cov"), 0.0),
+                "eval_slice_id": "",
+            }
     comparison = _candidate_vs_incumbent_summary(
-        candidate=candidate, incumbent=baseline
+        candidate=candidate,
+        incumbent=baseline_for_slice,
     )
+    comparison["integrity_gate"] = integrity_gate
     protected = _protected_cohort_check(
         client,
         league=league,
         candidate_run_id=run_id,
-        incumbent_run_id=baseline.get("run_id") if baseline else None,
+        incumbent_run_id=baseline_for_slice.get("run_id")
+        if baseline_for_slice
+        else None,
     )
     comparison["protected_cohort_regression"] = protected
+    comparison["hold_reason_codes"] = _promotion_hold_reason_codes(comparison)
     verdict = "promote" if _should_promote(comparison) else "hold"
     stop_reason = _promotion_stop_reason(comparison)
     hotspot_rows = _build_route_hotspots(
         client,
         league=league,
         candidate_run_id=run_id,
-        incumbent_run_id=baseline.get("run_id") if baseline else None,
+        incumbent_run_id=baseline_for_slice.get("run_id")
+        if baseline_for_slice
+        else None,
         top_n=contract.promotion.hotspot_top_n,
     )
     _insert_json_rows(client, "poe_trade.ml_route_hotspots_v1", hotspot_rows)
@@ -1316,21 +2164,29 @@ def evaluate_stack(
             {
                 "league": league,
                 "candidate_run_id": run_id,
-                "incumbent_run_id": str(baseline.get("run_id") or "none")
-                if baseline
+                "incumbent_run_id": str(baseline_for_slice.get("run_id") or "none")
+                if baseline_for_slice
                 else "none",
                 "candidate_model_version": f"candidate-{run_id}",
-                "incumbent_model_version": str(baseline.get("run_id") or "none")
-                if baseline
+                "incumbent_model_version": str(
+                    baseline_for_slice.get("run_id") or "none"
+                )
+                if baseline_for_slice
                 else "none",
                 "verdict": verdict,
                 "avg_mdape_candidate": _to_float(candidate.get("avg_mdape"), 1.0),
-                "avg_mdape_incumbent": _to_float(baseline.get("avg_mdape"), 1.0)
-                if baseline
+                "avg_mdape_incumbent": _to_float(
+                    baseline_for_slice.get("avg_mdape"),
+                    1.0,
+                )
+                if baseline_for_slice
                 else _to_float(candidate.get("avg_mdape"), 1.0),
                 "coverage_candidate": _to_float(candidate.get("avg_cov"), 0.0),
-                "coverage_incumbent": _to_float(baseline.get("avg_cov"), 0.0)
-                if baseline
+                "coverage_incumbent": _to_float(
+                    baseline_for_slice.get("avg_cov"),
+                    0.0,
+                )
+                if baseline_for_slice
                 else _to_float(candidate.get("avg_cov"), 0.0),
                 "stop_reason": stop_reason,
                 "recorded_at": _now_ts(),
@@ -1344,9 +2200,15 @@ def evaluate_stack(
         "leakage_audit_path": str(leakage_path),
         "evaluation_contract": contract.to_dict(),
         "candidate_vs_incumbent": comparison,
+        "promotion_policy": {
+            "shadow": _shadow_gate_policy(),
+            "protected_cohort": _protected_cohort_policy(),
+            "integrity": _integrity_gate_policy(),
+        },
         "route_hotspots": _present_hotspots(hotspot_rows),
         "promotion_verdict": verdict,
         "stop_reason": stop_reason,
+        "run_manifest": manifest,
     }
 
 
@@ -1363,6 +2225,7 @@ def train_loop(
     resume: bool,
 ) -> dict[str, Any]:
     _ensure_supported_league(league)
+    initialize_mod_features(client, league=league)
     _ensure_train_runs_table(client)
     _ensure_tuning_rounds_table(client)
     controls = _resolve_tuning_controls(
@@ -1392,6 +2255,13 @@ def train_loop(
             final_stop_reason = "wall_clock_budget_exhausted"
             break
         run_id = f"train-{league.lower()}-{int(time.time())}-{i}"
+        run_manifest = _run_manifest(
+            client,
+            league=league,
+            dataset_table=dataset_table,
+            split_kind="rolling",
+            fallback_seed=run_id,
+        )
         _write_train_run(
             client,
             run_id=run_id,
@@ -1407,6 +2277,7 @@ def train_loop(
             stop_reason="running",
             tuning_controls=controls,
             eval_run_id="",
+            run_manifest=run_manifest,
         )
         train_all_routes(
             client,
@@ -1430,6 +2301,7 @@ def train_loop(
             stop_reason="running",
             tuning_controls=controls,
             eval_run_id="",
+            run_manifest=run_manifest,
         )
         eval_result = evaluate_stack(
             client,
@@ -1438,7 +2310,10 @@ def train_loop(
             model_dir=model_dir,
             split="rolling",
             output_dir=model_dir,
+            run_manifest=run_manifest,
         )
+        final_manifest = dict(run_manifest)
+        final_manifest.update(eval_result.get("run_manifest") or {})
         eval_run_id = str(eval_result.get("run_id") or "")
         warm_start_source = (
             current_version if controls.warm_start_enabled else "cold_start"
@@ -1496,6 +2371,7 @@ def train_loop(
             stop_reason=stop_reason,
             tuning_controls=controls,
             eval_run_id=eval_run_id,
+            run_manifest=final_manifest,
         )
         completed.append(
             {
@@ -1540,7 +2416,11 @@ def status(client: ClickHouseClient, *, league: str, run: str) -> dict[str, Any]
     if run == "latest":
         rows = train_run_history(client, league=league, limit=1)
         if not rows:
-            return {"league": league, "status": "no_runs"}
+            return {
+                "league": league,
+                "status": "no_runs",
+                "warmup": _warmup_status_payload(league),
+            }
         latest = rows[0]
         eval_run_id = str(latest.get("eval_run_id") or "")
         if not eval_run_id:
@@ -1548,6 +2428,7 @@ def status(client: ClickHouseClient, *, league: str, run: str) -> dict[str, Any]
         feedback = _eval_feedback_for_run(client, league=league, run_id=eval_run_id)
         latest["eval_feedback"] = feedback
         latest["candidate_vs_incumbent"] = feedback.get("candidate_vs_incumbent")
+        latest["promotion_policy"] = feedback.get("promotion_policy")
         latest["latest_avg_mdape"] = feedback.get("latest_avg_mdape")
         latest["latest_avg_interval_coverage"] = feedback.get(
             "latest_avg_interval_coverage"
@@ -1559,10 +2440,21 @@ def status(client: ClickHouseClient, *, league: str, run: str) -> dict[str, Any]
             client, league=league, run_id=eval_run_id
         )
         latest["active_model_version"] = _active_model_version(client, league)
+        latest["dataset_snapshot_id"] = str(latest.get("dataset_snapshot_id") or "")
+        latest["eval_slice_id"] = str(latest.get("eval_slice_id") or "")
+        latest["source_watermarks"] = _parse_source_watermarks(
+            latest.get("source_watermarks_json")
+        )
+        latest["warmup"] = _warmup_status_payload(league)
         return latest
     rows = train_run_history(client, league=league, limit=1, run_id=run)
     if not rows:
-        return {"league": league, "run_id": run, "status": "not_found"}
+        return {
+            "league": league,
+            "run_id": run,
+            "status": "not_found",
+            "warmup": _warmup_status_payload(league),
+        }
     row = rows[0]
     eval_run_id = str(row.get("eval_run_id") or "")
     if not eval_run_id:
@@ -1570,6 +2462,7 @@ def status(client: ClickHouseClient, *, league: str, run: str) -> dict[str, Any]
     feedback = _eval_feedback_for_run(client, league=league, run_id=eval_run_id)
     row["eval_feedback"] = feedback
     row["candidate_vs_incumbent"] = feedback.get("candidate_vs_incumbent")
+    row["promotion_policy"] = feedback.get("promotion_policy")
     row["latest_avg_mdape"] = feedback.get("latest_avg_mdape")
     row["latest_avg_interval_coverage"] = feedback.get("latest_avg_interval_coverage")
     row["route_hotspots"] = _latest_route_hotspots(client, league, run_id=eval_run_id)
@@ -1577,6 +2470,12 @@ def status(client: ClickHouseClient, *, league: str, run: str) -> dict[str, Any]
         client, league=league, run_id=eval_run_id
     )
     row["active_model_version"] = _active_model_version(client, league)
+    row["dataset_snapshot_id"] = str(row.get("dataset_snapshot_id") or "")
+    row["eval_slice_id"] = str(row.get("eval_slice_id") or "")
+    row["source_watermarks"] = _parse_source_watermarks(
+        row.get("source_watermarks_json")
+    )
+    row["warmup"] = _warmup_status_payload(league)
     return row
 
 
@@ -1634,6 +2533,30 @@ def _eval_feedback_for_run(
     latest = latest_rows[0]
     latest_mdape = _to_float(latest.get("avg_mdape"), 1.0)
     latest_cov = _to_float(latest.get("avg_cov"), 0.0)
+    manifest_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT source_watermarks_json, leakage_violations, eval_slice_id",
+                "FROM poe_trade.ml_eval_runs",
+                f"WHERE league = {_quote(league)} AND run_id = {_quote(run_id)}",
+                "ORDER BY recorded_at DESC",
+                "LIMIT 1",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    manifest_row = manifest_rows[0] if manifest_rows else {}
+    integrity_gate = _integrity_gate_assessment(
+        {
+            "source_watermarks": _parse_source_watermarks(
+                manifest_row.get("source_watermarks_json")
+            )
+        },
+        [],
+        leakage_violations=_to_int(manifest_row.get("leakage_violations"), 0),
+    )
+    candidate_eval_slice_id = str(manifest_row.get("eval_slice_id") or "")
     baseline = (
         _latest_promoted_run_excluding(client, league=league, run_id=run_id)
         or _latest_run_excluding(client, league=league, run_id=run_id)
@@ -1641,37 +2564,79 @@ def _eval_feedback_for_run(
             "run_id": run_id,
             "avg_mdape": latest_mdape,
             "avg_cov": latest_cov,
+            "eval_slice_id": candidate_eval_slice_id,
         }
     )
+    baseline_for_slice: dict[str, Any] | None = None
+    if (
+        str(baseline.get("run_id") or "")
+        and str(baseline.get("run_id") or "") != run_id
+    ):
+        baseline_for_slice = _aggregate_eval_run_for_slice(
+            client,
+            league=league,
+            run_id=str(baseline.get("run_id") or ""),
+            eval_slice_id=candidate_eval_slice_id,
+        )
+    if baseline_for_slice is None:
+        baseline_for_slice = {
+            "run_id": str(baseline.get("run_id") or ""),
+            "avg_mdape": _to_float(baseline.get("avg_mdape"), latest_mdape),
+            "avg_cov": _to_float(baseline.get("avg_cov"), latest_cov),
+            "eval_slice_id": str(baseline.get("eval_slice_id") or ""),
+        }
     candidate_vs_incumbent = _candidate_vs_incumbent_summary(
         candidate={
             "run_id": run_id,
             "avg_mdape": latest_mdape,
             "avg_cov": latest_cov,
+            "eval_slice_id": candidate_eval_slice_id,
         },
         incumbent={
-            "run_id": str(baseline.get("run_id") or ""),
-            "avg_mdape": _to_float(baseline.get("avg_mdape"), latest_mdape),
-            "avg_cov": _to_float(baseline.get("avg_cov"), latest_cov),
+            "run_id": str(baseline_for_slice.get("run_id") or ""),
+            "avg_mdape": _to_float(baseline_for_slice.get("avg_mdape"), latest_mdape),
+            "avg_cov": _to_float(baseline_for_slice.get("avg_cov"), latest_cov),
+            "eval_slice_id": str(baseline_for_slice.get("eval_slice_id") or ""),
         },
     )
+    protected = _protected_cohort_check(
+        client,
+        league=league,
+        candidate_run_id=run_id,
+        incumbent_run_id=str(baseline_for_slice.get("run_id") or "") or None,
+    )
+    candidate_vs_incumbent["integrity_gate"] = integrity_gate
+    candidate_vs_incumbent["protected_cohort_regression"] = protected
+    candidate_vs_incumbent["hold_reason_codes"] = _promotion_hold_reason_codes(
+        candidate_vs_incumbent
+    )
+    candidate_vs_incumbent["promotion_policy"] = {
+        "shadow": _shadow_gate_policy(),
+        "protected_cohort": _protected_cohort_policy(),
+        "integrity": _integrity_gate_policy(),
+    }
     feedback: dict[str, Any] = {
         "status": "ok",
         "latest_eval_run_id": run_id,
         "latest_avg_mdape": latest_mdape,
         "latest_avg_interval_coverage": latest_cov,
         "candidate_vs_incumbent": candidate_vs_incumbent,
+        "promotion_policy": {
+            "shadow": _shadow_gate_policy(),
+            "protected_cohort": _protected_cohort_policy(),
+            "integrity": _integrity_gate_policy(),
+        },
     }
-    if str(baseline.get("run_id") or "") == run_id:
+    if str(baseline_for_slice.get("run_id") or "") == run_id:
         feedback["message"] = (
             "Only one eval run available; trend requires at least two runs."
         )
         return feedback
-    prev_mdape = _to_float(baseline.get("avg_mdape"), 1.0)
-    prev_cov = _to_float(baseline.get("avg_cov"), 0.0)
+    prev_mdape = _to_float(baseline_for_slice.get("avg_mdape"), 1.0)
+    prev_cov = _to_float(baseline_for_slice.get("avg_cov"), 0.0)
     mdape_delta = latest_mdape - prev_mdape
     cov_delta = latest_cov - prev_cov
-    feedback["previous_eval_run_id"] = str(baseline.get("run_id") or "")
+    feedback["previous_eval_run_id"] = str(baseline_for_slice.get("run_id") or "")
     feedback["mdape_delta_vs_previous"] = mdape_delta
     feedback["coverage_delta_vs_previous"] = cov_delta
     feedback["is_improving"] = mdape_delta < 0
@@ -1689,25 +2654,49 @@ def predict_one(
     *,
     league: str,
     clipboard_text: str,
+    model_version: str | None = None,
 ) -> dict[str, Any]:
     _ensure_supported_league(league)
     parsed = _parse_clipboard_item(clipboard_text)
     route_bundle = _route_for_item(parsed)
     route = route_bundle["route"]
-    support = _support_count_recent(
+    profile = _serving_profile_lookup(
         client,
         league=league,
         category=parsed["category"],
         base_type=parsed["base_type"],
     )
-    base_price = _reference_price(
-        client,
-        league=league,
-        category=parsed["category"],
-        base_type=parsed["base_type"],
-    )
+    if profile["hit"]:
+        support = _to_int(profile.get("support_count_recent"), 0)
+        base_price = max(0.1, _to_float(profile.get("reference_price"), 1.0))
+    else:
+        logger.info(
+            "predict_one serving profile miss; using deterministic fallback "
+            "reason=%s league=%s category=%s base_type=%s",
+            profile.get("reason") or "profile_miss",
+            league,
+            parsed["category"],
+            parsed["base_type"],
+        )
+        support = _support_count_recent(
+            client,
+            league=league,
+            category=parsed["category"],
+            base_type=parsed["base_type"],
+        )
+        base_price = _reference_price(
+            client,
+            league=league,
+            category=parsed["category"],
+            base_type=parsed["base_type"],
+        )
 
-    artifact = _load_active_route_artifact(client, league=league, route=route)
+    artifact = _load_active_route_artifact(
+        client,
+        league=league,
+        route=route,
+        model_version=model_version,
+    )
     model_prediction = _predict_with_artifact(
         artifact=artifact,
         parsed_item=parsed,
@@ -2008,12 +2997,39 @@ def report(
             ]
         ),
     )
+    manifest_row: dict[str, Any] = {}
+    try:
+        manifest_rows = _query_rows(
+            client,
+            " ".join(
+                [
+                    "SELECT dataset_snapshot_id, eval_slice_id, source_watermarks_json",
+                    "FROM poe_trade.ml_eval_runs",
+                    f"WHERE league = {_quote(league)} AND run_id = {_quote(eval_run_id)}",
+                    "ORDER BY recorded_at DESC",
+                    "LIMIT 1",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        )
+        if manifest_rows:
+            manifest_row = manifest_rows[0]
+    except ClickHouseClientError:
+        manifest_row = {}
+    baseline_path = Path(
+        os.getenv(
+            "POE_ML_BASELINE_BENCHMARK_PATH",
+            ".sisyphus/evidence/task-1-baseline.json",
+        )
+    )
+    baseline_metadata = _baseline_benchmark_metadata(baseline_path)
     payload = {
         "league": league,
         "model_dir": model_dir,
         "eval_run_id": eval_run_id,
         "generated_at": _now_ts(),
         "promotion_verdict": promotion_verdict,
+        "promotion_policy": feedback.get("promotion_policy"),
         "candidate_vs_incumbent": feedback.get("candidate_vs_incumbent"),
         "latest_avg_mdape": feedback.get("latest_avg_mdape"),
         "latest_avg_interval_coverage": feedback.get("latest_avg_interval_coverage"),
@@ -2027,6 +3043,16 @@ def report(
         "confidence_buckets": confidence_buckets,
         "low_confidence_reasons": low_conf_reasons,
         "outlier_cleaning_summary": outlier_summary,
+        "dataset_snapshot_id": str(manifest_row.get("dataset_snapshot_id") or ""),
+        "eval_slice_id": str(manifest_row.get("eval_slice_id") or ""),
+        "source_watermarks_json": _source_watermarks_json(
+            manifest_row.get("source_watermarks_json")
+        ),
+        "source_watermarks": _parse_source_watermarks(
+            manifest_row.get("source_watermarks_json")
+        ),
+        "baseline_benchmark_evidence_path": str(baseline_path),
+        "baseline_benchmark": baseline_metadata,
     }
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2065,6 +3091,349 @@ def _now_ts() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
+def _stable_manifest_hash(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(encoded.encode("utf-8")).hexdigest()[:16]
+
+
+def dataset_rebuild_window(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    labels_table: str = "poe_trade.ml_price_labels_v1",
+) -> dict[str, Any]:
+    _ensure_supported_league(league)
+    _ensure_price_labels_table(client, labels_table)
+    label_digest = (
+        "cityHash64(concat("
+        "toString(as_of_ts), '|', "
+        "ifNull(stash_id, ''), '|', "
+        "ifNull(item_id, ''), '|', "
+        "ifNull(category, ''), '|', "
+        "ifNull(base_type, ''), '|', "
+        "toString(ifNull(round(normalized_price_chaos, 6), -1.0)), '|', "
+        "ifNull(outlier_status, ''))"
+        ")"
+    )
+    label_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT",
+                "count() AS row_count,",
+                "min(as_of_ts) AS min_as_of_ts,",
+                "max(as_of_ts) AS max_as_of_ts,",
+                f"toString(sum({label_digest})) AS digest_sum,",
+                f"toString(max({label_digest})) AS digest_max",
+                f"FROM {labels_table}",
+                f"WHERE league = {_quote(league)}",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    label_row = label_rows[0] if label_rows else {}
+    label_count = _to_int(label_row.get("row_count"), 0)
+    label_min_as_of_ts = str(label_row.get("min_as_of_ts") or "")
+    label_max_as_of_ts = str(label_row.get("max_as_of_ts") or "")
+    label_digest_sum = str(label_row.get("digest_sum") or "0")
+    label_digest_max = str(label_row.get("digest_max") or "0")
+
+    trade_metadata_rows = 0
+    trade_metadata_max_retrieved_at = ""
+    try:
+        trade_metadata = _query_rows(
+            client,
+            " ".join(
+                [
+                    "SELECT count() AS row_count, max(retrieved_at) AS max_retrieved_at",
+                    "FROM poe_trade.bronze_trade_metadata",
+                    f"WHERE league = {_quote(league)}",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        )
+        trade_row = trade_metadata[0] if trade_metadata else {}
+        trade_metadata_rows = _to_int(trade_row.get("row_count"), 0)
+        trade_metadata_max_retrieved_at = str(trade_row.get("max_retrieved_at") or "")
+    except ClickHouseClientError:
+        pass
+
+    window_seed = {
+        "league": league,
+        "labels_table": labels_table,
+        "label_count": label_count,
+        "label_min_as_of_ts": label_min_as_of_ts,
+        "label_max_as_of_ts": label_max_as_of_ts,
+        "label_digest_sum": label_digest_sum,
+        "label_digest_max": label_digest_max,
+        "trade_metadata_rows": trade_metadata_rows,
+        "trade_metadata_max_retrieved_at": trade_metadata_max_retrieved_at,
+    }
+    return {
+        "window_id": f"rebuild-window-{_stable_manifest_hash(window_seed)}",
+        "label_rows": label_count,
+        "label_min_as_of_ts": label_min_as_of_ts,
+        "label_max_as_of_ts": label_max_as_of_ts,
+        "label_digest_sum": label_digest_sum,
+        "label_digest_max": label_digest_max,
+        "trade_metadata_rows": trade_metadata_rows,
+        "trade_metadata_max_retrieved_at": trade_metadata_max_retrieved_at,
+    }
+
+
+def _dataset_snapshot_manifest(
+    client: ClickHouseClient, *, league: str, dataset_table: str
+) -> dict[str, Any]:
+    try:
+        rows = _query_rows(
+            client,
+            " ".join(
+                [
+                    "SELECT count() AS row_count, min(as_of_ts) AS min_as_of_ts, max(as_of_ts) AS max_as_of_ts",
+                    f"FROM {dataset_table}",
+                    f"WHERE league = {_quote(league)}",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        )
+    except Exception:
+        rows = []
+    row = rows[0] if rows else {}
+    row_count = _to_int(row.get("row_count"), 0)
+    min_as_of_ts = str(row.get("min_as_of_ts") or "")
+    max_as_of_ts = str(row.get("max_as_of_ts") or "")
+    snapshot_seed = {
+        "league": league,
+        "dataset_table": dataset_table,
+        "row_count": row_count,
+        "min_as_of_ts": min_as_of_ts,
+        "max_as_of_ts": max_as_of_ts,
+    }
+    return {
+        "dataset_snapshot_id": f"dataset-{_stable_manifest_hash(snapshot_seed)}",
+        "dataset_snapshot_rows": row_count,
+        "dataset_snapshot_min_as_of_ts": min_as_of_ts,
+        "dataset_snapshot_max_as_of_ts": max_as_of_ts,
+    }
+
+
+def _source_watermarks_manifest(
+    client: ClickHouseClient, *, league: str
+) -> dict[str, str]:
+    watermarks: dict[str, str] = {}
+    queries = (
+        (
+            "dataset_max_as_of_ts",
+            " ".join(
+                [
+                    "SELECT max(as_of_ts) AS value",
+                    "FROM poe_trade.ml_price_dataset_v1",
+                    f"WHERE league = {_quote(league)}",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        ),
+        (
+            "poeninja_max_sample_time_utc",
+            " ".join(
+                [
+                    "SELECT max(sample_time_utc) AS value",
+                    "FROM poe_trade.raw_poeninja_currency_overview",
+                    f"WHERE league = {_quote(league)}",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        ),
+        (
+            "price_labels_max_updated_at",
+            " ".join(
+                [
+                    "SELECT max(updated_at) AS value",
+                    "FROM poe_trade.ml_price_labels_v1",
+                    f"WHERE league = {_quote(league)}",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        ),
+    )
+    for key, query in queries:
+        try:
+            rows = _query_rows(client, query)
+        except ClickHouseClientError:
+            continue
+        raw_value = str((rows[0] if rows else {}).get("value") or "").strip()
+        if raw_value:
+            watermarks[key] = raw_value
+    if not watermarks:
+        watermarks["captured_at"] = _now_ts()
+    return watermarks
+
+
+def _eval_slice_id(
+    *,
+    league: str,
+    split_kind: str,
+    dataset_snapshot_id: str,
+    route_slice_ids: list[str],
+    fallback_seed: str,
+) -> str:
+    normalized_route_slice_ids = sorted(route_slice_ids)
+    seed = {
+        "league": league,
+        "split_kind": split_kind,
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "route_slice_ids": normalized_route_slice_ids,
+    }
+    if not dataset_snapshot_id and not normalized_route_slice_ids:
+        seed["fallback_seed"] = fallback_seed
+    return f"eval-slice-{_stable_manifest_hash(seed)}"
+
+
+def _run_manifest(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    dataset_table: str,
+    split_kind: str,
+    fallback_seed: str,
+    route_slice_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    dataset_manifest = _dataset_snapshot_manifest(
+        client,
+        league=league,
+        dataset_table=dataset_table,
+    )
+    source_watermarks = _source_watermarks_manifest(client, league=league)
+    eval_slice_id = _eval_slice_id(
+        league=league,
+        split_kind=split_kind,
+        dataset_snapshot_id=str(dataset_manifest.get("dataset_snapshot_id") or ""),
+        route_slice_ids=route_slice_ids or [],
+        fallback_seed=fallback_seed,
+    )
+    return {
+        "dataset_snapshot_id": str(dataset_manifest.get("dataset_snapshot_id") or ""),
+        "eval_slice_id": eval_slice_id,
+        "source_watermarks": source_watermarks,
+    }
+
+
+def _source_watermarks_json(value: object) -> str:
+    if isinstance(value, dict):
+        return json.dumps(value, separators=(",", ":"), sort_keys=True)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return "{}"
+        if isinstance(parsed, dict):
+            return json.dumps(parsed, separators=(",", ":"), sort_keys=True)
+    return "{}"
+
+
+def _parse_source_watermarks(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _route_slice_id(route: str, holdout_rows: list[dict[str, Any]]) -> str:
+    first_as_of_ts = str(
+        (holdout_rows[0] if holdout_rows else {}).get("as_of_ts") or ""
+    )
+    last_as_of_ts = str(
+        (holdout_rows[-1] if holdout_rows else {}).get("as_of_ts") or ""
+    )
+    seed = {
+        "route": route,
+        "sample_count": len(holdout_rows),
+        "first_as_of_ts": first_as_of_ts,
+        "last_as_of_ts": last_as_of_ts,
+        "rows_digest": _route_slice_rows_digest(holdout_rows),
+    }
+    return f"route-slice-{_stable_manifest_hash(seed)}"
+
+
+def _route_slice_rows_digest(holdout_rows: list[dict[str, Any]]) -> str:
+    if not holdout_rows:
+        return ""
+    digest = hashlib.sha256()
+    for row in holdout_rows:
+        projection = {
+            "as_of_ts": str(row.get("as_of_ts") or ""),
+            "category": str(row.get("category") or ""),
+            "base_type": str(row.get("base_type") or ""),
+            "rarity": str(row.get("rarity") or ""),
+            "ilvl": _to_int(row.get("ilvl"), 0),
+            "stack_size": _to_int(row.get("stack_size"), 0),
+            "corrupted": _to_int(row.get("corrupted"), 0),
+            "fractured": _to_int(row.get("fractured"), 0),
+            "synthesised": _to_int(row.get("synthesised"), 0),
+            "mod_token_count": _to_int(row.get("mod_token_count"), 0),
+            "normalized_price_chaos": _to_float(
+                row.get("normalized_price_chaos"),
+                0.0,
+            ),
+            "sale_probability_label": _to_float(
+                row.get("sale_probability_label"),
+                0.0,
+            ),
+        }
+        digest.update(
+            json.dumps(projection, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        )
+    return digest.hexdigest()
+
+
+def _baseline_benchmark_metadata(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    latency = payload.get("latency_ms")
+    if not isinstance(latency, dict):
+        latency = {}
+
+    def _pick_float(*keys: str) -> float | None:
+        for key in keys:
+            if key in payload:
+                value = _to_float(payload.get(key), float("nan"))
+                if not math.isnan(value):
+                    return value
+            if key in latency:
+                value = _to_float(latency.get(key), float("nan"))
+                if not math.isnan(value):
+                    return value
+        return None
+
+    p50 = _pick_float("p50_ms", "p50")
+    p95 = _pick_float("p95_ms", "p95")
+    corpus_hash = str(
+        payload.get("corpus_hash") or payload.get("request_corpus_hash") or ""
+    )
+    result: dict[str, Any] = {}
+    if p50 is not None:
+        result["p50_ms"] = p50
+    if p95 is not None:
+        result["p95_ms"] = p95
+    if corpus_hash:
+        result["corpus_hash"] = corpus_hash
+    return result
+
+
 def _train_run_stage_rank(stage: object) -> int:
     value = str(stage or "").strip().lower()
     if value == "done":
@@ -2100,19 +3469,30 @@ def train_run_history(
     if run_id:
         filters.append(f"run_id = {_quote(run_id)}")
     row_limit = 16 if run_id else max(32, max(1, limit) * 8)
-    rows = _query_rows(
-        client,
-        " ".join(
-            [
-                "SELECT run_id, stage, current_route, routes_done, routes_total, rows_processed, eta_seconds, chosen_backend, worker_count, memory_budget_gb, active_model_version, status, stop_reason, tuning_config_id, eval_run_id, updated_at",
-                "FROM poe_trade.ml_train_runs",
-                f"WHERE {' AND '.join(filters)}",
-                "ORDER BY updated_at DESC",
-                f"LIMIT {row_limit}",
-                "FORMAT JSONEachRow",
-            ]
-        ),
+    query_with_manifest = " ".join(
+        [
+            "SELECT run_id, stage, current_route, routes_done, routes_total, rows_processed, eta_seconds, chosen_backend, worker_count, memory_budget_gb, active_model_version, status, stop_reason, tuning_config_id, eval_run_id, dataset_snapshot_id, eval_slice_id, source_watermarks_json, updated_at",
+            "FROM poe_trade.ml_train_runs",
+            f"WHERE {' AND '.join(filters)}",
+            "ORDER BY updated_at DESC",
+            f"LIMIT {row_limit}",
+            "FORMAT JSONEachRow",
+        ]
     )
+    query_without_manifest = " ".join(
+        [
+            "SELECT run_id, stage, current_route, routes_done, routes_total, rows_processed, eta_seconds, chosen_backend, worker_count, memory_budget_gb, active_model_version, status, stop_reason, tuning_config_id, eval_run_id, updated_at",
+            "FROM poe_trade.ml_train_runs",
+            f"WHERE {' AND '.join(filters)}",
+            "ORDER BY updated_at DESC",
+            f"LIMIT {row_limit}",
+            "FORMAT JSONEachRow",
+        ]
+    )
+    try:
+        rows = _query_rows(client, query_with_manifest)
+    except ClickHouseClientError:
+        rows = _query_rows(client, query_without_manifest)
     return _collapse_train_run_rows(rows)[: max(1, limit)]
 
 
@@ -2211,7 +3591,7 @@ def _aggregate_eval_run(
         client,
         " ".join(
             [
-                "SELECT avg(coalesce(mdape, 1.0)) AS avg_mdape, avg(coalesce(interval_80_coverage, 0.0)) AS avg_cov",
+                "SELECT avg(coalesce(mdape, 1.0)) AS avg_mdape, avg(coalesce(interval_80_coverage, 0.0)) AS avg_cov, any(eval_slice_id) AS eval_slice_id",
                 "FROM poe_trade.ml_eval_runs",
                 f"WHERE league = {_quote(league)} AND run_id = {_quote(run_id)}",
                 "FORMAT JSONEachRow",
@@ -2219,12 +3599,49 @@ def _aggregate_eval_run(
         ),
     )
     if not rows:
-        return {"run_id": run_id, "avg_mdape": 1.0, "avg_cov": 0.0}
+        return {
+            "run_id": run_id,
+            "avg_mdape": 1.0,
+            "avg_cov": 0.0,
+            "eval_slice_id": "",
+        }
     row = rows[0]
     return {
         "run_id": run_id,
         "avg_mdape": _to_float(row.get("avg_mdape"), 1.0),
         "avg_cov": _to_float(row.get("avg_cov"), 0.0),
+        "eval_slice_id": str(row.get("eval_slice_id") or ""),
+    }
+
+
+def _aggregate_eval_run_for_slice(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    run_id: str,
+    eval_slice_id: str,
+) -> dict[str, Any] | None:
+    if not eval_slice_id.strip():
+        return None
+    rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT avg(coalesce(mdape, 1.0)) AS avg_mdape, avg(coalesce(interval_80_coverage, 0.0)) AS avg_cov",
+                "FROM poe_trade.ml_eval_runs",
+                f"WHERE league = {_quote(league)} AND run_id = {_quote(run_id)} AND eval_slice_id = {_quote(eval_slice_id)}",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "run_id": run_id,
+        "avg_mdape": _to_float(row.get("avg_mdape"), 1.0),
+        "avg_cov": _to_float(row.get("avg_cov"), 0.0),
+        "eval_slice_id": eval_slice_id,
     }
 
 
@@ -2235,7 +3652,7 @@ def _latest_run_excluding(
         client,
         " ".join(
             [
-                "SELECT run_id, avg(coalesce(mdape, 1.0)) AS avg_mdape, avg(coalesce(interval_80_coverage, 0.0)) AS avg_cov, max(recorded_at) AS recorded_at",
+                "SELECT run_id, avg(coalesce(mdape, 1.0)) AS avg_mdape, avg(coalesce(interval_80_coverage, 0.0)) AS avg_cov, any(eval_slice_id) AS eval_slice_id, max(recorded_at) AS recorded_at",
                 "FROM poe_trade.ml_eval_runs",
                 f"WHERE league = {_quote(league)} AND run_id != {_quote(run_id)}",
                 "GROUP BY run_id",
@@ -2252,6 +3669,7 @@ def _latest_run_excluding(
         "run_id": str(row.get("run_id") or ""),
         "avg_mdape": _to_float(row.get("avg_mdape"), 1.0),
         "avg_cov": _to_float(row.get("avg_cov"), 0.0),
+        "eval_slice_id": str(row.get("eval_slice_id") or ""),
     }
 
 
@@ -2281,7 +3699,7 @@ def _latest_promoted_run_excluding(
         client,
         " ".join(
             [
-                "SELECT avg(coalesce(mdape, 1.0)) AS avg_mdape, avg(coalesce(interval_80_coverage, 0.0)) AS avg_cov",
+                "SELECT avg(coalesce(mdape, 1.0)) AS avg_mdape, avg(coalesce(interval_80_coverage, 0.0)) AS avg_cov, any(eval_slice_id) AS eval_slice_id",
                 "FROM poe_trade.ml_eval_runs",
                 f"WHERE league = {_quote(league)} AND run_id = {_quote(promoted_run_id)}",
                 "FORMAT JSONEachRow",
@@ -2295,34 +3713,233 @@ def _latest_promoted_run_excluding(
         "run_id": promoted_run_id,
         "avg_mdape": _to_float(row.get("avg_mdape"), 1.0),
         "avg_cov": _to_float(row.get("avg_cov"), 0.0),
+        "eval_slice_id": str(row.get("eval_slice_id") or ""),
+    }
+
+
+def _integrity_gate_policy() -> dict[str, Any]:
+    return {
+        "league": "Mirage",
+        "leakage_reason_code": PROMOTION_LEAKAGE_REASON_CODE,
+        "freshness_reason_code": PROMOTION_FRESHNESS_REASON_CODE,
+        "freshness_max_lag_minutes": PROMOTION_FRESHNESS_MAX_LAG_MINUTES,
+        "freshness_watermark_keys": list(PROMOTION_FRESHNESS_WATERMARK_KEYS),
+    }
+
+
+def _shadow_gate_policy() -> dict[str, Any]:
+    return {
+        "league": "Mirage",
+        "require_same_eval_slice": True,
+        "min_relative_mdape_improvement": PROMOTION_SHADOW_MIN_RELATIVE_MDAPE_IMPROVEMENT,
+        "slice_mismatch_reason_code": PROMOTION_SHADOW_SLICE_MISMATCH_REASON_CODE,
+        "missing_incumbent_reason_code": PROMOTION_SHADOW_MISSING_INCUMBENT_REASON_CODE,
+        "mdape_reason_code": PROMOTION_SHADOW_MDAPE_REASON_CODE,
+    }
+
+
+def _parse_manifest_timestamp(value: object) -> datetime | None:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+    normalized = raw_value.replace(" ", "T")
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _integrity_gate_assessment(
+    run_manifest: dict[str, Any] | None,
+    route_results: list[dict[str, Any]],
+    *,
+    leakage_violations: int | None = None,
+) -> dict[str, Any]:
+    policy = _integrity_gate_policy()
+    reason_codes: list[str] = []
+
+    leakage_detected = max(0, _to_int(leakage_violations, 0)) > 0
+    leakage_route = ""
+    leakage_train_max_as_of_ts = ""
+    leakage_eval_min_as_of_ts = ""
+    if not leakage_detected:
+        for route_result in route_results:
+            route_name = str(route_result.get("route") or "")
+            train_max_as_of_ts = str(route_result.get("train_max_as_of_ts") or "")
+            eval_min_as_of_ts = str(route_result.get("eval_min_as_of_ts") or "")
+            train_max_dt = _parse_manifest_timestamp(train_max_as_of_ts)
+            eval_min_dt = _parse_manifest_timestamp(eval_min_as_of_ts)
+            if train_max_dt is None or eval_min_dt is None:
+                continue
+            if train_max_dt >= eval_min_dt:
+                leakage_detected = True
+                leakage_route = route_name
+                leakage_train_max_as_of_ts = train_max_as_of_ts
+                leakage_eval_min_as_of_ts = eval_min_as_of_ts
+                break
+    if leakage_detected:
+        reason_codes.append(PROMOTION_LEAKAGE_REASON_CODE)
+
+    manifest = run_manifest or {}
+    source_watermarks = _parse_source_watermarks(manifest.get("source_watermarks"))
+    if not source_watermarks:
+        source_watermarks = _parse_source_watermarks(
+            manifest.get("source_watermarks_json")
+        )
+
+    parsed_watermarks: dict[str, datetime] = {}
+    observed_watermarks: dict[str, str] = {}
+    for key in PROMOTION_FRESHNESS_WATERMARK_KEYS:
+        raw_value = str(source_watermarks.get(key) or "").strip()
+        if not raw_value:
+            continue
+        parsed = _parse_manifest_timestamp(raw_value)
+        if parsed is None:
+            continue
+        observed_watermarks[key] = raw_value
+        parsed_watermarks[key] = parsed
+
+    required_keys = [str(key) for key in PROMOTION_FRESHNESS_WATERMARK_KEYS]
+    missing_or_unparsed_keys = [
+        key for key in required_keys if key not in parsed_watermarks
+    ]
+    max_observed_lag_minutes: float | None = None
+    freshness_stale = False
+    if len(parsed_watermarks) >= 2:
+        newest = max(parsed_watermarks.values())
+        oldest = min(parsed_watermarks.values())
+        max_observed_lag_minutes = (newest - oldest).total_seconds() / 60.0
+        freshness_stale = max_observed_lag_minutes > PROMOTION_FRESHNESS_MAX_LAG_MINUTES
+    if missing_or_unparsed_keys:
+        freshness_stale = True
+    if freshness_stale:
+        reason_codes.append(PROMOTION_FRESHNESS_REASON_CODE)
+
+    leakage_violations_count = max(0, _to_int(leakage_violations, 0))
+    if leakage_detected and leakage_violations_count == 0:
+        leakage_violations_count = 1
+
+    return {
+        "pass": not reason_codes,
+        "reason_codes": reason_codes,
+        "leakage": {
+            "detected": leakage_detected,
+            "reason_code": PROMOTION_LEAKAGE_REASON_CODE if leakage_detected else None,
+            "violations": leakage_violations_count,
+            "route": leakage_route,
+            "train_max_as_of_ts": leakage_train_max_as_of_ts,
+            "eval_min_as_of_ts": leakage_eval_min_as_of_ts,
+        },
+        "freshness": {
+            "stale": freshness_stale,
+            "reason_code": PROMOTION_FRESHNESS_REASON_CODE if freshness_stale else None,
+            "max_observed_lag_minutes": round(max_observed_lag_minutes, 3)
+            if max_observed_lag_minutes is not None
+            else None,
+            "max_allowed_lag_minutes": PROMOTION_FRESHNESS_MAX_LAG_MINUTES,
+            "parsed_watermark_count": len(parsed_watermarks),
+            "missing_or_unparsed_keys": missing_or_unparsed_keys,
+            "observed_watermarks": {
+                key: observed_watermarks[key] for key in sorted(observed_watermarks)
+            },
+        },
+        "policy": policy,
     }
 
 
 def _candidate_vs_incumbent_summary(
     *, candidate: dict[str, Any], incumbent: dict[str, Any] | None
 ) -> dict[str, Any]:
+    shadow_policy = _shadow_gate_policy()
     c_mdape = _to_float(candidate.get("avg_mdape"), 1.0)
     c_cov = _to_float(candidate.get("avg_cov"), 0.0)
+    candidate_eval_slice_id = str(candidate.get("eval_slice_id") or "")
+    incumbent_eval_slice_id = ""
+    incumbent_missing = False
     if incumbent is None:
         i_mdape = c_mdape
         i_cov = c_cov
         incumbent_run = "none"
+        incumbent_missing = True
     else:
         i_mdape = _to_float(incumbent.get("avg_mdape"), c_mdape)
         i_cov = _to_float(incumbent.get("avg_cov"), c_cov)
         incumbent_run = str(incumbent.get("run_id") or "none")
+        incumbent_eval_slice_id = str(incumbent.get("eval_slice_id") or "")
     mdape_delta = i_mdape - c_mdape
     coverage_delta = c_cov - i_cov
+    mdape_relative_improvement = 0.0
+    if i_mdape > 0.0:
+        mdape_relative_improvement = mdape_delta / i_mdape
+    mdape_gate_ok = mdape_relative_improvement >= _to_float(
+        shadow_policy.get("min_relative_mdape_improvement"), 0.2
+    )
+    same_eval_slice = (
+        bool(candidate_eval_slice_id)
+        and bool(incumbent_eval_slice_id)
+        and candidate_eval_slice_id == incumbent_eval_slice_id
+    )
+    shadow_reason_codes: list[str] = []
+    if incumbent_missing or str(incumbent_run or "") in {"", "none"}:
+        shadow_reason_codes.append(
+            str(shadow_policy.get("missing_incumbent_reason_code") or "")
+        )
+    elif not same_eval_slice:
+        shadow_reason_codes.append(
+            str(shadow_policy.get("slice_mismatch_reason_code") or "")
+        )
+    if not mdape_gate_ok:
+        shadow_reason_codes.append(str(shadow_policy.get("mdape_reason_code") or ""))
+    shadow_reason_codes = [
+        code for code in shadow_reason_codes if str(code or "").strip()
+    ]
+    dedup_shadow_reason_codes: list[str] = []
+    for reason_code in shadow_reason_codes:
+        if reason_code not in dedup_shadow_reason_codes:
+            dedup_shadow_reason_codes.append(reason_code)
     return {
         "candidate_run_id": str(candidate.get("run_id") or ""),
         "incumbent_run_id": incumbent_run,
+        "candidate_eval_slice_id": candidate_eval_slice_id,
+        "incumbent_eval_slice_id": incumbent_eval_slice_id,
         "candidate_avg_mdape": c_mdape,
         "incumbent_avg_mdape": i_mdape,
         "candidate_avg_interval_coverage": c_cov,
         "incumbent_avg_interval_coverage": i_cov,
         "mdape_improvement": mdape_delta,
+        "mdape_relative_improvement": mdape_relative_improvement,
         "coverage_delta": coverage_delta,
         "coverage_floor_ok": c_cov >= MIRAGE_EVAL_CONTRACT.promotion.coverage_floor,
+        "shadow_gate": {
+            "pass": not dedup_shadow_reason_codes,
+            "same_eval_slice": same_eval_slice,
+            "incumbent_missing": incumbent_missing,
+            "reason_codes": dedup_shadow_reason_codes,
+            "min_relative_mdape_improvement": _to_float(
+                shadow_policy.get("min_relative_mdape_improvement"),
+                PROMOTION_SHADOW_MIN_RELATIVE_MDAPE_IMPROVEMENT,
+            ),
+            "mdape_relative_improvement": mdape_relative_improvement,
+        },
+        "shadow_policy": shadow_policy,
+        "protected_cohort_policy": _protected_cohort_policy(),
+        "integrity_policy": _integrity_gate_policy(),
+    }
+
+
+def _protected_cohort_policy() -> dict[str, Any]:
+    return {
+        "league": "Mirage",
+        "cohort_dimensions": list(PROTECTED_COHORT_DIMENSIONS),
+        "minimum_support_count": PROTECTED_COHORT_MIN_SUPPORT_COUNT,
+        "eligible_support_buckets": list(PROTECTED_COHORT_ELIGIBLE_SUPPORT_BUCKETS),
+        "max_mdape_regression": PROMOTION_PROTECTED_COHORT_MAX_REGRESSION,
+        "hold_reason_code": "hold_protected_cohort_regression",
     }
 
 
@@ -2333,13 +3950,23 @@ def _protected_cohort_check(
     candidate_run_id: str,
     incumbent_run_id: str | None,
 ) -> dict[str, Any]:
+    policy = _protected_cohort_policy()
     if not incumbent_run_id:
-        return {"regression": False, "max_mdape_regression": 0.0, "cohort": "none"}
+        return {
+            "regression": False,
+            "max_mdape_regression": 0.0,
+            "cohort": "none",
+            "minimum_support_count": policy["minimum_support_count"],
+            "evaluated_cohort_count": 0,
+            "reason_code": None,
+            "cohort_detail": None,
+            "policy": policy,
+        }
     candidate_rows = _query_rows(
         client,
         " ".join(
             [
-                "SELECT route, family, support_bucket, avg(coalesce(mdape, 1.0)) AS mdape",
+                "SELECT route, family, support_bucket, avg(coalesce(mdape, 1.0)) AS mdape, sum(sample_count) AS support_count",
                 "FROM poe_trade.ml_route_eval_v1",
                 f"WHERE league = {_quote(league)} AND run_id = {_quote(candidate_run_id)}",
                 "GROUP BY route, family, support_bucket",
@@ -2348,12 +3975,21 @@ def _protected_cohort_check(
         ),
     )
     if not candidate_rows:
-        return {"regression": False, "max_mdape_regression": 0.0, "cohort": "none"}
+        return {
+            "regression": False,
+            "max_mdape_regression": 0.0,
+            "cohort": "none",
+            "minimum_support_count": policy["minimum_support_count"],
+            "evaluated_cohort_count": 0,
+            "reason_code": None,
+            "cohort_detail": None,
+            "policy": policy,
+        }
     incumbent_rows = _query_rows(
         client,
         " ".join(
             [
-                "SELECT route, family, support_bucket, avg(coalesce(mdape, 1.0)) AS mdape",
+                "SELECT route, family, support_bucket, avg(coalesce(mdape, 1.0)) AS mdape, sum(sample_count) AS support_count",
                 "FROM poe_trade.ml_route_eval_v1",
                 f"WHERE league = {_quote(league)} AND run_id = {_quote(incumbent_run_id)}",
                 "GROUP BY route, family, support_bucket",
@@ -2361,7 +3997,7 @@ def _protected_cohort_check(
             ]
         ),
     )
-    incumbent_map: dict[tuple[str, str, str], float] = {}
+    incumbent_map: dict[tuple[str, str, str], dict[str, Any]] = {}
     for row in incumbent_rows:
         incumbent_map[
             (
@@ -2369,53 +4005,121 @@ def _protected_cohort_check(
                 str(row.get("family") or ""),
                 str(row.get("support_bucket") or ""),
             )
-        ] = _to_float(row.get("mdape"), 1.0)
+        ] = {
+            "mdape": _to_float(row.get("mdape"), 1.0),
+            "support_count": _to_int(row.get("support_count"), 0),
+        }
     max_regression = 0.0
     worst = "none"
+    worst_detail: dict[str, Any] | None = None
+    evaluated_cohort_count = 0
+    minimum_support = _to_int(policy.get("minimum_support_count"), 0)
     for row in candidate_rows:
         key = (
             str(row.get("route") or ""),
             str(row.get("family") or ""),
             str(row.get("support_bucket") or ""),
         )
+        support_bucket = key[2]
+        candidate_support_count = _to_int(row.get("support_count"), 0)
+        if (
+            support_bucket not in PROTECTED_COHORT_ELIGIBLE_SUPPORT_BUCKETS
+            or candidate_support_count < minimum_support
+        ):
+            continue
+        evaluated_cohort_count += 1
         candidate_mdape = _to_float(row.get("mdape"), 1.0)
-        incumbent_mdape = incumbent_map.get(key, candidate_mdape)
+        incumbent_metrics = incumbent_map.get(
+            key,
+            {
+                "mdape": candidate_mdape,
+                "support_count": candidate_support_count,
+            },
+        )
+        incumbent_mdape = _to_float(incumbent_metrics.get("mdape"), candidate_mdape)
         regression = max(candidate_mdape - incumbent_mdape, 0.0)
         if regression > max_regression:
             max_regression = regression
             worst = "|".join(key)
+            worst_detail = {
+                "route": key[0],
+                "family": key[1],
+                "support_bucket": support_bucket,
+                "candidate_support_count": candidate_support_count,
+                "incumbent_support_count": _to_int(
+                    incumbent_metrics.get("support_count"), 0
+                ),
+                "candidate_mdape": candidate_mdape,
+                "incumbent_mdape": incumbent_mdape,
+                "mdape_regression": regression,
+            }
+    regression = max_regression > PROMOTION_PROTECTED_COHORT_MAX_REGRESSION
     return {
-        "regression": max_regression
-        > MIRAGE_EVAL_CONTRACT.promotion.protected_cohort_max_regression,
+        "regression": regression,
         "max_mdape_regression": max_regression,
         "cohort": worst,
+        "minimum_support_count": minimum_support,
+        "evaluated_cohort_count": evaluated_cohort_count,
+        "reason_code": "hold_protected_cohort_regression" if regression else None,
+        "cohort_detail": worst_detail,
+        "policy": policy,
     }
 
 
 def _should_promote(comparison: dict[str, Any]) -> bool:
+    shadow_gate = comparison.get("shadow_gate") or {}
+    if not bool(shadow_gate.get("pass", True)):
+        return False
+    integrity = comparison.get("integrity_gate") or {}
+    if not bool(integrity.get("pass", True)):
+        return False
     protected = comparison.get("protected_cohort_regression") or {}
     if bool(protected.get("regression")):
         return False
     if not bool(comparison.get("coverage_floor_ok")):
         return False
-    if str(comparison.get("incumbent_run_id") or "") in {"", "none"}:
-        return True
-    if (
-        _to_float(comparison.get("mdape_improvement"), 0.0)
-        < MIRAGE_EVAL_CONTRACT.promotion.min_mdape_improvement
-    ):
-        return False
     return True
+
+
+def _promotion_hold_reason_codes(comparison: dict[str, Any]) -> list[str]:
+    reason_codes: list[str] = []
+
+    shadow_gate = comparison.get("shadow_gate") or {}
+    for reason_code in shadow_gate.get("reason_codes") or []:
+        normalized = str(reason_code or "").strip()
+        if normalized and normalized not in reason_codes:
+            reason_codes.append(normalized)
+
+    integrity = comparison.get("integrity_gate") or {}
+    for reason_code in integrity.get("reason_codes") or []:
+        normalized = str(reason_code or "").strip()
+        if normalized and normalized not in reason_codes:
+            reason_codes.append(normalized)
+
+    protected = comparison.get("protected_cohort_regression") or {}
+    if bool(protected.get("regression")):
+        protected_reason = str(
+            protected.get("reason_code") or "hold_protected_cohort_regression"
+        )
+        if protected_reason not in reason_codes:
+            reason_codes.append(protected_reason)
+
+    if not bool(comparison.get("coverage_floor_ok")):
+        reason_codes.append("hold_coverage_floor")
+
+    deduped: list[str] = []
+    for reason_code in reason_codes:
+        if reason_code not in deduped:
+            deduped.append(reason_code)
+    return deduped
 
 
 def _promotion_stop_reason(comparison: dict[str, Any]) -> str:
     if _should_promote(comparison):
         return "promote"
-    protected = comparison.get("protected_cohort_regression") or {}
-    if bool(protected.get("regression")):
-        return "hold_protected_cohort_regression"
-    if not bool(comparison.get("coverage_floor_ok")):
-        return "hold_coverage_floor"
+    reason_codes = _promotion_hold_reason_codes(comparison)
+    if reason_codes:
+        return reason_codes[0]
     return "hold_no_material_improvement"
 
 
@@ -2743,6 +4447,13 @@ def _ensure_mod_tables(client: ClickHouseClient) -> None:
     client.execute(
         "CREATE TABLE IF NOT EXISTS poe_trade.ml_item_mod_tokens_v1(league String, item_id String, mod_token String, as_of_ts DateTime64(3, 'UTC')) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(as_of_ts) ORDER BY (league, item_id, mod_token, as_of_ts)"
     )
+    _ensure_mod_feature_table(client)
+
+
+def _ensure_mod_feature_table(client: ClickHouseClient) -> None:
+    client.execute(
+        "CREATE TABLE IF NOT EXISTS poe_trade.ml_item_mod_features_v1(league String, item_id String, mod_features_json String, mod_count UInt8, as_of_ts DateTime64(3, 'UTC'), updated_at DateTime64(3, 'UTC')) ENGINE=ReplacingMergeTree(updated_at) ORDER BY (league, item_id)"
+    )
 
 
 def _ensure_dataset_table(client: ClickHouseClient, table: str) -> None:
@@ -2763,6 +4474,12 @@ def _ensure_comps_table(client: ClickHouseClient, table: str) -> None:
     )
 
 
+def _ensure_serving_profile_table(client: ClickHouseClient, table: str) -> None:
+    client.execute(
+        f"CREATE TABLE IF NOT EXISTS {table}(profile_as_of_ts DateTime64(3, 'UTC'), snapshot_window_id String, league String, category String, base_type String, support_count_recent UInt64, reference_price_p10 Float64, reference_price_p50 Float64, reference_price_p90 Float64, updated_at DateTime64(3, 'UTC')) ENGINE=ReplacingMergeTree(updated_at) PARTITION BY toYYYYMMDD(profile_as_of_ts) ORDER BY (league, category, base_type, profile_as_of_ts, updated_at)"
+    )
+
+
 def _ensure_route_eval_table(client: ClickHouseClient) -> None:
     client.execute(
         "CREATE TABLE IF NOT EXISTS poe_trade.ml_route_eval_v1(run_id String, route String, family String, variant String, league String, split_kind String, sample_count UInt64, mdape Nullable(Float64), wape Nullable(Float64), rmsle Nullable(Float64), abstain_rate Nullable(Float64), interval_80_coverage Nullable(Float64), freshness_minutes Nullable(Float64), support_bucket String, recorded_at DateTime64(3, 'UTC')) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(recorded_at) ORDER BY (league, route, family, variant, recorded_at)"
@@ -2771,13 +4488,31 @@ def _ensure_route_eval_table(client: ClickHouseClient) -> None:
 
 def _ensure_eval_runs_table(client: ClickHouseClient) -> None:
     client.execute(
-        "CREATE TABLE IF NOT EXISTS poe_trade.ml_eval_runs(run_id String, route String, league String, split_kind String, raw_coverage Float64, clean_coverage Float64, outlier_drop_rate Float64, mdape Nullable(Float64), wape Nullable(Float64), rmsle Nullable(Float64), abstain_rate Nullable(Float64), interval_80_coverage Nullable(Float64), leakage_violations UInt64, leakage_audit_path String, recorded_at DateTime64(3, 'UTC')) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(recorded_at) ORDER BY (league, route, split_kind, recorded_at)"
+        "CREATE TABLE IF NOT EXISTS poe_trade.ml_eval_runs(run_id String, route String, league String, split_kind String, raw_coverage Float64, clean_coverage Float64, outlier_drop_rate Float64, mdape Nullable(Float64), wape Nullable(Float64), rmsle Nullable(Float64), abstain_rate Nullable(Float64), interval_80_coverage Nullable(Float64), leakage_violations UInt64, leakage_audit_path String, dataset_snapshot_id String, eval_slice_id String, source_watermarks_json String, recorded_at DateTime64(3, 'UTC')) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(recorded_at) ORDER BY (league, route, split_kind, recorded_at)"
+    )
+    client.execute(
+        "ALTER TABLE poe_trade.ml_eval_runs ADD COLUMN IF NOT EXISTS dataset_snapshot_id String"
+    )
+    client.execute(
+        "ALTER TABLE poe_trade.ml_eval_runs ADD COLUMN IF NOT EXISTS eval_slice_id String"
+    )
+    client.execute(
+        "ALTER TABLE poe_trade.ml_eval_runs ADD COLUMN IF NOT EXISTS source_watermarks_json String"
     )
 
 
 def _ensure_train_runs_table(client: ClickHouseClient) -> None:
     client.execute(
-        "CREATE TABLE IF NOT EXISTS poe_trade.ml_train_runs(run_id String, league String, stage String, current_route String, routes_done UInt32, routes_total UInt32, rows_processed UInt64, eta_seconds Nullable(UInt32), chosen_backend String, worker_count UInt16, memory_budget_gb Float64, active_model_version String, status String, stop_reason String, tuning_config_id String, eval_run_id String, resume_token String, started_at DateTime64(3, 'UTC'), updated_at DateTime64(3, 'UTC')) ENGINE=ReplacingMergeTree(updated_at) PARTITION BY toYYYYMMDD(started_at) ORDER BY (league, run_id, updated_at)"
+        "CREATE TABLE IF NOT EXISTS poe_trade.ml_train_runs(run_id String, league String, stage String, current_route String, routes_done UInt32, routes_total UInt32, rows_processed UInt64, eta_seconds Nullable(UInt32), chosen_backend String, worker_count UInt16, memory_budget_gb Float64, active_model_version String, status String, stop_reason String, tuning_config_id String, eval_run_id String, resume_token String, dataset_snapshot_id String, eval_slice_id String, source_watermarks_json String, started_at DateTime64(3, 'UTC'), updated_at DateTime64(3, 'UTC')) ENGINE=ReplacingMergeTree(updated_at) PARTITION BY toYYYYMMDD(started_at) ORDER BY (league, run_id, updated_at)"
+    )
+    client.execute(
+        "ALTER TABLE poe_trade.ml_train_runs ADD COLUMN IF NOT EXISTS dataset_snapshot_id String"
+    )
+    client.execute(
+        "ALTER TABLE poe_trade.ml_train_runs ADD COLUMN IF NOT EXISTS eval_slice_id String"
+    )
+    client.execute(
+        "ALTER TABLE poe_trade.ml_train_runs ADD COLUMN IF NOT EXISTS source_watermarks_json String"
     )
     client.execute(
         "CREATE TABLE IF NOT EXISTS poe_trade.ml_model_registry_v1(league String, route String, model_version String, model_dir String, promoted UInt8, promoted_at DateTime64(3, 'UTC'), metadata_json String) ENGINE=ReplacingMergeTree(promoted_at) ORDER BY (league, route, promoted_at)"
@@ -2821,13 +4556,23 @@ def _write_leakage_audit(
         raise RuntimeError("no-leakage audit failed")
 
 
-def _write_leakage_artifact(output_dir: Path, run_id: str, league: str) -> Path:
+def _write_leakage_artifact(
+    output_dir: Path,
+    run_id: str,
+    league: str,
+    *,
+    violations: int = 0,
+    reason_codes: list[str] | None = None,
+    details: dict[str, Any] | None = None,
+) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"{run_id}-no-leakage.json"
     payload = {
         "run_id": run_id,
         "league": league,
-        "violations": 0,
+        "violations": max(0, violations),
+        "reason_codes": list(reason_codes or []),
+        "details": details or {},
         "checked_at": _now_ts(),
     }
     path.write_text(
@@ -2852,36 +4597,44 @@ def _write_train_run(
     stop_reason: str,
     tuning_controls: TuningControls,
     eval_run_id: str,
+    run_manifest: dict[str, Any] | None = None,
 ) -> None:
     _ensure_train_runs_table(client)
     now = _now_ts()
-    _insert_json_rows(
-        client,
-        "poe_trade.ml_train_runs",
-        [
-            {
-                "run_id": run_id,
-                "league": league,
-                "stage": stage,
-                "current_route": current_route,
-                "routes_done": routes_done,
-                "routes_total": routes_total,
-                "rows_processed": rows_processed,
-                "eta_seconds": eta_seconds,
-                "chosen_backend": "cpu",
-                "worker_count": 6,
-                "memory_budget_gb": 4.0,
-                "active_model_version": active_model_version,
-                "status": status,
-                "stop_reason": stop_reason,
-                "tuning_config_id": _tuning_config_id(tuning_controls),
-                "eval_run_id": eval_run_id,
-                "resume_token": run_id,
-                "started_at": now,
-                "updated_at": now,
-            }
-        ],
-    )
+    manifest = run_manifest or {}
+    row = {
+        "run_id": run_id,
+        "league": league,
+        "stage": stage,
+        "current_route": current_route,
+        "routes_done": routes_done,
+        "routes_total": routes_total,
+        "rows_processed": rows_processed,
+        "eta_seconds": eta_seconds,
+        "chosen_backend": "cpu",
+        "worker_count": 6,
+        "memory_budget_gb": 4.0,
+        "active_model_version": active_model_version,
+        "status": status,
+        "stop_reason": stop_reason,
+        "tuning_config_id": _tuning_config_id(tuning_controls),
+        "eval_run_id": eval_run_id,
+        "resume_token": run_id,
+        "dataset_snapshot_id": str(manifest.get("dataset_snapshot_id") or ""),
+        "eval_slice_id": str(manifest.get("eval_slice_id") or ""),
+        "source_watermarks_json": _source_watermarks_json(
+            manifest.get("source_watermarks")
+        ),
+        "started_at": now,
+        "updated_at": now,
+    }
+    try:
+        _insert_json_rows(client, "poe_trade.ml_train_runs", [row])
+    except ClickHouseClientError:
+        row.pop("dataset_snapshot_id", None)
+        row.pop("eval_slice_id", None)
+        row.pop("source_watermarks_json", None)
+        _insert_json_rows(client, "poe_trade.ml_train_runs", [row])
 
 
 def _active_model_version(client: ClickHouseClient, league: str) -> str:
@@ -2901,6 +4654,177 @@ def _active_model_version(client: ClickHouseClient, league: str) -> str:
     if not rows:
         return "none"
     return str(rows[0].get("model_version") or "none")
+
+
+def rollout_model_versions(
+    client: ClickHouseClient, *, league: str
+) -> dict[str, str | None]:
+    _ensure_supported_league(league)
+    rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT model_version, max(promoted_at) AS promoted_at",
+                "FROM poe_trade.ml_model_registry_v1",
+                f"WHERE league = {_quote(league)} AND promoted = 1",
+                "GROUP BY model_version",
+                "ORDER BY promoted_at DESC",
+                "LIMIT 2",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    versions = [str(row.get("model_version") or "").strip() for row in rows]
+    versions = [value for value in versions if value]
+    candidate = versions[0] if versions else None
+    incumbent = versions[1] if len(versions) > 1 else candidate
+    return {
+        "candidate_model_version": candidate,
+        "incumbent_model_version": incumbent,
+    }
+
+
+def _default_rollout_controls(*, league: str) -> dict[str, Any]:
+    return {
+        "league": league,
+        "shadow_mode": league == "Mirage",
+        "cutover_enabled": False,
+        "candidate_model_version": None,
+        "incumbent_model_version": None,
+        "updated_at": None,
+        "last_action": "default",
+    }
+
+
+def rollout_controls(client: ClickHouseClient, *, league: str) -> dict[str, Any]:
+    _ensure_supported_league(league)
+    versions = rollout_model_versions(client, league=league)
+    with _ROLLOUT_CONTROL_LOCK:
+        state = dict(
+            _ROLLOUT_CONTROLS.get(league) or _default_rollout_controls(league=league)
+        )
+
+    candidate = (
+        str(
+            versions.get("candidate_model_version")
+            or state.get("candidate_model_version")
+            or ""
+        ).strip()
+        or None
+    )
+    incumbent = (
+        str(
+            versions.get("incumbent_model_version")
+            or state.get("incumbent_model_version")
+            or ""
+        ).strip()
+        or None
+    )
+    if candidate and not incumbent:
+        incumbent = candidate
+
+    shadow_mode = bool(state.get("shadow_mode", league == "Mirage"))
+    cutover_enabled = bool(state.get("cutover_enabled", False))
+    if league != "Mirage":
+        shadow_mode = False
+        cutover_enabled = False
+
+    effective_serving_model_version = (
+        candidate if cutover_enabled and candidate else incumbent or candidate
+    )
+    return {
+        "league": league,
+        "shadow_mode": shadow_mode,
+        "cutover_enabled": cutover_enabled,
+        "candidate_model_version": candidate,
+        "incumbent_model_version": incumbent,
+        "effective_serving_model_version": effective_serving_model_version,
+        "updated_at": state.get("updated_at"),
+        "last_action": str(state.get("last_action") or "default"),
+    }
+
+
+def update_rollout_controls(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    shadow_mode: bool | None = None,
+    cutover_enabled: bool | None = None,
+    rollback_to_incumbent: bool = False,
+) -> dict[str, Any]:
+    _ensure_supported_league(league)
+    if league != "Mirage":
+        raise ValueError("rollout controls are currently Mirage-only")
+
+    current = rollout_controls(client, league=league)
+    next_shadow_mode = (
+        bool(current.get("shadow_mode")) if shadow_mode is None else bool(shadow_mode)
+    )
+    next_cutover_enabled = (
+        bool(current.get("cutover_enabled"))
+        if cutover_enabled is None
+        else bool(cutover_enabled)
+    )
+    next_last_action = "update"
+    if rollback_to_incumbent:
+        next_cutover_enabled = False
+        next_last_action = "rollback_to_incumbent"
+    elif cutover_enabled is not None:
+        next_last_action = (
+            "enable_cutover" if next_cutover_enabled else "disable_cutover"
+        )
+    elif shadow_mode is not None:
+        next_last_action = "enable_shadow" if next_shadow_mode else "disable_shadow"
+
+    versions = rollout_model_versions(client, league=league)
+    candidate = (
+        str(
+            versions.get("candidate_model_version")
+            or current.get("candidate_model_version")
+            or ""
+        ).strip()
+        or None
+    )
+    incumbent = (
+        str(
+            versions.get("incumbent_model_version")
+            or current.get("incumbent_model_version")
+            or ""
+        ).strip()
+        or None
+    )
+    if candidate and not incumbent:
+        incumbent = candidate
+    if next_cutover_enabled and not candidate:
+        next_cutover_enabled = False
+
+    selected_model_version = (
+        candidate if next_cutover_enabled else (incumbent or candidate)
+    )
+    with _ROLLOUT_CONTROL_LOCK:
+        _ROLLOUT_CONTROLS[league] = {
+            "league": league,
+            "shadow_mode": next_shadow_mode,
+            "cutover_enabled": next_cutover_enabled,
+            "candidate_model_version": candidate,
+            "incumbent_model_version": incumbent,
+            "updated_at": _now_ts(),
+            "last_action": next_last_action,
+        }
+
+    if selected_model_version:
+        with _ACTIVE_MODEL_CACHE_LOCK:
+            _ACTIVE_MODEL_VERSION_HINT[league] = selected_model_version
+    _invalidate_active_model_cache(league=league)
+    try:
+        warmup_active_models(client, league=league)
+    except Exception as exc:
+        logger.warning(
+            "rollout warmup refresh failed for league=%s: %s",
+            league,
+            exc,
+        )
+    return rollout_controls(client, league=league)
 
 
 def _promotion_gate(client: ClickHouseClient, league: str, run_id: str) -> bool:
@@ -2942,6 +4866,35 @@ def _promote_models(
             }
         )
     _insert_json_rows(client, "poe_trade.ml_model_registry_v1", rows)
+    with _ACTIVE_MODEL_CACHE_LOCK:
+        _ACTIVE_MODEL_VERSION_HINT[league] = model_version
+    try:
+        versions = rollout_model_versions(client, league=league)
+    except Exception:
+        versions = {
+            "candidate_model_version": model_version,
+            "incumbent_model_version": model_version,
+        }
+    with _ROLLOUT_CONTROL_LOCK:
+        current = dict(
+            _ROLLOUT_CONTROLS.get(league) or _default_rollout_controls(league=league)
+        )
+        current["candidate_model_version"] = versions.get("candidate_model_version")
+        current["incumbent_model_version"] = versions.get("incumbent_model_version")
+        current["updated_at"] = now
+        if str(current.get("last_action") or "") == "default":
+            current["last_action"] = "promotion_refresh"
+        _ROLLOUT_CONTROLS[league] = current
+    _invalidate_active_model_cache(league=league)
+    try:
+        warmup_active_models(client, league=league)
+    except Exception as exc:
+        logger.warning(
+            "model warmup failed after promotion for league=%s route=%s: %s",
+            league,
+            "all",
+            exc,
+        )
 
 
 def _parse_clipboard_item(text: str) -> dict[str, Any]:
@@ -3001,23 +4954,24 @@ def _parse_clipboard_item(text: str) -> dict[str, Any]:
     if not base_type:
         base_type = lines[0]
 
-    category = "other"
-    lowered = f"{item_class} {base_type}".lower()
-    if "map" in lowered or base_type.endswith(" Map"):
-        category = "map"
-    elif "logbook" in lowered:
-        category = "logbook"
-    elif "scarab" in lowered:
-        category = "scarab"
-    elif "fossil" in lowered:
-        category = "fossil"
-    elif "essence" in lowered:
-        category = "essence"
-    elif "jewel" in lowered:
-        category = "cluster_jewel"
-    elif "flask" in lowered:
-        category = "flask"
-    mod_count = max(len(lines) - 5, 0)
+    category = _derive_category(
+        "other",
+        item_class=item_class,
+        base_type=base_type,
+        item_type_line=base_type,
+    )
+    separator_positions = [idx for idx, line in enumerate(lines) if line == "--------"]
+    mod_tokens: list[str] = []
+    if len(separator_positions) >= 2:
+        for line in lines[separator_positions[1] + 1 :]:
+            if line == "--------":
+                break
+            mod_tokens.append(line)
+    mod_count = len(mod_tokens) if mod_tokens else max(len(lines) - 5, 0)
+    mod_features_json = json.dumps(
+        _mod_features_from_tokens(mod_tokens),
+        separators=(",", ":"),
+    )
     return {
         "rarity": rarity,
         "item_class": item_class,
@@ -3026,6 +4980,7 @@ def _parse_clipboard_item(text: str) -> dict[str, Any]:
         "category": category,
         "mod_count": mod_count,
         "mod_token_count": mod_count,
+        "mod_features_json": mod_features_json,
         "ilvl": ilvl,
         "stack_size": stack_size,
         "corrupted": corrupted,
@@ -3035,7 +4990,7 @@ def _parse_clipboard_item(text: str) -> dict[str, Any]:
 
 
 def _route_for_item(item: dict[str, Any]) -> dict[str, Any]:
-    category = str(item.get("category") or "other")
+    category = _canonical_model_category(item.get("category"))
     rarity = str(item.get("rarity") or "")
     if category in {"essence", "fossil", "scarab", "map", "logbook"}:
         return {
@@ -3085,6 +5040,104 @@ def _reference_price(
     return 1.0
 
 
+def _serving_profile_lookup(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    category: object,
+    base_type: object,
+    table: str = _DEFAULT_SERVING_PROFILE_TABLE,
+) -> dict[str, Any]:
+    cat = str(category)
+    btype = str(base_type)
+    key = (league, cat, btype)
+
+    with _SERVING_PROFILE_CACHE_LOCK:
+        cached = _SERVING_PROFILE_CACHE.get(key)
+        if cached is not None:
+            cache_age = max(0.0, time.time() - _to_float(cached.get("cached_at"), 0.0))
+            if cache_age <= _SERVING_PROFILE_CACHE_MAX_AGE_SECONDS:
+                snapshot_meta = _SERVING_PROFILE_SNAPSHOT_META.get(league)
+                if snapshot_meta:
+                    snapshot_matches = str(
+                        snapshot_meta.get("snapshot_window_id") or ""
+                    ) == str(cached.get("snapshot_window_id") or "")
+                    profile_matches = str(
+                        snapshot_meta.get("profile_as_of_ts") or ""
+                    ) == str(cached.get("profile_as_of_ts") or "")
+                    if snapshot_matches and profile_matches:
+                        return {k: v for k, v in cached.items() if k != "cached_at"}
+                else:
+                    return {k: v for k, v in cached.items() if k != "cached_at"}
+
+    _ensure_serving_profile_table(client, table)
+    try:
+        rows = _query_rows(
+            client,
+            " ".join(
+                [
+                    "SELECT support_count_recent, reference_price_p50, snapshot_window_id, profile_as_of_ts",
+                    f"FROM {table}",
+                    f"WHERE league = {_quote(league)}",
+                    f"AND category = {_quote(cat)}",
+                    f"AND base_type = {_quote(btype)}",
+                    "ORDER BY updated_at DESC",
+                    "LIMIT 1",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        )
+    except ClickHouseClientError:
+        logger.warning(
+            "serving profile lookup query failed; using fallback "
+            "league=%s category=%s base_type=%s",
+            league,
+            cat,
+            btype,
+        )
+        return {
+            "hit": False,
+            "reason": "profile_query_error",
+            "support_count_recent": 0,
+            "reference_price": 1.0,
+        }
+
+    if not rows:
+        return {
+            "hit": False,
+            "reason": "profile_row_missing",
+            "support_count_recent": 0,
+            "reference_price": 1.0,
+        }
+
+    row = rows[0]
+    support_count = _to_int(row.get("support_count_recent"), 0)
+    reference_price = _to_float(row.get("reference_price_p50"), 0.0)
+    if support_count <= 0 or reference_price <= 0:
+        return {
+            "hit": False,
+            "reason": "profile_row_invalid",
+            "support_count_recent": support_count,
+            "reference_price": max(0.1, reference_price),
+            "snapshot_window_id": str(row.get("snapshot_window_id") or ""),
+            "profile_as_of_ts": str(row.get("profile_as_of_ts") or ""),
+        }
+
+    profile_row = {
+        "hit": True,
+        "reason": "profile_hit",
+        "support_count_recent": support_count,
+        "reference_price": reference_price,
+        "snapshot_window_id": str(row.get("snapshot_window_id") or ""),
+        "profile_as_of_ts": str(row.get("profile_as_of_ts") or ""),
+    }
+    with _SERVING_PROFILE_CACHE_LOCK:
+        cached_payload = dict(profile_row)
+        cached_payload["cached_at"] = time.time()
+        _SERVING_PROFILE_CACHE[key] = cached_payload
+    return profile_row
+
+
 def _to_int(value: object, default: int) -> int:
     if isinstance(value, bool):
         return int(value)
@@ -3115,6 +5168,29 @@ def _to_ch_timestamp(value: str) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _parse_mod_features_json(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return {str(key): feature_value for key, feature_value in value.items()}
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return {}
+        raw_value: object = cleaned
+    elif isinstance(value, (bytes, bytearray)):
+        raw_value = value
+    elif value is None:
+        return {}
+    else:
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): feature_value for key, feature_value in parsed.items()}
+
+
 def _route_training_predicate(route: str) -> str:
     if route == "fungible_reference":
         return "category IN ('essence', 'fossil', 'scarab', 'map', 'logbook')"
@@ -3125,9 +5201,11 @@ def _route_training_predicate(route: str) -> str:
     return "category NOT IN ('essence', 'fossil', 'scarab', 'map', 'logbook') AND ifNull(rarity, '') NOT IN ('Unique', 'Rare') AND category != 'cluster_jewel'"
 
 
-def _feature_dict_from_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "category": str(row.get("category") or "other"),
+def _feature_dict_from_row(
+    row: dict[str, Any], price_tiers: dict[str, dict[str, float]] | None = None
+) -> dict[str, Any]:
+    result = {
+        "category": _canonical_model_category(row.get("category")),
         "base_type": str(row.get("base_type") or "unknown"),
         "rarity": str(row.get("rarity") or ""),
         "ilvl": _bucket_ilvl(row.get("ilvl")),
@@ -3137,11 +5215,34 @@ def _feature_dict_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "synthesised": _to_float(row.get("synthesised"), 0.0),
         "mod_token_count": _bucket_mod_token_count(row.get("mod_token_count")),
     }
+    mod_features = _parse_mod_features_json(row.get("mod_features_json", "{}"))
+    discovered = set(_discovered_mod_features)
+    # mod_features_json keys are already in format: {ModName}_tier / {ModName}_roll
+    for feature_key, value in mod_features.items():
+        if feature_key in discovered:
+            result[feature_key] = _to_float(value, 0.0)
+    for mod_feature in discovered:
+        if mod_feature not in result:
+            result[mod_feature] = 0.0
+    if price_tiers:
+        base_type = str(result["base_type"])
+        category = str(result["category"])
+        result["base_type_price_tier"] = price_tiers.get("base_type", {}).get(
+            base_type, 0.5
+        )
+        result["category_price_tier"] = price_tiers.get("category", {}).get(
+            category, 0.5
+        )
+    return result
 
 
-def _feature_dict_from_parsed_item(item: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "category": str(item.get("category") or "other"),
+def _feature_dict_from_parsed_item(
+    item: dict[str, Any],
+    price_tiers: dict[str, dict[str, float]] | None = None,
+    feature_fields: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    result = {
+        "category": _canonical_model_category(item.get("category")),
         "base_type": str(item.get("base_type") or "unknown"),
         "rarity": str(item.get("rarity") or ""),
         "ilvl": _bucket_ilvl(item.get("ilvl")),
@@ -3153,6 +5254,31 @@ def _feature_dict_from_parsed_item(item: dict[str, Any]) -> dict[str, Any]:
             item.get("mod_token_count", item.get("mod_count"))
         ),
     }
+    mod_features = _parse_mod_features_json(item.get("mod_features_json", "{}"))
+    discovered = (
+        {feature for feature in feature_fields if feature not in BASE_FEATURE_FIELDS}
+        if feature_fields is not None
+        else set(_discovered_mod_features)
+    )
+    for feature_key, value in mod_features.items():
+        if feature_key in discovered:
+            result[feature_key] = _to_float(value, 0.0)
+    for mod_feature in discovered:
+        if mod_feature not in result:
+            result[mod_feature] = 0.0
+    if price_tiers:
+        base_type = str(result["base_type"])
+        category = str(result["category"])
+        result["base_type_price_tier"] = price_tiers.get("base_type", {}).get(
+            base_type, 0.5
+        )
+        result["category_price_tier"] = price_tiers.get("category", {}).get(
+            category, 0.5
+        )
+    else:
+        result["base_type_price_tier"] = 0.5
+        result["category_price_tier"] = 0.5
+    return result
 
 
 def _route_model_bundle_path(*, model_dir: str, route: str, league: str) -> Path:
@@ -3160,14 +5286,34 @@ def _route_model_bundle_path(*, model_dir: str, route: str, league: str) -> Path
 
 
 def _load_active_route_artifact(
-    client: ClickHouseClient, *, league: str, route: str
+    client: ClickHouseClient,
+    *,
+    league: str,
+    route: str,
+    model_version: str | None = None,
 ) -> dict[str, Any]:
-    model_dir = _active_model_dir_for_route(client, league=league, route=route)
+    target_model_version = str(model_version or "").strip()
+    if target_model_version:
+        metadata = _model_metadata_for_route_version(
+            client,
+            league=league,
+            route=route,
+            model_version=target_model_version,
+        )
+    else:
+        metadata = _get_cached_model_metadata(client, league=league, route=route)
+    model_dir = str(metadata.get("model_dir") or "")
     if not model_dir:
         return {}
-    return _load_json_file(
+    artifact = _load_json_file(
         _route_artifact_path(model_dir=model_dir, route=route, league=league)
     )
+    if not artifact:
+        return {}
+    hydrated = dict(artifact)
+    hydrated["active_model_version"] = str(metadata.get("model_version") or "")
+    hydrated["active_model_promoted_at"] = str(metadata.get("promoted_at") or "")
+    return hydrated
 
 
 def _active_model_dir_for_route(
@@ -3210,8 +5356,283 @@ def _load_model_bundle(bundle_path: str) -> dict[str, Any] | None:
     return loaded
 
 
+def _route_cache_key(league: str, route: str) -> tuple[str, str]:
+    return (league, route)
+
+
+def reset_serving_runtime_caches(*, league: str | None = None) -> None:
+    _invalidate_active_model_cache(league=league)
+    _invalidate_serving_profile_cache(league=league)
+    with _ACTIVE_MODEL_CACHE_LOCK:
+        if league is None:
+            _ACTIVE_MODEL_VERSION_HINT.clear()
+        else:
+            _ACTIVE_MODEL_VERSION_HINT.pop(league, None)
+    with _WARMUP_LOCK:
+        if league is None:
+            _WARMUP_STATE.clear()
+        else:
+            _WARMUP_STATE.pop(league, None)
+    with _ROLLOUT_CONTROL_LOCK:
+        if league is None:
+            _ROLLOUT_CONTROLS.clear()
+        else:
+            _ROLLOUT_CONTROLS.pop(league, None)
+
+
+def _invalidate_active_model_cache(*, league: str | None = None) -> None:
+    with _ACTIVE_MODEL_CACHE_LOCK:
+        if league is None:
+            _ACTIVE_ROUTE_MODEL_DIRS.clear()
+            _ACTIVE_ROUTE_MODEL_META.clear()
+            _ACTIVE_MODEL_VERSION_HINT.clear()
+        else:
+            for route in ROUTES:
+                key = _route_cache_key(league, route)
+                _ACTIVE_ROUTE_MODEL_DIRS.pop(key, None)
+                _ACTIVE_ROUTE_MODEL_META.pop(key, None)
+        _MODEL_BUNDLE_CACHE.clear()
+
+
+def _invalidate_serving_profile_cache(
+    *,
+    league: str | None = None,
+    snapshot_window_id: str | None = None,
+    profile_as_of_ts: str | None = None,
+) -> None:
+    with _SERVING_PROFILE_CACHE_LOCK:
+        if league is None:
+            _SERVING_PROFILE_CACHE.clear()
+            _SERVING_PROFILE_SNAPSHOT_META.clear()
+            return
+        stale_keys = [key for key in _SERVING_PROFILE_CACHE if key[0] == league]
+        for key in stale_keys:
+            _SERVING_PROFILE_CACHE.pop(key, None)
+        if snapshot_window_id is None and profile_as_of_ts is None:
+            _SERVING_PROFILE_SNAPSHOT_META.pop(league, None)
+            return
+        _SERVING_PROFILE_SNAPSHOT_META[league] = {
+            "snapshot_window_id": str(snapshot_window_id or ""),
+            "profile_as_of_ts": str(profile_as_of_ts or ""),
+        }
+
+
+def _active_model_metadata_for_route(
+    client: ClickHouseClient, *, league: str, route: str
+) -> dict[str, Any]:
+    rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT model_dir, model_version, promoted_at",
+                "FROM poe_trade.ml_model_registry_v1",
+                f"WHERE league = {_quote(league)} AND route = {_quote(route)} AND promoted = 1",
+                "ORDER BY promoted_at DESC",
+                "LIMIT 1",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    if rows:
+        row = rows[0]
+        return {
+            "model_dir": str(row.get("model_dir") or ""),
+            "model_version": str(row.get("model_version") or ""),
+            "promoted_at": str(row.get("promoted_at") or ""),
+            "checked_at": time.time(),
+        }
+    default_dir = Path("artifacts/ml") / f"{league.lower()}_v1"
+    model_dir = str(default_dir) if default_dir.exists() else ""
+    return {
+        "model_dir": model_dir,
+        "model_version": "",
+        "promoted_at": "",
+        "checked_at": time.time(),
+    }
+
+
+def _model_metadata_for_route_version(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    route: str,
+    model_version: str,
+) -> dict[str, Any]:
+    rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT model_dir, model_version, promoted_at",
+                "FROM poe_trade.ml_model_registry_v1",
+                f"WHERE league = {_quote(league)} AND route = {_quote(route)} AND promoted = 1 AND model_version = {_quote(model_version)}",
+                "ORDER BY promoted_at DESC",
+                "LIMIT 1",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    if not rows:
+        return {
+            "model_dir": "",
+            "model_version": model_version,
+            "promoted_at": "",
+            "checked_at": time.time(),
+        }
+    row = rows[0]
+    return {
+        "model_dir": str(row.get("model_dir") or ""),
+        "model_version": str(row.get("model_version") or model_version),
+        "promoted_at": str(row.get("promoted_at") or ""),
+        "checked_at": time.time(),
+    }
+
+
+def _get_cached_model_metadata(
+    client: ClickHouseClient, *, league: str, route: str
+) -> dict[str, Any]:
+    key = _route_cache_key(league, route)
+    with _ACTIVE_MODEL_CACHE_LOCK:
+        cached = _ACTIVE_ROUTE_MODEL_META.get(key)
+        if cached:
+            hinted_version = _ACTIVE_MODEL_VERSION_HINT.get(league)
+            cached_version = str(cached.get("model_version") or "")
+            cache_age = max(0.0, time.time() - _to_float(cached.get("checked_at"), 0.0))
+            if (
+                not hinted_version or hinted_version == cached_version
+            ) and cache_age <= _ACTIVE_MODEL_CACHE_MAX_AGE_SECONDS:
+                return dict(cached)
+
+    refreshed = _active_model_metadata_for_route(client, league=league, route=route)
+    with _ACTIVE_MODEL_CACHE_LOCK:
+        _ACTIVE_ROUTE_MODEL_META[key] = dict(refreshed)
+        model_dir = str(refreshed.get("model_dir") or "")
+        model_version = str(refreshed.get("model_version") or "")
+        if model_dir:
+            _ACTIVE_ROUTE_MODEL_DIRS[key] = model_dir
+        else:
+            _ACTIVE_ROUTE_MODEL_DIRS.pop(key, None)
+        if model_version:
+            _ACTIVE_MODEL_VERSION_HINT[league] = model_version
+    return dict(refreshed)
+
+
+def _get_cached_model_dir(client: ClickHouseClient, *, league: str, route: str) -> str:
+    metadata = _get_cached_model_metadata(client, league=league, route=route)
+    return str(metadata.get("model_dir") or "")
+
+
+def _warmup_status_payload(league: str) -> dict[str, Any]:
+    state = _WARMUP_STATE.get(league)
+    if state:
+        return state.to_dict()
+    return {"lastAttemptAt": None, "routes": {}}
+
+
+def _record_warmup_state(
+    league: str, routes: dict[str, str], timestamp: str
+) -> dict[str, Any]:
+    with _WARMUP_LOCK:
+        _WARMUP_STATE[league] = WarmupState(last_attempt=timestamp, routes=dict(routes))
+        return _WARMUP_STATE[league].to_dict()
+
+
+def _refresh_active_route_dirs(
+    client: ClickHouseClient, *, league: str
+) -> dict[str, str]:
+    route_map: dict[str, str] = {}
+    try:
+        rows = _query_rows(
+            client,
+            " ".join(
+                [
+                    "SELECT route, argMax(model_dir, promoted_at) AS model_dir, argMax(model_version, promoted_at) AS model_version, max(promoted_at) AS promoted_at",
+                    "FROM poe_trade.ml_model_registry_v1",
+                    f"WHERE league = {_quote(league)} AND promoted = 1",
+                    "GROUP BY route",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        )
+        for row in rows:
+            route = str(row.get("route") or "")
+            model_dir = str(row.get("model_dir") or "")
+            if route and model_dir:
+                route_map[route] = model_dir
+                key = _route_cache_key(league, route)
+                _ACTIVE_ROUTE_MODEL_DIRS[key] = model_dir
+                _ACTIVE_ROUTE_MODEL_META[key] = {
+                    "model_dir": model_dir,
+                    "model_version": str(row.get("model_version") or ""),
+                    "promoted_at": str(row.get("promoted_at") or ""),
+                    "checked_at": time.time(),
+                }
+    except Exception as exc:
+        logger.warning(
+            "warmup registry lookup failed for league=%s: %s",
+            league,
+            exc,
+        )
+    for route in ROUTES:
+        if route not in route_map:
+            fallback = _active_model_dir_for_route(client, league=league, route=route)
+            if fallback:
+                route_map[route] = fallback
+                key = _route_cache_key(league, route)
+                _ACTIVE_ROUTE_MODEL_DIRS[key] = fallback
+                _ACTIVE_ROUTE_MODEL_META[key] = {
+                    "model_dir": fallback,
+                    "model_version": "",
+                    "promoted_at": "",
+                    "checked_at": time.time(),
+                }
+    return route_map
+
+
+def warmup_active_models(client: ClickHouseClient, *, league: str) -> dict[str, Any]:
+    _ensure_supported_league(league)
+    timestamp = _now_ts()
+    route_dirs = _refresh_active_route_dirs(client, league=league)
+    route_states: dict[str, str] = {}
+    for route in ROUTES:
+        model_dir = route_dirs.get(route)
+        if not model_dir:
+            model_dir = _get_cached_model_dir(client, league=league, route=route)
+        if not model_dir:
+            route_states[route] = "model_dir_missing"
+            continue
+        _ACTIVE_ROUTE_MODEL_DIRS[_route_cache_key(league, route)] = model_dir
+        artifact_path = _route_artifact_path(
+            model_dir=model_dir, route=route, league=league
+        )
+        artifact = _load_json_file(artifact_path)
+        bundle_path = str(artifact.get("model_bundle_path") or "")
+        if not bundle_path:
+            route_states[route] = "bundle_path_missing"
+            continue
+        try:
+            bundle = _load_model_bundle(bundle_path)
+        except Exception as exc:
+            logger.warning(
+                "warmup bundle load failed league=%s route=%s path=%s: %s",
+                league,
+                route,
+                bundle_path,
+                exc,
+            )
+            route_states[route] = f"bundle_error:{type(exc).__name__}"
+            continue
+        if bundle is None:
+            route_states[route] = "bundle_load_failed"
+            continue
+        route_states[route] = "warm"
+    return _record_warmup_state(league, route_states, timestamp)
+
+
 def _predict_with_bundle(
-    *, bundle: dict[str, Any] | None, parsed_item: dict[str, Any]
+    *,
+    bundle: dict[str, Any] | None,
+    parsed_item: dict[str, Any],
+    expected_feature_schema: dict[str, Any] | None = None,
 ) -> dict[str, float] | None:
     if bundle is None:
         return None
@@ -3219,7 +5640,25 @@ def _predict_with_bundle(
     price_models = bundle.get("price_models") or {}
     if vectorizer is None or not isinstance(price_models, dict):
         return None
-    features = _feature_dict_from_parsed_item(parsed_item)
+    price_tiers = bundle.get("price_tiers") or {}
+    schema = expected_feature_schema
+    if not isinstance(schema, dict):
+        schema = bundle.get("feature_schema")
+    expected_fields_obj = schema.get("fields") if isinstance(schema, dict) else None
+    expected_fields = (
+        [str(field) for field in expected_fields_obj]
+        if isinstance(expected_fields_obj, list)
+        else None
+    )
+    features = _feature_dict_from_parsed_item(
+        parsed_item,
+        price_tiers,
+        feature_fields=expected_fields,
+    )
+    _validate_prediction_feature_schema(
+        schema=schema,
+        features=features,
+    )
     X = vectorizer.transform([features])
     p10_model = price_models.get("p10")
     p50_model = price_models.get("p50")
@@ -3250,7 +5689,42 @@ def _predict_with_artifact(
     if not bundle_path:
         return None
     bundle = _load_model_bundle(bundle_path)
-    return _predict_with_bundle(bundle=bundle, parsed_item=parsed_item)
+    schema = artifact.get("feature_schema")
+    if not isinstance(schema, dict):
+        features = artifact.get("features")
+        if isinstance(features, list):
+            schema = _build_feature_schema([str(field) for field in features])
+    return _predict_with_bundle(
+        bundle=bundle,
+        parsed_item=parsed_item,
+        expected_feature_schema=schema if isinstance(schema, dict) else None,
+    )
+
+
+def _validate_prediction_feature_schema(
+    *, schema: dict[str, Any] | None, features: dict[str, Any]
+) -> None:
+    if not isinstance(schema, dict):
+        return
+    schema_fields_obj = schema.get("fields")
+    if not isinstance(schema_fields_obj, list):
+        return
+    expected_fields = [str(field) for field in schema_fields_obj]
+    if not expected_fields:
+        return
+    runtime_fields = sorted(str(field) for field in features)
+    expected_sorted = sorted(expected_fields)
+    if runtime_fields == expected_sorted:
+        return
+    expected_set = set(expected_sorted)
+    runtime_set = set(runtime_fields)
+    missing = sorted(expected_set - runtime_set)
+    unexpected = sorted(runtime_set - expected_set)
+    raise FeatureSchemaMismatchError(
+        "predict feature schema mismatch: "
+        f"version={str(schema.get('version') or FEATURE_SCHEMA_VERSION)} "
+        f"missing={missing} unexpected={unexpected}"
+    )
 
 
 def _dataset_row_count(

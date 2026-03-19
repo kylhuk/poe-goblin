@@ -9,12 +9,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Sequence, cast
 
 LOGGER = logging.getLogger(__name__)
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
-Opener = Callable[[str, float], object]
+Opener = Callable[[urllib.request.Request, float], Any]
+
+
+def _default_opener(request: urllib.request.Request, timeout: float) -> Any:
+    return urllib.request.urlopen(request, timeout=timeout)
 
 
 @dataclass(frozen=True)
@@ -44,10 +48,13 @@ class PoeNinjaClient:
         clock: Clock | None = None,
         opener: Opener | None = None,
     ) -> None:
-        self._base_url = base_url or "https://poe.ninja/api/data/currencyoverview"
+        self._base_url = (
+            base_url
+            or "https://poe.ninja/poe1/api/economy/stash/current/currency/overview"
+        )
         self._timeout = timeout
         self._clock = clock or time.monotonic
-        self._opener = opener or urllib.request.urlopen
+        self._opener = opener or _default_opener
         self._cache_ttl = min(max(cache_ttl, 0.0), 180.0)
         self._cache: dict[str, _CacheEntry] = {}
 
@@ -58,19 +65,22 @@ class PoeNinjaClient:
         payload: dict[str, Any] | None = None
         status = 0
         try:
-            with self._opener(url, timeout=self._timeout) as resp:
+            req = urllib.request.Request(url, headers={"User-Agent": "poe-trade/1.0"})
+            raw_response = self._opener(req, self._timeout)
+            with cast(Any, raw_response) as resp:
                 raw = resp.read().decode("utf-8")
                 payload = self._parse_payload(raw)
                 status = resp.getcode()
         except urllib.error.HTTPError as exc:  # pragma: no cover - network
-            LOGGER.debug(
+            LOGGER.warning(
                 "poe.ninja request failed league=%s status=%s", league, exc.code
             )
             status = exc.code
         except urllib.error.URLError as exc:  # pragma: no cover - network
-            LOGGER.debug("poe.ninja request failed league=%s error=%s", league, exc)
+            LOGGER.error("poe.ninja request failed league=%s error=%s", league, exc)
         except ValueError:  # pragma: no cover - parse
-            LOGGER.debug("poe.ninja league=%s returned invalid JSON", league)
+            status = 200
+            LOGGER.warning("poe.ninja league=%s returned invalid JSON", league)
 
         success = 200 <= status < 300
         is_empty = success and self._is_empty_payload(payload)
@@ -134,9 +144,7 @@ class PoeNinjaClient:
         return False
 
     @staticmethod
-    def _determine_reason(
-        status: int, success: bool, is_empty: bool
-    ) -> str | None:
+    def _determine_reason(status: int, success: bool, is_empty: bool) -> str | None:
         if status == 404:
             return "http_404"
         if status == 429:

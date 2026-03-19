@@ -1,0 +1,4 @@
+integrity_gate: hold
+leakage_detected: true
+freshness_stale: true
+reason_codes: ["hold_eval_integrity_leakage", "hold_eval_integrity_stale_watermarks"]

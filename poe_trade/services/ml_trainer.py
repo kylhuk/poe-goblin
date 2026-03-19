@@ -49,6 +49,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     league = args.league or cfg.ml_automation_league
     interval = args.interval_seconds or cfg.ml_automation_interval_seconds
     client = ClickHouseClient.from_env(cfg.clickhouse_url)
+    try:
+        workflows.warmup_active_models(client, league=league)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "ml trainer warmup failed for league=%s: %s",
+            league,
+            exc,
+        )
+    try:
+        rollout = workflows.rollout_controls(client, league=league)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "ml trainer rollout read failed for league=%s: %s",
+            league,
+            exc,
+        )
+        rollout = {}
 
     while True:
         result = workflows.train_loop(
@@ -62,7 +79,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             min_mdape_improvement=cfg.ml_automation_min_mdape_improvement,
             resume=False,
         )
-        _write_status({"league": league, "result": result})
+        try:
+            rollout = workflows.rollout_controls(client, league=league)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "ml trainer rollout refresh failed for league=%s: %s",
+                league,
+                exc,
+            )
+        _write_status({"league": league, "result": result, "rollout": rollout})
         logging.getLogger(__name__).info(
             "ml trainer cycle status=%s stop_reason=%s",
             result.get("status"),

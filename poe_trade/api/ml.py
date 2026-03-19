@@ -14,6 +14,9 @@ class BackendUnavailable(RuntimeError):
     pass
 
 
+_MIRAGE_ROLLOUT_LEAGUE = "Mirage"
+
+
 def contract_payload(settings: Settings) -> dict[str, Any]:
     return {
         "version": "v1",
@@ -24,6 +27,7 @@ def contract_payload(settings: Settings) -> dict[str, Any]:
             "ml_contract": "/api/v1/ml/contract",
             "ml_status": "/api/v1/ml/leagues/{league}/status",
             "ml_predict_one": "/api/v1/ml/leagues/{league}/predict-one",
+            "ml_rollout": "/api/v1/ml/leagues/{league}/rollout",
             "ml_automation_status": "/api/v1/ml/leagues/{league}/automation/status",
             "ml_automation_history": "/api/v1/ml/leagues/{league}/automation/history",
         },
@@ -59,12 +63,138 @@ def fetch_predict_one(
 ) -> dict[str, Any]:
     clipboard = validate_predict_one_request(request_payload)
     try:
-        raw = workflows.predict_one(client, league=league, clipboard_text=clipboard)
+        if league != _MIRAGE_ROLLOUT_LEAGUE:
+            raw = workflows.predict_one(client, league=league, clipboard_text=clipboard)
+            return normalize_predict_one_payload(league=league, payload=raw)
+
+        try:
+            rollout = workflows.rollout_controls(client, league=league)
+        except ClickHouseClientError:
+            rollout = {
+                "league": league,
+                "shadow_mode": False,
+                "cutover_enabled": False,
+                "candidate_model_version": None,
+                "incumbent_model_version": None,
+                "effective_serving_model_version": None,
+                "updated_at": None,
+                "last_action": "fallback_no_rollout_state",
+            }
+        serving_model_version = _opt_model_version(
+            rollout.get("effective_serving_model_version")
+        )
+        if serving_model_version:
+            serving_raw = workflows.predict_one(
+                client,
+                league=league,
+                clipboard_text=clipboard,
+                model_version=serving_model_version,
+            )
+        else:
+            serving_raw = workflows.predict_one(
+                client,
+                league=league,
+                clipboard_text=clipboard,
+            )
+        response = normalize_predict_one_payload(league=league, payload=serving_raw)
+        response["rollout"] = _rollout_payload(rollout)
+        response["servingModelVersion"] = serving_model_version
+
+        shadow_mode = bool(rollout.get("shadow_mode", False))
+        candidate_model_version = _opt_model_version(
+            rollout.get("candidate_model_version")
+        )
+        incumbent_model_version = _opt_model_version(
+            rollout.get("incumbent_model_version")
+        )
+        if (
+            shadow_mode
+            and candidate_model_version
+            and incumbent_model_version
+            and candidate_model_version != incumbent_model_version
+        ):
+            if serving_model_version == candidate_model_version:
+                candidate_raw = serving_raw
+            else:
+                candidate_raw = workflows.predict_one(
+                    client,
+                    league=league,
+                    clipboard_text=clipboard,
+                    model_version=candidate_model_version,
+                )
+            if serving_model_version == incumbent_model_version:
+                incumbent_raw = serving_raw
+            else:
+                incumbent_raw = workflows.predict_one(
+                    client,
+                    league=league,
+                    clipboard_text=clipboard,
+                    model_version=incumbent_model_version,
+                )
+            response["shadowComparison"] = {
+                "candidateModelVersion": candidate_model_version,
+                "incumbentModelVersion": incumbent_model_version,
+                "candidate": _shadow_prediction_payload(candidate_raw),
+                "incumbent": _shadow_prediction_payload(incumbent_raw),
+            }
+        return response
+    except ValueError:
+        raise
     except ClickHouseClientError as exc:
         raise BackendUnavailable("predict backend unavailable") from exc
     except Exception as exc:
         raise BackendUnavailable("predict backend unavailable") from exc
-    return normalize_predict_one_payload(league=league, payload=raw)
+
+
+def fetch_rollout_controls(client: ClickHouseClient, *, league: str) -> dict[str, Any]:
+    if league != _MIRAGE_ROLLOUT_LEAGUE:
+        raise ValueError("rollout controls are currently Mirage-only")
+    try:
+        payload = workflows.rollout_controls(client, league=league)
+    except ClickHouseClientError as exc:
+        raise BackendUnavailable("status backend unavailable") from exc
+    except Exception as exc:
+        raise BackendUnavailable("status backend unavailable") from exc
+    return _rollout_payload(payload)
+
+
+def update_rollout_controls(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    if league != _MIRAGE_ROLLOUT_LEAGUE:
+        raise ValueError("rollout controls are currently Mirage-only")
+    allowed_keys = {"shadowMode", "cutoverEnabled", "rollbackToIncumbent"}
+    extra = set(request_payload) - allowed_keys
+    if extra:
+        raise ValueError("unexpected request field")
+    shadow_mode = _optional_bool(request_payload.get("shadowMode"), "shadowMode")
+    cutover_enabled = _optional_bool(
+        request_payload.get("cutoverEnabled"), "cutoverEnabled"
+    )
+    rollback_to_incumbent = _optional_bool(
+        request_payload.get("rollbackToIncumbent"),
+        "rollbackToIncumbent",
+    )
+    if rollback_to_incumbent is None:
+        rollback_to_incumbent = False
+    try:
+        payload = workflows.update_rollout_controls(
+            client,
+            league=league,
+            shadow_mode=shadow_mode,
+            cutover_enabled=cutover_enabled,
+            rollback_to_incumbent=rollback_to_incumbent,
+        )
+    except ValueError:
+        raise
+    except ClickHouseClientError as exc:
+        raise BackendUnavailable("status backend unavailable") from exc
+    except Exception as exc:
+        raise BackendUnavailable("status backend unavailable") from exc
+    return _rollout_payload(payload)
 
 
 def fetch_automation_status(client: ClickHouseClient, *, league: str) -> dict[str, Any]:
@@ -185,7 +315,9 @@ def fetch_automation_history(
 
     history: list[dict[str, Any]] = []
     for row in run_rows:
-        eval_run_id = _opt_str(row.get("eval_run_id")) or _opt_str(row.get("run_id")) or ""
+        eval_run_id = (
+            _opt_str(row.get("eval_run_id")) or _opt_str(row.get("run_id")) or ""
+        )
         eval_row = eval_by_run.get(eval_run_id, {})
         promotion_row = promotion_by_run.get(eval_run_id, {})
         history.append(
@@ -193,7 +325,9 @@ def fetch_automation_history(
                 "runId": row.get("run_id"),
                 "status": row.get("status"),
                 "stopReason": row.get("stop_reason"),
-                "activeModelVersion": _opt_model_version(row.get("active_model_version")),
+                "activeModelVersion": _opt_model_version(
+                    row.get("active_model_version")
+                ),
                 "tuningConfigId": row.get("tuning_config_id"),
                 "evalRunId": row.get("eval_run_id"),
                 "updatedAt": _as_iso_utc(row.get("updated_at")),
@@ -229,16 +363,20 @@ def fetch_automation_history(
         for row in route_rows
     ]
 
-    total_rows = _opt_int((dataset_totals[0] if dataset_totals else {}).get("total_rows")) or 0
+    total_rows = (
+        _opt_int((dataset_totals[0] if dataset_totals else {}).get("total_rows")) or 0
+    )
     dataset_routes = [
         {
             "route": _opt_str(row.get("route")),
             "rows": _opt_int(row.get("rows")) or 0,
-            "share": (( _opt_int(row.get("rows")) or 0) / total_rows) if total_rows > 0 else 0.0,
+            "share": ((_opt_int(row.get("rows")) or 0) / total_rows)
+            if total_rows > 0
+            else 0.0,
         }
         for row in dataset_route_rows
     ]
-    supported_rows = sum(route.get("rows") or 0 for route in dataset_routes)
+    supported_rows = sum(_opt_int(route.get("rows")) or 0 for route in dataset_routes)
 
     promotions = [
         {
@@ -250,25 +388,40 @@ def fetch_automation_history(
     ]
 
     anchor = _latest_history_timestamp(history)
-    previous_mdape = quality_trend[-2]["avgMdape"] if len(quality_trend) >= 2 else None
-    latest_mdape = quality_trend[-1]["avgMdape"] if quality_trend else None
+    previous_mdape = (
+        _opt_float(quality_trend[-2].get("avgMdape"))
+        if len(quality_trend) >= 2
+        else None
+    )
+    latest_mdape = (
+        _opt_float(quality_trend[-1].get("avgMdape")) if quality_trend else None
+    )
     mdape_delta = None
     if previous_mdape is not None and latest_mdape is not None:
         mdape_delta = round(float(previous_mdape) - float(latest_mdape), 6)
+    mdape_values: list[float] = []
+    for row in quality_trend:
+        value = _opt_float(row.get("avgMdape"))
+        if value is not None:
+            mdape_values.append(value)
 
     return {
         "league": league,
         "history": history,
         "summary": {
-            "activeModelVersion": history[0].get("activeModelVersion") if history else None,
+            "activeModelVersion": history[0].get("activeModelVersion")
+            if history
+            else None,
             "lastRunAt": history[0].get("updatedAt") if history else None,
             "lastPromotedAt": promotions[0].get("promotedAt") if promotions else None,
             "runsLast7d": _count_runs_since(history, anchor, days=7),
             "runsLast30d": _count_runs_since(history, anchor, days=30),
             "medianHoursBetweenRuns": _median_run_gap_hours(history),
             "latestAvgMdape": latest_mdape,
-            "latestAvgIntervalCoverage": quality_trend[-1].get("avgIntervalCoverage") if quality_trend else None,
-            "bestAvgMdape": min((row.get("avgMdape") for row in quality_trend if row.get("avgMdape") is not None), default=None),
+            "latestAvgIntervalCoverage": quality_trend[-1].get("avgIntervalCoverage")
+            if quality_trend
+            else None,
+            "bestAvgMdape": min(mdape_values) if mdape_values else None,
             "mdapeDeltaVsPrevious": mdape_delta,
             "trendDirection": _trend_direction(mdape_delta),
         },
@@ -279,7 +432,9 @@ def fetch_automation_history(
             "totalRows": total_rows,
             "supportedRows": supported_rows,
             "coverageRatio": (supported_rows / total_rows) if total_rows > 0 else 0.0,
-            "baseTypeCount": _opt_int((dataset_totals[0] if dataset_totals else {}).get("base_type_count")),
+            "baseTypeCount": _opt_int(
+                (dataset_totals[0] if dataset_totals else {}).get("base_type_count")
+            ),
             "routes": dataset_routes,
         },
         "promotions": promotions,
@@ -299,12 +454,14 @@ def map_status_payload(*, league: str, payload: dict[str, Any]) -> dict[str, Any
             "latest_avg_interval_coverage": None,
             "candidate_vs_incumbent": {},
             "route_hotspots": [],
+            "warmup": _as_dict(payload.get("warmup")),
         }
     return {
         "league": league,
         "run": _opt_str(payload.get("run_id")),
         "status": _opt_str(payload.get("status")),
         "promotion_verdict": _opt_str(payload.get("promotion_verdict")),
+        "promotion_policy": _as_dict(payload.get("promotion_policy")),
         "stop_reason": _opt_str(payload.get("stop_reason")),
         "active_model_version": _opt_model_version(payload.get("active_model_version")),
         "latest_avg_mdape": _opt_float(payload.get("latest_avg_mdape")),
@@ -313,6 +470,7 @@ def map_status_payload(*, league: str, payload: dict[str, Any]) -> dict[str, Any
         ),
         "candidate_vs_incumbent": _as_dict(payload.get("candidate_vs_incumbent")),
         "route_hotspots": _as_list(payload.get("route_hotspots")),
+        "warmup": _as_dict(payload.get("warmup")),
     }
 
 
@@ -342,7 +500,9 @@ def validate_predict_one_request(payload: dict[str, Any]) -> str:
     return raw_payload.strip()
 
 
-def normalize_predict_one_payload(*, league: str, payload: dict[str, Any]) -> dict[str, Any]:
+def normalize_predict_one_payload(
+    *, league: str, payload: dict[str, Any]
+) -> dict[str, Any]:
     price_p10 = _opt_float(payload.get("price_p10"))
     price_p50 = _opt_float(payload.get("price_p50"))
     price_p90 = _opt_float(payload.get("price_p90"))
@@ -386,6 +546,44 @@ def normalize_predict_one_payload(*, league: str, payload: dict[str, Any]) -> di
         "sale_probability_percent": sale_probability_percent,
         "price_recommendation_eligible": price_recommendation_eligible,
         "fallback_reason": fallback_reason,
+    }
+
+
+def _rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "league": _opt_str(payload.get("league")) or _MIRAGE_ROLLOUT_LEAGUE,
+        "shadowMode": bool(payload.get("shadow_mode", False)),
+        "cutoverEnabled": bool(payload.get("cutover_enabled", False)),
+        "candidateModelVersion": _opt_model_version(
+            payload.get("candidate_model_version")
+        ),
+        "incumbentModelVersion": _opt_model_version(
+            payload.get("incumbent_model_version")
+        ),
+        "effectiveServingModelVersion": _opt_model_version(
+            payload.get("effective_serving_model_version")
+        ),
+        "updatedAt": _as_iso_utc(payload.get("updated_at")),
+        "lastAction": _opt_str(payload.get("last_action")),
+    }
+
+
+def _optional_bool(value: Any, field_name: str) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"{field_name} must be a boolean")
+
+
+def _shadow_prediction_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "route": _opt_str(payload.get("route")) or "fallback_abstain",
+        "price_p10": _opt_float(payload.get("price_p10")),
+        "price_p50": _opt_float(payload.get("price_p50")),
+        "price_p90": _opt_float(payload.get("price_p90")),
+        "confidence_percent": _opt_float(payload.get("confidence_percent")),
+        "sale_probability_percent": _opt_float(payload.get("sale_probability_percent")),
     }
 
 
@@ -434,7 +632,9 @@ def _as_iso_utc(value: Any) -> str | None:
     try:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00").replace(" ", "T"))
     except ValueError:
-        return raw.replace(" ", "T") + ("Z" if "T" in raw and not raw.endswith("Z") else "")
+        return raw.replace(" ", "T") + (
+            "Z" if "T" in raw and not raw.endswith("Z") else ""
+        )
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     else:
@@ -460,7 +660,9 @@ def _latest_history_timestamp(history: list[dict[str, Any]]) -> datetime | None:
     return values[-1] if values else None
 
 
-def _count_runs_since(history: list[dict[str, Any]], anchor: datetime | None, *, days: int) -> int:
+def _count_runs_since(
+    history: list[dict[str, Any]], anchor: datetime | None, *, days: int
+) -> int:
     values = _history_datetimes(history)
     if not values:
         return 0
@@ -491,10 +693,7 @@ def _training_cadence_series(history: list[dict[str, Any]]) -> list[dict[str, An
             continue
         day = str(iso)[:10]
         buckets[day] = buckets.get(day, 0) + 1
-    return [
-        {"date": day, "runs": buckets[day]}
-        for day in sorted(buckets)
-    ]
+    return [{"date": day, "runs": buckets[day]} for day in sorted(buckets)]
 
 
 def _trend_direction(mdape_delta: float | None) -> str:

@@ -1,0 +1,9 @@
+{
+  "status": "ok",
+  "rollout": {
+    "shadowMode": true,
+    "cutoverEnabled": false
+  },
+  "effectiveServingModelVersion": "mirage-v1",
+  "lastAction": "rollback_to_incumbent"
+}

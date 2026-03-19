@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import cast
 
@@ -10,8 +11,18 @@ from poe_trade.ml import workflows
 
 def test_candidate_vs_incumbent_promote_verdict():
     comparison = workflows._candidate_vs_incumbent_summary(
-        candidate={"run_id": "cand-1", "avg_mdape": 0.8, "avg_cov": 0.85},
-        incumbent={"run_id": "inc-1", "avg_mdape": 0.9, "avg_cov": 0.82},
+        candidate={
+            "run_id": "cand-1",
+            "avg_mdape": 0.7,
+            "avg_cov": 0.85,
+            "eval_slice_id": "eval-slice-1",
+        },
+        incumbent={
+            "run_id": "inc-1",
+            "avg_mdape": 0.9,
+            "avg_cov": 0.82,
+            "eval_slice_id": "eval-slice-1",
+        },
     )
     comparison["protected_cohort_regression"] = {
         "regression": False,
@@ -25,8 +36,18 @@ def test_candidate_vs_incumbent_promote_verdict():
 
 def test_candidate_vs_incumbent_hold_for_coverage():
     comparison = workflows._candidate_vs_incumbent_summary(
-        candidate={"run_id": "cand-1", "avg_mdape": 0.8, "avg_cov": 0.7},
-        incumbent={"run_id": "inc-1", "avg_mdape": 0.9, "avg_cov": 0.82},
+        candidate={
+            "run_id": "cand-1",
+            "avg_mdape": 0.7,
+            "avg_cov": 0.7,
+            "eval_slice_id": "eval-slice-2",
+        },
+        incumbent={
+            "run_id": "inc-1",
+            "avg_mdape": 0.9,
+            "avg_cov": 0.82,
+            "eval_slice_id": "eval-slice-2",
+        },
     )
     comparison["protected_cohort_regression"] = {
         "regression": False,
@@ -40,8 +61,18 @@ def test_candidate_vs_incumbent_hold_for_coverage():
 
 def test_candidate_vs_incumbent_hold_for_protected_regression():
     comparison = workflows._candidate_vs_incumbent_summary(
-        candidate={"run_id": "cand-1", "avg_mdape": 0.8, "avg_cov": 0.9},
-        incumbent={"run_id": "inc-1", "avg_mdape": 0.9, "avg_cov": 0.9},
+        candidate={
+            "run_id": "cand-1",
+            "avg_mdape": 0.7,
+            "avg_cov": 0.9,
+            "eval_slice_id": "eval-slice-3",
+        },
+        incumbent={
+            "run_id": "inc-1",
+            "avg_mdape": 0.9,
+            "avg_cov": 0.9,
+            "eval_slice_id": "eval-slice-3",
+        },
     )
     comparison["protected_cohort_regression"] = {
         "regression": True,
@@ -65,6 +96,7 @@ def test_train_loop_stops_for_no_improvement(monkeypatch, tmp_path):
         workflows, "_active_model_version", lambda _client, _league: "v0"
     )
     monkeypatch.setattr(workflows, "train_all_routes", lambda *args, **kwargs: None)
+    monkeypatch.setattr(workflows, "_dataset_row_count", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(workflows, "_write_train_run", lambda *args, **kwargs: None)
     monkeypatch.setattr(workflows, "_record_tuning_round", lambda *args, **kwargs: None)
     monkeypatch.setattr(workflows, "_promote_models", lambda *args, **kwargs: None)
@@ -82,6 +114,15 @@ def test_train_loop_stops_for_no_improvement(monkeypatch, tmp_path):
             warm_start_enabled=True,
             resume_supported=False,
         ),
+    )
+    monkeypatch.setattr(
+        workflows,
+        "_run_manifest",
+        lambda *_args, **_kwargs: {
+            "dataset_snapshot_id": "dataset-test",
+            "eval_slice_id": "eval-slice-test",
+            "source_watermarks": {"dataset_max_as_of_ts": "2026-03-18 10:00:00"},
+        },
     )
 
     def _fake_eval(*args, **kwargs):
@@ -134,6 +175,15 @@ def test_train_loop_resume_requires_existing_run(monkeypatch, tmp_path):
             resume_supported=False,
         ),
     )
+    monkeypatch.setattr(
+        workflows,
+        "_run_manifest",
+        lambda *_args, **_kwargs: {
+            "dataset_snapshot_id": "dataset-test",
+            "eval_slice_id": "eval-slice-test",
+            "source_watermarks": {"dataset_max_as_of_ts": "2026-03-18 10:00:00"},
+        },
+    )
 
     with pytest.raises(ValueError, match="resume requested"):
         workflows.train_loop(
@@ -158,6 +208,7 @@ def test_train_loop_stops_for_iteration_budget(monkeypatch, tmp_path):
         workflows, "_active_model_version", lambda _client, _league: "v0"
     )
     monkeypatch.setattr(workflows, "train_all_routes", lambda *args, **kwargs: None)
+    monkeypatch.setattr(workflows, "_dataset_row_count", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(workflows, "_write_train_run", lambda *args, **kwargs: None)
     monkeypatch.setattr(workflows, "_record_tuning_round", lambda *args, **kwargs: None)
     monkeypatch.setattr(workflows, "_promote_models", lambda *args, **kwargs: None)
@@ -175,6 +226,15 @@ def test_train_loop_stops_for_iteration_budget(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         workflows, "_latest_train_run_row", lambda _c, _l: {"run_id": "r"}
+    )
+    monkeypatch.setattr(
+        workflows,
+        "_run_manifest",
+        lambda *_args, **_kwargs: {
+            "dataset_snapshot_id": "dataset-test",
+            "eval_slice_id": "eval-slice-test",
+            "source_watermarks": {"dataset_max_as_of_ts": "2026-03-18 10:00:00"},
+        },
     )
     monkeypatch.setattr(
         workflows,
@@ -296,3 +356,240 @@ def test_status_includes_contract_fields(monkeypatch):
     assert "latest_avg_mdape" in payload
     assert "latest_avg_interval_coverage" in payload
     assert payload["promotion_verdict"] == "promote"
+
+
+def test_fit_route_bundle_uses_tuned_gradient_boosting_params_with_mod_features():
+    aggregate_rows = [
+        {
+            "category": "other",
+            "base_type": "Amulet",
+            "rarity": "Rare",
+            "ilvl": 80,
+            "stack_size": 1,
+            "corrupted": 0,
+            "fractured": 0,
+            "synthesised": 0,
+            "mod_token_count": 4,
+            "mod_features_json": json.dumps(
+                {
+                    "MaximumLife_tier": 6,
+                    "MaximumLife_roll": 0.55,
+                    "FireResistance_tier": 5,
+                    "FireResistance_roll": 0.44,
+                }
+            ),
+            "target_p10": 35.0,
+            "target_p50": 50.0,
+            "target_p90": 70.0,
+            "sale_probability_label": 0.32,
+            "sample_count": 12,
+        },
+        {
+            "category": "other",
+            "base_type": "Ring",
+            "rarity": "Rare",
+            "ilvl": 82,
+            "stack_size": 1,
+            "corrupted": 0,
+            "fractured": 1,
+            "synthesised": 0,
+            "mod_token_count": 5,
+            "mod_features_json": json.dumps(
+                {
+                    "MaximumLife_tier": 7,
+                    "MaximumLife_roll": 0.68,
+                    "ChaosResistance_tier": 4,
+                    "ChaosResistance_roll": 0.40,
+                }
+            ),
+            "target_p10": 42.0,
+            "target_p50": 58.0,
+            "target_p90": 83.0,
+            "sale_probability_label": 0.41,
+            "sample_count": 10,
+        },
+        {
+            "category": "other",
+            "base_type": "Boots",
+            "rarity": "Rare",
+            "ilvl": 84,
+            "stack_size": 1,
+            "corrupted": 0,
+            "fractured": 0,
+            "synthesised": 1,
+            "mod_token_count": 6,
+            "mod_features_json": json.dumps(
+                {
+                    "MovementSpeed_tier": 8,
+                    "MovementSpeed_roll": 0.78,
+                    "MaximumLife_tier": 5,
+                    "MaximumLife_roll": 0.46,
+                }
+            ),
+            "target_p10": 30.0,
+            "target_p50": 47.0,
+            "target_p90": 65.0,
+            "sale_probability_label": 0.36,
+            "sample_count": 14,
+        },
+        {
+            "category": "other",
+            "base_type": "Helmet",
+            "rarity": "Rare",
+            "ilvl": 79,
+            "stack_size": 1,
+            "corrupted": 1,
+            "fractured": 0,
+            "synthesised": 0,
+            "mod_token_count": 4,
+            "mod_features_json": json.dumps(
+                {
+                    "MaximumLife_tier": 4,
+                    "MaximumLife_roll": 0.40,
+                    "LightningResistance_tier": 5,
+                    "LightningResistance_roll": 0.45,
+                }
+            ),
+            "target_p10": 24.0,
+            "target_p50": 39.0,
+            "target_p90": 58.0,
+            "sale_probability_label": 0.28,
+            "sample_count": 11,
+        },
+        {
+            "category": "other",
+            "base_type": "Gloves",
+            "rarity": "Rare",
+            "ilvl": 83,
+            "stack_size": 1,
+            "corrupted": 0,
+            "fractured": 0,
+            "synthesised": 0,
+            "mod_token_count": 5,
+            "mod_features_json": json.dumps(
+                {
+                    "AttackSpeed_tier": 7,
+                    "AttackSpeed_roll": 0.66,
+                    "MaximumLife_tier": 6,
+                    "MaximumLife_roll": 0.52,
+                }
+            ),
+            "target_p10": 33.0,
+            "target_p50": 49.0,
+            "target_p90": 68.0,
+            "sale_probability_label": 0.39,
+            "sample_count": 13,
+        },
+        {
+            "category": "other",
+            "base_type": "Belt",
+            "rarity": "Rare",
+            "ilvl": 81,
+            "stack_size": 1,
+            "corrupted": 0,
+            "fractured": 0,
+            "synthesised": 0,
+            "mod_token_count": 4,
+            "mod_features_json": json.dumps(
+                {
+                    "Strength_tier": 5,
+                    "Strength_roll": 0.50,
+                    "MaximumLife_tier": 7,
+                    "MaximumLife_roll": 0.64,
+                }
+            ),
+            "target_p10": 38.0,
+            "target_p50": 54.0,
+            "target_p90": 76.0,
+            "sale_probability_label": 0.43,
+            "sample_count": 12,
+        },
+    ]
+
+    bundle, stats = workflows._fit_route_bundle_from_aggregates(
+        aggregate_rows,
+        route="fallback_abstain",
+        trained_at="2026-03-18T00:00:00Z",
+    )
+
+    assert bundle is not None
+    assert stats["model_backend"] == "sklearn_gradient_boosting"
+
+    price_models = bundle["price_models"]
+    for quantile in ("p10", "p50", "p90"):
+        model = price_models[quantile]
+        params = model.get_params()
+        assert params["n_estimators"] == 180
+        assert params["learning_rate"] == 0.035
+        assert params["max_depth"] == 4
+        assert params["min_samples_leaf"] == 3
+        assert params["min_samples_split"] == 6
+        assert params["subsample"] == 0.8
+        assert params["max_features"] == "sqrt"
+
+    assert bundle["sale_model"] is not None
+    sale_params = bundle["sale_model"].get_params()
+    assert sale_params["n_estimators"] == 120
+    assert sale_params["learning_rate"] == 0.04
+    assert sale_params["max_depth"] == 3
+    assert sale_params["min_samples_leaf"] == 4
+    assert sale_params["min_samples_split"] == 8
+    assert sale_params["subsample"] == 0.85
+    assert sale_params["max_features"] == "sqrt"
+
+
+def test_fit_route_bundle_uses_more_regularized_params_for_sparse_retrieval():
+    aggregate_rows = [
+        {
+            "category": "fossil",
+            "base_type": f"Base-{index}",
+            "rarity": "Rare",
+            "ilvl": 75 + index,
+            "stack_size": 1,
+            "corrupted": index % 2,
+            "fractured": (index + 1) % 2,
+            "synthesised": 0,
+            "mod_token_count": 3 + (index % 4),
+            "mod_features_json": json.dumps(
+                {
+                    "MaximumLife_tier": 3 + index,
+                    "MaximumLife_roll": round(0.25 + (index * 0.07), 2),
+                }
+            ),
+            "target_p10": 15.0 + index,
+            "target_p50": 24.0 + (index * 2),
+            "target_p90": 36.0 + (index * 3),
+            "sale_probability_label": 0.2 + (index * 0.05),
+            "sample_count": 6 + index,
+        }
+        for index in range(6)
+    ]
+
+    bundle, stats = workflows._fit_route_bundle_from_aggregates(
+        aggregate_rows,
+        route="sparse_retrieval",
+        trained_at="2026-03-18T00:00:00Z",
+    )
+
+    assert bundle is not None
+    assert stats["model_backend"] == "sklearn_gradient_boosting"
+
+    price_model = bundle["price_models"]["p50"]
+    price_params = price_model.get_params()
+    assert price_params["n_estimators"] == 120
+    assert price_params["learning_rate"] == 0.04
+    assert price_params["max_depth"] == 2
+    assert price_params["min_samples_leaf"] == 6
+    assert price_params["min_samples_split"] == 12
+    assert price_params["subsample"] == 0.9
+    assert price_params["max_features"] == "sqrt"
+
+    assert bundle["sale_model"] is not None
+    sale_params = bundle["sale_model"].get_params()
+    assert sale_params["n_estimators"] == 80
+    assert sale_params["learning_rate"] == 0.05
+    assert sale_params["max_depth"] == 2
+    assert sale_params["min_samples_leaf"] == 6
+    assert sale_params["min_samples_split"] == 12
+    assert sale_params["subsample"] == 0.95
+    assert sale_params["max_features"] == "sqrt"

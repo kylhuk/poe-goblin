@@ -36,5 +36,5 @@ jobs:
       - name: Install Playwright browsers
         run: npx --prefix frontend playwright install --with-deps chromium
 
-      - name: Run deterministic review gates
+      - name: Run deterministic review gates (includes ML evidence pack enforcement)
         run: make ci-deterministic
