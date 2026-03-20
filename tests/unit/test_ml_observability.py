@@ -100,6 +100,30 @@ class QueryRouter:
                     "promoted_at": "2026-03-13 10:00:00",
                 },
             ]
+        if (
+            "FROM poe_trade.ml_route_eval_v1" in query
+            and "GROUP BY route, family, support_bucket" in query
+        ):
+            return [
+                {
+                    "route": "structured_boosted",
+                    "family": "other",
+                    "support_bucket": "high",
+                    "sample_count": 420,
+                    "avg_mdape": 0.1,
+                    "avg_cov": 0.83,
+                    "recorded_at": "2026-03-15 12:00:00",
+                },
+                {
+                    "route": "structured_boosted_other",
+                    "family": "ring",
+                    "support_bucket": "medium",
+                    "sample_count": 160,
+                    "avg_mdape": 0.12,
+                    "avg_cov": 0.81,
+                    "recorded_at": "2026-03-15 12:00:00",
+                },
+            ]
         if "FROM poe_trade.ml_route_eval_v1" in query and "GROUP BY route" in query:
             return [
                 {
@@ -138,6 +162,14 @@ class QueryRouter:
                     "recorded_at": "2026-03-15 12:00:00",
                 },
                 {
+                    "run_id": "eval-2",
+                    "route": "structured_boosted_other",
+                    "sample_count": 140,
+                    "avg_mdape": 0.12,
+                    "avg_cov": 0.81,
+                    "recorded_at": "2026-03-15 12:00:00",
+                },
+                {
                     "run_id": "eval-1",
                     "route": "structured_boosted",
                     "sample_count": 520,
@@ -150,12 +182,13 @@ class QueryRouter:
             return [
                 {"route": "fungible_reference", "rows": 400},
                 {"route": "structured_boosted", "rows": 1200},
+                {"route": "structured_boosted_other", "rows": 300},
                 {"route": "sparse_retrieval", "rows": 450},
                 {"route": "cluster_jewel_retrieval", "rows": 150},
                 {"route": "fallback_abstain", "rows": 200},
             ]
         if "count() AS total_rows" in query:
-            return [{"total_rows": 2400, "base_type_count": 310}]
+            return [{"total_rows": 2700, "base_type_count": 310}]
         return []
 
 
@@ -174,14 +207,27 @@ def test_fetch_automation_history_exposes_observability_panels(
     assert payload["summary"]["runsLast7d"] == 2
     assert payload["summary"]["bestAvgMdape"] == 0.11
     assert payload["summary"]["mdapeDeltaVsPrevious"] == 0.04
-    assert payload["datasetCoverage"]["totalRows"] == 2400
+    assert payload["datasetCoverage"]["totalRows"] == 2700
     assert payload["datasetCoverage"]["coverageRatio"] == 1.0
     assert payload["qualityTrend"][0]["avgMdape"] == 0.15
     assert payload["qualityTrend"][1]["verdict"] == "promote"
-    assert payload["routeMetrics"][0]["route"] == "structured_boosted"
-    assert payload["modelMetrics"][0]["route"] == "structured_boosted"
-    assert payload["modelMetrics"][0]["rowsProcessed"] == 2400
-    assert payload["modelMetrics"][0]["avgMdape"] == 0.09
+    assert payload["routeMetrics"][0]["route"] == "fungible_reference"
+    assert any(
+        row.get("route") == "structured_boosted" and row.get("avgMdape") == 0.09
+        for row in payload["modelMetrics"]
+    )
+    assert any(
+        row.get("route") == "structured_boosted" and row.get("rowsProcessed") == 2400
+        for row in payload["modelMetrics"]
+    )
+    assert any(
+        row.get("route") == "structured_boosted_other"
+        for row in payload["modelMetrics"]
+    )
+    assert any(
+        row.get("route") == "structured_boosted_other"
+        for row in payload["routeFamilies"]
+    )
     assert any(
         row.get("route") == "cluster_jewel_retrieval"
         for row in payload["modelHistory"]
@@ -214,6 +260,7 @@ def test_train_all_routes_includes_fallback_route(monkeypatch) -> None:
     assert observed == [
         "fungible_reference",
         "structured_boosted",
+        "structured_boosted_other",
         "sparse_retrieval",
         "cluster_jewel_retrieval",
         "fallback_abstain",

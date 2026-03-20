@@ -146,6 +146,47 @@ def test_feature_dict_from_row_uses_canonical_model_category() -> None:
     assert features["category"] == "other"
 
 
+def test_feature_dict_from_row_keeps_split_family_for_structured_boosted() -> None:
+    row = {
+        "category": "ring",
+        "base_type": "Two-Stone Ring",
+        "rarity": "Unique",
+        "ilvl": 84,
+        "stack_size": 1,
+        "corrupted": 0,
+        "fractured": 0,
+        "synthesised": 0,
+        "mod_token_count": 4,
+        "mod_features_json": "{}",
+    }
+
+    features = workflows._feature_dict_from_row(row, route="structured_boosted")
+
+    assert features["category"] == "ring"
+
+
+def test_feature_dict_from_parsed_item_keeps_split_family_for_structured_boosted() -> None:
+    parsed_item = {
+        "category": "amulet",
+        "base_type": "Onyx Amulet",
+        "rarity": "Unique",
+        "ilvl": 84,
+        "stack_size": 1,
+        "corrupted": 0,
+        "fractured": 0,
+        "synthesised": 0,
+        "mod_token_count": 4,
+        "mod_features_json": "{}",
+    }
+
+    features = workflows._feature_dict_from_parsed_item(
+        parsed_item,
+        route="structured_boosted",
+    )
+
+    assert features["category"] == "amulet"
+
+
 def test_dataset_rebuild_window_is_stable_for_unchanged_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -280,10 +321,7 @@ def test_sparse_route_training_predicate_excludes_fungible_families() -> None:
 
     assert "rarity = 'Rare'" in predicate
     assert "cluster_jewel" in predicate
-    assert (
-        "category NOT IN ('essence', 'fossil', 'scarab', 'logbook', 'cluster_jewel')"
-        in predicate
-    )
+    assert "category NOT IN ('fossil', 'scarab', 'logbook', 'cluster_jewel')" in predicate
 
 
 def test_route_for_item_assigns_rare_maps_to_sparse_retrieval() -> None:
@@ -307,7 +345,292 @@ def test_cluster_jewel_route_training_predicate_targets_cluster_jewel_only() -> 
 def test_fungible_route_training_predicate_excludes_maps() -> None:
     predicate = workflows._route_training_predicate("fungible_reference")
 
-    assert predicate == "category IN ('essence', 'fossil', 'scarab', 'logbook')"
+    assert predicate == "category IN ('fossil', 'scarab', 'logbook')"
+
+
+def test_route_for_item_assigns_fungible_family_specific_reason() -> None:
+    routed = workflows._route_for_item(
+        {
+            "category": "scarab",
+            "rarity": "",
+        }
+    )
+
+    assert routed["route"] == "fungible_reference"
+    assert routed["route_reason"] == "stackable_scarab_family"
+
+
+def test_fungible_route_uses_family_scoped_objective() -> None:
+    assert (
+        workflows._route_objective("fungible_reference")
+        == "reference_quantiles_family_scoped"
+    )
+
+
+def test_fit_route_bundle_from_aggregates_splits_fungible_family_scopes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_categories: list[set[str]] = []
+
+    def _fake_fit_single(usable_rows, *, route, trained_at):
+        del trained_at
+        captured_categories.append(
+            {str(row.get("category") or "") for row in usable_rows}
+        )
+        train_row_count = sum(int(row.get("sample_count") or 0) for row in usable_rows)
+        if not usable_rows:
+            return None, {
+                "train_row_count": 0,
+                "feature_row_count": 0,
+                "support_reference_p50": 0.0,
+                "sale_model_available": False,
+                "model_backend": "heuristic_fallback",
+            }
+        return {
+            "route": route,
+            "vectorizer": object(),
+            "price_models": {"p10": object(), "p50": object(), "p90": object()},
+            "sale_model": None,
+        }, {
+            "train_row_count": train_row_count,
+            "feature_row_count": len(usable_rows),
+            "support_reference_p50": 10.0,
+            "sale_model_available": False,
+            "model_backend": "sklearn_gradient_boosting",
+        }
+
+    monkeypatch.setattr(
+        workflows,
+        "_fit_single_route_bundle_from_usable_rows",
+        _fake_fit_single,
+    )
+
+    aggregate_rows = [
+        {"category": "fossil", "target_p50": 10.0, "sample_count": 30},
+        {"category": "scarab", "target_p50": 11.0, "sample_count": 30},
+        {"category": "logbook", "target_p50": 12.0, "sample_count": 30},
+    ]
+
+    bundle, stats = workflows._fit_route_bundle_from_aggregates(
+        aggregate_rows,
+        route="fungible_reference",
+        trained_at="2026-03-20 00:00:00.000",
+    )
+
+    assert bundle is not None
+    assert set(bundle["family_scoped_bundles"]) == {"fossil", "scarab", "logbook"}
+    assert {frozenset(categories) for categories in captured_categories} == {
+        frozenset({"fossil"}),
+        frozenset({"scarab"}),
+        frozenset({"logbook"}),
+    }
+    assert stats["model_backend"] == "sklearn_gradient_boosting_family_scoped"
+
+
+def test_fit_route_bundle_from_aggregates_splits_structured_other_family_scopes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_categories: list[set[str]] = []
+
+    def _fake_fit_single(usable_rows, *, route, trained_at):
+        del trained_at
+        captured_categories.append(
+            {str(row.get("category") or "") for row in usable_rows}
+        )
+        train_row_count = sum(int(row.get("sample_count") or 0) for row in usable_rows)
+        if not usable_rows:
+            return None, {
+                "train_row_count": 0,
+                "feature_row_count": 0,
+                "support_reference_p50": 0.0,
+                "sale_model_available": False,
+                "model_backend": "heuristic_fallback",
+            }
+        return {
+            "route": route,
+            "vectorizer": object(),
+            "price_models": {"p10": object(), "p50": object(), "p90": object()},
+            "sale_model": None,
+        }, {
+            "train_row_count": train_row_count,
+            "feature_row_count": len(usable_rows),
+            "support_reference_p50": 10.0,
+            "sale_model_available": False,
+            "model_backend": "sklearn_gradient_boosting",
+        }
+
+    monkeypatch.setattr(
+        workflows,
+        "_fit_single_route_bundle_from_usable_rows",
+        _fake_fit_single,
+    )
+
+    aggregate_rows = [
+        {"category": "ring", "target_p50": 10.0, "sample_count": 30},
+        {"category": "amulet", "target_p50": 11.0, "sample_count": 30},
+        {"category": "belt", "target_p50": 12.0, "sample_count": 30},
+        {"category": "jewel", "target_p50": 13.0, "sample_count": 30},
+    ]
+
+    bundle, stats = workflows._fit_route_bundle_from_aggregates(
+        aggregate_rows,
+        route="structured_boosted_other",
+        trained_at="2026-03-20 00:00:00.000",
+    )
+
+    assert bundle is not None
+    assert set(bundle["family_scoped_bundles"]) == {"ring", "amulet", "belt", "jewel"}
+    assert {frozenset(categories) for categories in captured_categories} == {
+        frozenset({"ring"}),
+        frozenset({"amulet"}),
+        frozenset({"belt"}),
+        frozenset({"jewel"}),
+    }
+    assert stats["model_backend"] == "sklearn_gradient_boosting_family_scoped"
+
+
+def test_predict_with_bundle_uses_fungible_family_scope_model() -> None:
+    class _DummyVectorizer:
+        def transform(self, _rows):
+            return [[1.0]]
+
+    class _DummyModel:
+        def __init__(self, value: float) -> None:
+            self._value = value
+
+        def predict(self, _X):
+            return [self._value]
+
+    def _scope_bundle(base: float) -> dict[str, object]:
+        return {
+            "route": "fungible_reference",
+            "vectorizer": _DummyVectorizer(),
+            "price_models": {
+                "p10": _DummyModel(base - 1.0),
+                "p50": _DummyModel(base),
+                "p90": _DummyModel(base + 1.0),
+            },
+            "sale_model": _DummyModel(0.6),
+            "price_tiers": {},
+        }
+
+    bundle = {
+        "route": "fungible_reference",
+        "family_scoped_bundles": {
+            "fossil": _scope_bundle(20.0),
+            "scarab": _scope_bundle(50.0),
+            "logbook": _scope_bundle(80.0),
+        },
+    }
+    predicted = workflows._predict_with_bundle(
+        bundle=bundle,
+        parsed_item={
+            "category": "scarab",
+            "base_type": "Winged Scarab",
+            "rarity": "",
+            "ilvl": 0,
+            "stack_size": 1,
+            "corrupted": 0,
+            "fractured": 0,
+            "synthesised": 0,
+            "mod_token_count": 0,
+            "mod_features_json": "{}",
+        },
+    )
+
+    assert predicted is not None
+    assert predicted["price_p50"] == 50.0
+
+
+def test_predict_with_bundle_uses_structured_other_family_scope_model() -> None:
+    class _DummyVectorizer:
+        def transform(self, _rows):
+            return [[1.0]]
+
+    class _DummyModel:
+        def __init__(self, value: float) -> None:
+            self._value = value
+
+        def predict(self, _X):
+            return [self._value]
+
+    def _scope_bundle(base: float) -> dict[str, object]:
+        return {
+            "route": "structured_boosted_other",
+            "vectorizer": _DummyVectorizer(),
+            "price_models": {
+                "p10": _DummyModel(base - 1.0),
+                "p50": _DummyModel(base),
+                "p90": _DummyModel(base + 1.0),
+            },
+            "sale_model": _DummyModel(0.6),
+            "price_tiers": {},
+        }
+
+    bundle = {
+        "route": "structured_boosted_other",
+        "family_scoped_bundles": {
+            "ring": _scope_bundle(20.0),
+            "amulet": _scope_bundle(50.0),
+            "belt": _scope_bundle(80.0),
+            "jewel": _scope_bundle(100.0),
+        },
+    }
+    predicted = workflows._predict_with_bundle(
+        bundle=bundle,
+        parsed_item={
+            "category": "amulet",
+            "base_type": "Onyx Amulet",
+            "rarity": "Unique",
+            "ilvl": 0,
+            "stack_size": 1,
+            "corrupted": 0,
+            "fractured": 0,
+            "synthesised": 0,
+            "mod_token_count": 0,
+            "mod_features_json": "{}",
+        },
+    )
+
+    assert predicted is not None
+    assert predicted["price_p50"] == 50.0
+
+
+def test_route_for_item_assigns_essence_to_fallback_due_to_noise() -> None:
+    routed = workflows._route_for_item(
+        {
+            "category": "essence",
+            "rarity": "",
+        }
+    )
+
+    assert routed["route"] == "fallback_abstain"
+    assert routed["route_reason"] == "noisy_essence_family"
+
+
+def test_route_for_item_assigns_unique_ring_to_structured_boosted_other() -> None:
+    routed = workflows._route_for_item(
+        {
+            "category": "ring",
+            "rarity": "Unique",
+        }
+    )
+
+    assert routed["route"] == "structured_boosted_other"
+    assert routed["route_reason"] == "specialized_ring_unique_family"
+
+
+def test_route_for_item_assigns_unique_onyx_amulet_to_structured_boosted_other() -> None:
+    routed = workflows._route_for_item(
+        {
+            "category": "other",
+            "base_type": "Onyx Amulet",
+            "rarity": "Unique",
+        }
+    )
+
+    assert routed["route"] == "structured_boosted_other"
+    assert routed["route_reason"] == "specialized_amulet_unique_family"
 
 
 def test_route_for_item_assigns_cluster_jewel_dedicated_route() -> None:
@@ -320,6 +643,20 @@ def test_route_for_item_assigns_cluster_jewel_dedicated_route() -> None:
 
     assert routed["route"] == "cluster_jewel_retrieval"
     assert routed["route_reason"] == "cluster_jewel_specialized"
+
+
+def test_structured_boosted_training_predicate_excludes_split_other_families() -> None:
+    predicate = workflows._route_training_predicate("structured_boosted")
+
+    assert "rarity = 'Unique'" in predicate
+    assert "= 'other'" in predicate
+
+
+def test_structured_boosted_other_training_predicate_targets_split_other_families() -> None:
+    predicate = workflows._route_training_predicate("structured_boosted_other")
+
+    assert "rarity = 'Unique'" in predicate
+    assert "!= 'other'" in predicate
 
 
 def test_prediction_records_canonicalize_split_family_labels() -> None:

@@ -593,3 +593,96 @@ def test_fit_route_bundle_uses_more_regularized_params_for_sparse_retrieval():
     assert sale_params["min_samples_split"] == 12
     assert sale_params["subsample"] == 0.95
     assert sale_params["max_features"] == "sqrt"
+
+
+def test_fit_route_bundle_uses_log_winsorized_target_for_structured_boosted_other():
+    aggregate_rows = [
+        {
+            "category": "ring",
+            "base_type": f"Unique Ring {index}",
+            "rarity": "Unique",
+            "ilvl": 80 + index,
+            "stack_size": 1,
+            "corrupted": 0,
+            "fractured": 0,
+            "synthesised": 0,
+            "mod_token_count": 4,
+            "mod_features_json": "{}",
+            "target_p10": 40.0 + index,
+            "target_p50": 55.0 + (index * 2.0),
+            "target_p90": 75.0 + (index * 3.0),
+            "sale_probability_label": 0.45,
+            "sample_count": 80,
+        }
+        for index in range(5)
+    ]
+    aggregate_rows.append(
+        {
+            "category": "ring",
+            "base_type": "Ultra Rare Ring",
+            "rarity": "Unique",
+            "ilvl": 86,
+            "stack_size": 1,
+            "corrupted": 0,
+            "fractured": 0,
+            "synthesised": 0,
+            "mod_token_count": 5,
+            "mod_features_json": "{}",
+            "target_p10": 2500.0,
+            "target_p50": 5000.0,
+            "target_p90": 9000.0,
+            "sale_probability_label": 0.5,
+            "sample_count": 1,
+        }
+    )
+
+    bundle, _stats = workflows._fit_route_bundle_from_aggregates(
+        aggregate_rows,
+        route="structured_boosted_other",
+        trained_at="2026-03-18T00:00:00Z",
+    )
+
+    assert bundle is not None
+    ring_bundle = bundle["family_scoped_bundles"]["ring"]
+    assert ring_bundle["target_transform"] == "log1p_winsorized_p50_anchor"
+    assert ring_bundle["target_transform_meta"]["winsor_upper"] < 5000.0
+
+
+def test_predict_with_bundle_inverts_log_winsorized_targets() -> None:
+    class _VectorizerStub:
+        def transform(self, rows):
+            return rows
+
+    class _ModelStub:
+        def __init__(self, value: float) -> None:
+            self.value = value
+
+        def predict(self, _x):
+            return [self.value]
+
+    bundle = {
+        "vectorizer": _VectorizerStub(),
+        "price_models": {
+            "p10": _ModelStub(2.0),
+            "p50": _ModelStub(3.0),
+            "p90": _ModelStub(4.0),
+        },
+        "sale_model": None,
+        "route": "structured_boosted_other",
+        "target_transform": "log1p_winsorized_p50_anchor",
+        "price_tiers": {},
+    }
+
+    predicted = workflows._predict_with_bundle(
+        bundle=bundle,
+        parsed_item={
+            "category": "ring",
+            "base_type": "Two-Stone Ring",
+            "rarity": "Unique",
+        },
+    )
+
+    assert predicted is not None
+    assert predicted["price_p10"] == pytest.approx(6.38905609893, rel=1e-6)
+    assert predicted["price_p50"] == pytest.approx(19.0855369232, rel=1e-6)
+    assert predicted["price_p90"] == pytest.approx(53.5981500331, rel=1e-6)

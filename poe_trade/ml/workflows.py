@@ -37,6 +37,7 @@ def _clickhouse_datetime(dt: datetime) -> str:
 ROUTES = (
     "fungible_reference",
     "structured_boosted",
+    "structured_boosted_other",
     "sparse_retrieval",
     "cluster_jewel_retrieval",
     "fallback_abstain",
@@ -1278,18 +1279,101 @@ _DIRECT_CATEGORY_FAMILIES = {
 
 _MODEL_CATEGORY_COLLAPSE_TO_OTHER = {"jewel", "ring", "amulet", "belt"}
 
-_FUNGIBLE_REFERENCE_CATEGORIES = (
+_FUNGIBLE_REFERENCE_EXCLUDED_CATEGORIES = (
     "essence",
+)
+
+_FUNGIBLE_REFERENCE_CATEGORIES = (
     "fossil",
     "scarab",
     "logbook",
 )
 
+_FUNGIBLE_REFERENCE_FAMILY_SCOPES = {
+    "fossil": "fossil",
+    "scarab": "scarab",
+    "logbook": "logbook",
+}
+
+_STRUCTURED_BOOSTED_OTHER_FAMILY_SCOPES = {
+    "jewel": "jewel",
+    "ring": "ring",
+    "amulet": "amulet",
+    "belt": "belt",
+}
+
 _FUNGIBLE_REFERENCE_CATEGORY_SET = set(_FUNGIBLE_REFERENCE_CATEGORIES)
+_FUNGIBLE_REFERENCE_EXCLUDED_CATEGORY_SET = set(_FUNGIBLE_REFERENCE_EXCLUDED_CATEGORIES)
+_FUNGIBLE_REFERENCE_FAMILY_SCOPE_SET = set(_FUNGIBLE_REFERENCE_FAMILY_SCOPES.values())
+_STRUCTURED_BOOSTED_OTHER_FAMILY_SCOPE_SET = set(
+    _STRUCTURED_BOOSTED_OTHER_FAMILY_SCOPES.values()
+)
 
 
 def _fungible_reference_categories_sql() -> str:
     return ", ".join(_quote(category) for category in _FUNGIBLE_REFERENCE_CATEGORIES)
+
+
+def _fungible_reference_excluded_categories_sql() -> str:
+    return ", ".join(
+        _quote(category) for category in _FUNGIBLE_REFERENCE_EXCLUDED_CATEGORIES
+    )
+
+
+def _fungible_reference_family_scope(category: object) -> str:
+    normalized = str(category or "").strip().lower()
+    return _FUNGIBLE_REFERENCE_FAMILY_SCOPES.get(normalized, "other")
+
+
+def _structured_boosted_other_family_scope(category: object) -> str:
+    normalized = str(category or "").strip().lower()
+    return _STRUCTURED_BOOSTED_OTHER_FAMILY_SCOPES.get(normalized, "other")
+
+
+def _structured_boosted_other_family_scope_from_fields(
+    category: object,
+    *,
+    base_type: object = "",
+    item_type_line: object = "",
+) -> str:
+    direct_scope = _structured_boosted_other_family_scope(category)
+    if direct_scope != "other":
+        return direct_scope
+    lowered = " ".join(
+        part.strip().lower()
+        for part in (str(base_type or ""), str(item_type_line or ""))
+        if str(part or "").strip()
+    )
+    if re.search(r"\bring\b", lowered):
+        return "ring"
+    if re.search(r"\bamulet\b", lowered):
+        return "amulet"
+    if re.search(r"\bbelt\b", lowered):
+        return "belt"
+    if re.search(r"\b(?:cluster\s+)?jewel\b", lowered):
+        return "jewel"
+    return "other"
+
+
+def _structured_boosted_other_family_scope_sql(prefix: str = "") -> str:
+    qualifier = f"{prefix}." if prefix else ""
+    category = f"lowerUTF8(trimBoth(ifNull({qualifier}category, '')))"
+    lowered = (
+        "lowerUTF8(concat(ifNull(" + qualifier + "item_type_line, ''), ' ', "
+        "ifNull(" + qualifier + "base_type, '')))"
+    )
+    return (
+        "multiIf("
+        f"{category} = 'ring', 'ring', "
+        f"{category} = 'amulet', 'amulet', "
+        f"{category} = 'belt', 'belt', "
+        f"{category} = 'jewel', 'jewel', "
+        f"match({lowered}, '(^|\\W)ring(\\W|$)'), 'ring', "
+        f"match({lowered}, '(^|\\W)amulet(\\W|$)'), 'amulet', "
+        f"match({lowered}, '(^|\\W)belt(\\W|$)'), 'belt', "
+        f"match({lowered}, '(^|\\W)(cluster\\s+)?jewel(\\W|$)'), 'jewel', "
+        "'other')"
+    )
 
 
 def _derive_category(
@@ -1336,6 +1420,13 @@ def _canonical_model_category(category: object) -> str:
     if normalized in _MODEL_CATEGORY_COLLAPSE_TO_OTHER:
         return "other"
     return normalized
+
+
+def _model_category_for_route(category: object, *, route: str = "") -> str:
+    normalized = str(category or "other").strip().lower() or "other"
+    if route in {"structured_boosted", "structured_boosted_other"} and normalized in _MODEL_CATEGORY_COLLAPSE_TO_OTHER:
+        return normalized
+    return _canonical_model_category(normalized)
 
 
 def _derive_category_sql(prefix: str = "") -> str:
@@ -1831,8 +1922,8 @@ def route_preview(
             "d.as_of_ts, d.league, d.item_id, d.category, d.base_type, d.rarity,",
             "count() OVER (PARTITION BY d.league, d.category, d.base_type) AS support_count_recent,",
             "multiIf(count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 250, 'high', count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'medium', 'low') AS support_bucket,",
-            f"multiIf(d.category IN ({_fungible_reference_categories_sql()}), 'fungible_reference', d.rarity IN ('Unique') AND count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'structured_boosted', d.category = 'cluster_jewel', 'cluster_jewel_retrieval', d.rarity IN ('Rare'), 'sparse_retrieval', 'fallback_abstain') AS route,",
-            f"multiIf(d.category IN ({_fungible_reference_categories_sql()}), 'stackable_or_liquid_family', d.rarity IN ('Unique') AND count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'sufficient_structured_support', d.category = 'cluster_jewel', 'cluster_jewel_specialized', d.rarity IN ('Rare'), 'sparse_high_dimensional', 'fallback_due_to_support') AS route_reason,",
+            f"multiIf(d.category IN ({_fungible_reference_excluded_categories_sql()}), 'fallback_abstain', d.category IN ({_fungible_reference_categories_sql()}), 'fungible_reference', d.rarity IN ('Unique') AND {_structured_boosted_other_family_scope_sql('d')} != 'other' AND count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'structured_boosted_other', d.rarity IN ('Unique') AND count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'structured_boosted', d.category = 'cluster_jewel', 'cluster_jewel_retrieval', d.rarity IN ('Rare'), 'sparse_retrieval', 'fallback_abstain') AS route,",
+            f"multiIf(d.category IN ({_fungible_reference_excluded_categories_sql()}), 'noisy_essence_family', d.category = 'fossil', 'stackable_fossil_family', d.category = 'scarab', 'stackable_scarab_family', d.category = 'logbook', 'stackable_logbook_family', d.category IN ({_fungible_reference_categories_sql()}), 'stackable_other_family', d.rarity IN ('Unique') AND {_structured_boosted_other_family_scope_sql('d')} != 'other' AND count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'specialized_other_unique_family', d.rarity IN ('Unique') AND count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'sufficient_structured_support', d.category = 'cluster_jewel', 'cluster_jewel_specialized', d.rarity IN ('Rare'), 'sparse_high_dimensional', 'fallback_due_to_support') AS route_reason,",
             "multiIf(d.category = 'cluster_jewel', 'cluster_jewel_retrieval', d.rarity IN ('Rare'), 'sparse_retrieval', 'fallback_abstain') AS fallback_parent_route",
             f"FROM {dataset_table} AS d",
             f"WHERE d.league = {_quote(league)}",
@@ -2643,18 +2734,29 @@ def _weighted_median(values: list[float], weights: list[float]) -> float:
     return float(ordered[-1][0])
 
 
-def _fit_route_bundle_from_aggregates(
-    aggregate_rows: list[dict[str, Any]],
+def _weighted_quantile(values: list[float], weights: list[float], q: float) -> float:
+    if not values or not weights or len(values) != len(weights):
+        return 0.0
+    quantile = min(1.0, max(0.0, _to_float(q, 0.5)))
+    ordered = sorted(zip(values, weights), key=lambda pair: pair[0])
+    total_weight = sum(max(weight, 0.0) for _, weight in ordered)
+    if total_weight <= 0.0:
+        return _median(values)
+    threshold = quantile * total_weight
+    seen = 0.0
+    for value, weight in ordered:
+        seen += max(weight, 0.0)
+        if seen >= threshold:
+            return float(value)
+    return float(ordered[-1][0])
+
+
+def _fit_single_route_bundle_from_usable_rows(
+    usable_rows: list[dict[str, Any]],
     *,
     route: str,
     trained_at: str,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    usable_rows = [
-        row
-        for row in aggregate_rows
-        if _to_float(row.get("target_p50"), 0.0) > 0.0
-        and _to_int(row.get("sample_count"), 0) > 0
-    ]
     sample_weights = [
         max(1.0, _to_float(row.get("sample_count"), 1.0)) for row in usable_rows
     ]
@@ -2672,19 +2774,44 @@ def _fit_route_bundle_from_aggregates(
     if len(usable_rows) < 5 or train_row_count < 25:
         return None, stats
 
-    # Compute target encoding
     price_tiers = _compute_price_tiers(usable_rows)
-
-    feature_rows = [_feature_dict_from_row(row, price_tiers) for row in usable_rows]
+    feature_rows = [
+        _feature_dict_from_row(row, price_tiers, route=route) for row in usable_rows
+    ]
     vectorizer = DictVectorizer(sparse=True)
     X = vectorizer.fit_transform(feature_rows)
-    y_p10 = [_to_float(row.get("target_p10"), 0.0) for row in usable_rows]
-    y_p50 = [_to_float(row.get("target_p50"), 0.0) for row in usable_rows]
-    y_p90 = [_to_float(row.get("target_p90"), 0.0) for row in usable_rows]
+    y_p10_raw = [max(0.0, _to_float(row.get("target_p10"), 0.0)) for row in usable_rows]
+    y_p50_raw = [max(0.0, _to_float(row.get("target_p50"), 0.0)) for row in usable_rows]
+    y_p90_raw = [max(0.0, _to_float(row.get("target_p90"), 0.0)) for row in usable_rows]
     y_sale = [
         min(1.0, max(0.0, _to_float(row.get("sale_probability_label"), 0.0)))
         for row in usable_rows
     ]
+
+    target_transform = "identity"
+    target_transform_meta: dict[str, Any] = {}
+    if route in {"structured_boosted", "structured_boosted_other"}:
+        winsor_lower = max(0.0, _weighted_quantile(y_p50_raw, sample_weights, 0.02))
+        winsor_upper = max(
+            winsor_lower,
+            _weighted_quantile(y_p50_raw, sample_weights, 0.98),
+        )
+
+        def _winsorize_price(value: float) -> float:
+            return min(winsor_upper, max(winsor_lower, max(0.0, value)))
+
+        y_p10 = [math.log1p(_winsorize_price(value)) for value in y_p10_raw]
+        y_p50 = [math.log1p(_winsorize_price(value)) for value in y_p50_raw]
+        y_p90 = [math.log1p(_winsorize_price(value)) for value in y_p90_raw]
+        target_transform = "log1p_winsorized_p50_anchor"
+        target_transform_meta = {
+            "winsor_lower": winsor_lower,
+            "winsor_upper": winsor_upper,
+        }
+    else:
+        y_p10 = y_p10_raw
+        y_p50 = y_p50_raw
+        y_p90 = y_p90_raw
 
     price_model_params_by_route: dict[str, dict[str, Any]] = {
         "structured_boosted": {
@@ -2694,6 +2821,15 @@ def _fit_route_bundle_from_aggregates(
             "min_samples_leaf": 4,
             "min_samples_split": 8,
             "subsample": 0.85,
+            "max_features": "sqrt",
+        },
+        "structured_boosted_other": {
+            "n_estimators": 140,
+            "learning_rate": 0.03,
+            "max_depth": 2,
+            "min_samples_leaf": 6,
+            "min_samples_split": 12,
+            "subsample": 0.9,
             "max_features": "sqrt",
         },
         "sparse_retrieval": {
@@ -2735,6 +2871,15 @@ def _fit_route_bundle_from_aggregates(
             "max_depth": 2,
             "min_samples_leaf": 5,
             "min_samples_split": 10,
+            "subsample": 0.9,
+            "max_features": "sqrt",
+        },
+        "structured_boosted_other": {
+            "n_estimators": 90,
+            "learning_rate": 0.04,
+            "max_depth": 2,
+            "min_samples_leaf": 6,
+            "min_samples_split": 12,
             "subsample": 0.9,
             "max_features": "sqrt",
         },
@@ -2803,12 +2948,175 @@ def _fit_route_bundle_from_aggregates(
         "vectorizer": vectorizer,
         "price_models": {"p10": model_p10, "p50": model_p50, "p90": model_p90},
         "sale_model": sale_model,
+        "route": route,
+        "target_transform": target_transform,
+        "target_transform_meta": target_transform_meta,
         "feature_fields": list(MODEL_FEATURE_FIELDS),
         "price_tiers": price_tiers,
         "trained_at": trained_at,
     }
     stats["sale_model_available"] = sale_model is not None
     stats["model_backend"] = "sklearn_gradient_boosting"
+    return bundle, stats
+
+
+def _fit_route_bundle_from_aggregates(
+    aggregate_rows: list[dict[str, Any]],
+    *,
+    route: str,
+    trained_at: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    usable_rows = [
+        row
+        for row in aggregate_rows
+        if _to_float(row.get("target_p50"), 0.0) > 0.0
+        and _to_int(row.get("sample_count"), 0) > 0
+    ]
+    if route == "structured_boosted_other":
+        scoped_rows: dict[str, list[dict[str, Any]]] = {
+            scope: [] for scope in sorted(_STRUCTURED_BOOSTED_OTHER_FAMILY_SCOPE_SET)
+        }
+        for row in usable_rows:
+            scope = _structured_boosted_other_family_scope_from_fields(
+                row.get("category"),
+                base_type=row.get("base_type"),
+            )
+            if scope in scoped_rows:
+                scoped_rows[scope].append(row)
+
+        family_scoped_bundles: dict[str, dict[str, Any]] = {}
+        family_scope_counts: list[dict[str, Any]] = []
+        support_values: list[float] = []
+        support_weights: list[float] = []
+        total_train_row_count = 0
+        total_feature_row_count = 0
+        sale_model_available = False
+        for scope in sorted(scoped_rows):
+            scope_bundle, scope_stats = _fit_single_route_bundle_from_usable_rows(
+                scoped_rows[scope],
+                route=route,
+                trained_at=trained_at,
+            )
+            scope_train_row_count = max(0, _to_int(scope_stats.get("train_row_count"), 0))
+            scope_feature_row_count = max(
+                0,
+                _to_int(scope_stats.get("feature_row_count"), 0),
+            )
+            total_train_row_count += scope_train_row_count
+            total_feature_row_count += scope_feature_row_count
+            sale_model_available = sale_model_available or bool(
+                scope_stats.get("sale_model_available")
+            )
+            scope_support_reference_p50 = _to_float(
+                scope_stats.get("support_reference_p50"),
+                0.0,
+            )
+            if scope_train_row_count > 0 and scope_support_reference_p50 > 0.0:
+                support_values.append(scope_support_reference_p50)
+                support_weights.append(float(scope_train_row_count))
+            family_scope_counts.append(
+                {
+                    "family_scope": scope,
+                    "rows": scope_train_row_count,
+                }
+            )
+            if scope_bundle is not None:
+                family_scoped_bundles[scope] = scope_bundle
+
+        stats = {
+            "train_row_count": total_train_row_count,
+            "feature_row_count": total_feature_row_count,
+            "support_reference_p50": _weighted_median(support_values, support_weights),
+            "sale_model_available": sale_model_available,
+            "model_backend": "heuristic_fallback",
+            "family_scope_counts": family_scope_counts,
+            "family_scoped_bundle_count": len(family_scoped_bundles),
+        }
+        if not family_scoped_bundles:
+            return None, stats
+
+        bundle = {
+            "route": route,
+            "trained_at": trained_at,
+            "feature_fields": list(MODEL_FEATURE_FIELDS),
+            "family_scoped_bundles": family_scoped_bundles,
+        }
+        stats["model_backend"] = "sklearn_gradient_boosting_family_scoped"
+        return bundle, stats
+
+    if route != "fungible_reference":
+        return _fit_single_route_bundle_from_usable_rows(
+            usable_rows,
+            route=route,
+            trained_at=trained_at,
+        )
+
+    scoped_rows: dict[str, list[dict[str, Any]]] = {
+        scope: [] for scope in sorted(_FUNGIBLE_REFERENCE_FAMILY_SCOPE_SET)
+    }
+    for row in usable_rows:
+        scope = _fungible_reference_family_scope(row.get("category"))
+        if scope in scoped_rows:
+            scoped_rows[scope].append(row)
+
+    family_scoped_bundles: dict[str, dict[str, Any]] = {}
+    family_scope_counts: list[dict[str, Any]] = []
+    support_values: list[float] = []
+    support_weights: list[float] = []
+    total_train_row_count = 0
+    total_feature_row_count = 0
+    sale_model_available = False
+    for scope in sorted(scoped_rows):
+        scope_bundle, scope_stats = _fit_single_route_bundle_from_usable_rows(
+            scoped_rows[scope],
+            route=route,
+            trained_at=trained_at,
+        )
+        scope_train_row_count = max(0, _to_int(scope_stats.get("train_row_count"), 0))
+        scope_feature_row_count = max(
+            0,
+            _to_int(scope_stats.get("feature_row_count"), 0),
+        )
+        total_train_row_count += scope_train_row_count
+        total_feature_row_count += scope_feature_row_count
+        sale_model_available = sale_model_available or bool(
+            scope_stats.get("sale_model_available")
+        )
+        scope_support_reference_p50 = _to_float(
+            scope_stats.get("support_reference_p50"),
+            0.0,
+        )
+        if scope_train_row_count > 0 and scope_support_reference_p50 > 0.0:
+            support_values.append(scope_support_reference_p50)
+            support_weights.append(float(scope_train_row_count))
+        family_scope_counts.append(
+            {
+                "family_scope": scope,
+                "rows": scope_train_row_count,
+            }
+        )
+        if scope_bundle is not None:
+            family_scoped_bundles[scope] = scope_bundle
+
+    stats: dict[str, Any] = {
+        "train_row_count": total_train_row_count,
+        "feature_row_count": total_feature_row_count,
+        "support_reference_p50": _weighted_median(support_values, support_weights),
+        "sale_model_available": sale_model_available,
+        "model_backend": "heuristic_fallback",
+        "family_scope_counts": family_scope_counts,
+        "family_scoped_bundle_count": len(family_scoped_bundles),
+    }
+    if not family_scoped_bundles:
+        return None, stats
+
+    bundle = {
+        "route": route,
+        "trained_at": trained_at,
+        "feature_fields": list(MODEL_FEATURE_FIELDS),
+        "family_scoped_bundles": family_scoped_bundles,
+    }
+    stats["model_backend"] = "sklearn_gradient_boosting_family_scoped"
     return bundle, stats
 
 
@@ -2913,6 +3221,8 @@ def _route_default_confidence(route: str) -> float:
         return 0.70
     if route == "structured_boosted":
         return 0.62
+    if route == "structured_boosted_other":
+        return 0.56
     if route == "sparse_retrieval":
         return 0.45
     if route == "cluster_jewel_retrieval":
@@ -2925,6 +3235,8 @@ def _route_confidence_cap(route: str) -> float:
         return 0.78
     if route == "structured_boosted":
         return 0.70
+    if route == "structured_boosted_other":
+        return 0.64
     if route == "sparse_retrieval":
         return 0.62
     if route == "cluster_jewel_retrieval":
@@ -2991,6 +3303,7 @@ def train_route(
         "train_row_count": _to_int(bundle_stats.get("train_row_count"), 0),
         "feature_row_count": _to_int(bundle_stats.get("feature_row_count"), 0),
         "family_counts": _family_counts_from_aggregate_rows(aggregate_rows),
+        "family_scope_counts": bundle_stats.get("family_scope_counts") or [],
         "sale_model_available": bool(bundle_stats.get("sale_model_available")),
         "model_bundle_path": None,
         "support_reference_p50": _to_float(
@@ -4325,12 +4638,12 @@ def _ensure_supported_league(league: str) -> None:
 
 
 def _route_objective(route: str) -> str:
-    if route == "structured_boosted":
+    if route in {"structured_boosted", "structured_boosted_other"}:
         return "catboost_multi_quantile"
     if route in {"sparse_retrieval", "cluster_jewel_retrieval"}:
         return "comparable_residual"
     if route == "fungible_reference":
-        return "reference_quantiles"
+        return "reference_quantiles_family_scoped"
     return "generalized_fallback_quantiles"
 
 
@@ -6255,15 +6568,34 @@ def _parse_clipboard_item(text: str) -> dict[str, Any]:
 
 
 def _route_for_item(item: dict[str, Any]) -> dict[str, Any]:
-    category = _canonical_model_category(item.get("category"))
+    raw_category = str(item.get("category") or "").strip().lower()
+    category = _canonical_model_category(raw_category)
     rarity = str(item.get("rarity") or "")
+    structured_other_scope = _structured_boosted_other_family_scope_from_fields(
+        raw_category,
+        base_type=item.get("base_type"),
+        item_type_line=item.get("item_type_line"),
+    )
+    if category in _FUNGIBLE_REFERENCE_EXCLUDED_CATEGORY_SET:
+        return {
+            "route": "fallback_abstain",
+            "route_reason": "noisy_essence_family",
+            "support_count_recent": 20,
+        }
     if category in _FUNGIBLE_REFERENCE_CATEGORY_SET:
+        family_scope = _fungible_reference_family_scope(category)
         return {
             "route": "fungible_reference",
-            "route_reason": "stackable_or_liquid_family",
+            "route_reason": f"stackable_{family_scope}_family",
             "support_count_recent": 250,
         }
     if rarity == "Unique":
+        if structured_other_scope != "other":
+            return {
+                "route": "structured_boosted_other",
+                "route_reason": f"specialized_{structured_other_scope}_unique_family",
+                "support_count_recent": 80,
+            }
         return {
             "route": "structured_boosted",
             "route_reason": "structured_unique_family",
@@ -6466,7 +6798,15 @@ def _route_training_predicate(route: str) -> str:
     if route == "fungible_reference":
         return f"category IN ({fungible_categories_sql})"
     if route == "structured_boosted":
-        return "rarity = 'Unique'"
+        return (
+            "rarity = 'Unique' AND "
+            f"{_structured_boosted_other_family_scope_sql()} = 'other'"
+        )
+    if route == "structured_boosted_other":
+        return (
+            "rarity = 'Unique' AND "
+            f"{_structured_boosted_other_family_scope_sql()} != 'other'"
+        )
     if route == "cluster_jewel_retrieval":
         return "category = 'cluster_jewel'"
     if route == "sparse_retrieval":
@@ -6482,10 +6822,13 @@ def _route_training_predicate(route: str) -> str:
 
 
 def _feature_dict_from_row(
-    row: dict[str, Any], price_tiers: dict[str, dict[str, float]] | None = None
+    row: dict[str, Any],
+    price_tiers: dict[str, dict[str, float]] | None = None,
+    *,
+    route: str = "",
 ) -> dict[str, Any]:
     result = {
-        "category": _canonical_model_category(row.get("category")),
+        "category": _model_category_for_route(row.get("category"), route=route),
         "base_type": str(row.get("base_type") or "unknown"),
         "rarity": str(row.get("rarity") or ""),
         "ilvl": _bucket_ilvl(row.get("ilvl")),
@@ -6520,9 +6863,11 @@ def _feature_dict_from_parsed_item(
     item: dict[str, Any],
     price_tiers: dict[str, dict[str, float]] | None = None,
     feature_fields: list[str] | tuple[str, ...] | None = None,
+    *,
+    route: str = "",
 ) -> dict[str, Any]:
     result = {
-        "category": _canonical_model_category(item.get("category")),
+        "category": _model_category_for_route(item.get("category"), route=route),
         "base_type": str(item.get("base_type") or "unknown"),
         "rarity": str(item.get("rarity") or ""),
         "ilvl": _bucket_ilvl(item.get("ilvl")),
@@ -6916,6 +7261,25 @@ def _predict_with_bundle(
 ) -> dict[str, float] | None:
     if bundle is None:
         return None
+    family_scoped_bundles = bundle.get("family_scoped_bundles")
+    if isinstance(family_scoped_bundles, dict):
+        route = str(bundle.get("route") or "")
+        if route == "fungible_reference":
+            scope = _fungible_reference_family_scope(parsed_item.get("category"))
+        elif route == "structured_boosted_other":
+            scope = _structured_boosted_other_family_scope(parsed_item.get("category"))
+        else:
+            scope = "other"
+        scoped_bundle = family_scoped_bundles.get(scope)
+        if scoped_bundle is None:
+            return None
+        if not isinstance(scoped_bundle, dict):
+            return None
+        return _predict_with_bundle(
+            bundle=scoped_bundle,
+            parsed_item=parsed_item,
+            expected_feature_schema=expected_feature_schema,
+        )
     vectorizer = bundle.get("vectorizer")
     price_models = bundle.get("price_models") or {}
     if vectorizer is None or not isinstance(price_models, dict):
@@ -6930,10 +7294,12 @@ def _predict_with_bundle(
         if isinstance(expected_fields_obj, list)
         else None
     )
+    route = str(bundle.get("route") or "")
     features = _feature_dict_from_parsed_item(
         parsed_item,
         price_tiers,
         feature_fields=expected_fields,
+        route=route,
     )
     _validate_prediction_feature_schema(
         schema=schema,
@@ -6948,6 +7314,11 @@ def _predict_with_bundle(
     p10 = float(p10_model.predict(X)[0])
     p50 = float(p50_model.predict(X)[0])
     p90 = float(p90_model.predict(X)[0])
+    target_transform = str(bundle.get("target_transform") or "identity")
+    if target_transform == "log1p_winsorized_p50_anchor":
+        p10 = math.expm1(p10)
+        p50 = math.expm1(p50)
+        p90 = math.expm1(p90)
     ordered = sorted([max(0.1, p10), max(0.1, p50), max(0.1, p90)])
     sale_model = bundle.get("sale_model")
     if sale_model is None:

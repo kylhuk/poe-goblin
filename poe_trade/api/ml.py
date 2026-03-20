@@ -300,7 +300,7 @@ def fetch_automation_history(
         client,
         " ".join(
             [
-                "WITH multiIf(category IN ('essence','fossil','scarab','logbook'), 'fungible_reference', ifNull(rarity, '') = 'Unique', 'structured_boosted', category = 'cluster_jewel', 'cluster_jewel_retrieval', ifNull(rarity, '') = 'Rare', 'sparse_retrieval', 'fallback_abstain') AS route",
+                "WITH multiIf(category IN ('essence'), 'fallback_abstain', category IN ('fossil','scarab','logbook'), 'fungible_reference', ifNull(rarity, '') = 'Unique' AND multiIf(category = 'ring', 'ring', category = 'amulet', 'amulet', category = 'belt', 'belt', category = 'jewel', 'jewel', match(lowerUTF8(base_type), '(^|\\W)ring(\\W|$)'), 'ring', match(lowerUTF8(base_type), '(^|\\W)amulet(\\W|$)'), 'amulet', match(lowerUTF8(base_type), '(^|\\W)belt(\\W|$)'), 'belt', match(lowerUTF8(base_type), '(^|\\W)(cluster\\s+)?jewel(\\W|$)'), 'jewel', 'other') != 'other', 'structured_boosted_other', ifNull(rarity, '') = 'Unique', 'structured_boosted', category = 'cluster_jewel', 'cluster_jewel_retrieval', ifNull(rarity, '') = 'Rare', 'sparse_retrieval', 'fallback_abstain') AS route",
                 "SELECT route, count() AS rows",
                 f"FROM {_AUTOMATION_DATASET_TABLE}",
                 f"WHERE league = {_quote(league)}",
@@ -317,6 +317,19 @@ def fetch_automation_history(
                 "SELECT count() AS total_rows, uniqExact(base_type) AS base_type_count",
                 f"FROM {_AUTOMATION_DATASET_TABLE}",
                 f"WHERE league = {_quote(league)}",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    route_family_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT route, family, support_bucket, sum(sample_count) AS sample_count, avg(mdape) AS avg_mdape, avg(interval_80_coverage) AS avg_cov, max(recorded_at) AS recorded_at",
+                "FROM poe_trade.ml_route_eval_v1",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY route, family, support_bucket",
+                "ORDER BY route ASC, family ASC, support_bucket ASC",
                 "FORMAT JSONEachRow",
             ]
         ),
@@ -365,17 +378,30 @@ def fetch_automation_history(
         if row.get("avgMdape") is not None
     ]
 
-    route_metrics = [
-        {
-            "route": _opt_str(row.get("route")),
-            "sampleCount": _opt_int(row.get("sample_count")),
+    route_metric_map: dict[str, dict[str, Any]] = {}
+    for row in route_rows:
+        route = _opt_str(row.get("route")) or "unknown"
+        route_metric_map[route] = {
+            "route": route,
+            "sampleCount": _opt_int(row.get("sample_count")) or 0,
             "avgMdape": _opt_float(row.get("avg_mdape")),
             "avgIntervalCoverage": _opt_float(row.get("avg_cov")),
             "avgAbstainRate": _opt_float(row.get("avg_abstain_rate")),
             "recordedAt": _as_iso_utc(row.get("recorded_at")),
         }
-        for row in route_rows
-    ]
+    for route in workflows.ROUTES:
+        route_metric_map.setdefault(
+            route,
+            {
+                "route": route,
+                "sampleCount": 0,
+                "avgMdape": None,
+                "avgIntervalCoverage": None,
+                "avgAbstainRate": None,
+                "recordedAt": None,
+            },
+        )
+    route_metrics = [route_metric_map[route] for route in workflows.ROUTES]
     run_by_id: dict[str, dict[str, Any]] = {}
     for row in history:
         run_id = _opt_str(row.get("runId") or row.get("run_id")) or ""
@@ -412,7 +438,24 @@ def fetch_automation_history(
         if route in latest_per_model:
             continue
         latest_per_model[route] = row
-    model_metrics = list(latest_per_model.values())
+    model_metrics: list[dict[str, Any]] = []
+    for route in workflows.ROUTES:
+        row = latest_per_model.get(route)
+        if row is not None:
+            model_metrics.append(row)
+            continue
+        model_metrics.append(
+            {
+                "runId": None,
+                "route": route,
+                "activeModelVersion": None,
+                "rowsProcessed": history[0].get("rowsProcessed") if history else None,
+                "sampleCount": 0,
+                "avgMdape": None,
+                "avgIntervalCoverage": None,
+                "recordedAt": None,
+            }
+        )
 
     total_rows = (
         _opt_int((dataset_totals[0] if dataset_totals else {}).get("total_rows")) or 0
@@ -428,6 +471,18 @@ def fetch_automation_history(
         for row in dataset_route_rows
     ]
     supported_rows = sum(_opt_int(route.get("rows")) or 0 for route in dataset_routes)
+    route_families = [
+        {
+            "route": _opt_str(row.get("route")),
+            "family": _opt_str(row.get("family")),
+            "supportBucket": _opt_str(row.get("support_bucket")),
+            "sampleCount": _opt_int(row.get("sample_count")) or 0,
+            "avgMdape": _opt_float(row.get("avg_mdape")),
+            "avgIntervalCoverage": _opt_float(row.get("avg_cov")),
+            "recordedAt": _as_iso_utc(row.get("recorded_at")),
+        }
+        for row in route_family_rows
+    ]
 
     promotions = [
         {
@@ -481,6 +536,7 @@ def fetch_automation_history(
         "routeMetrics": route_metrics,
         "modelMetrics": model_metrics,
         "modelHistory": per_model_history,
+        "routeFamilies": route_families,
         "datasetCoverage": {
             "totalRows": total_rows,
             "supportedRows": supported_rows,
