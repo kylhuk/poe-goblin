@@ -10,7 +10,7 @@ import { LayoutDashboard, Server, BarChart3, Search, Grid3X3, MessageSquare, Tre
 import UserMenu from "@/components/UserMenu";
 import ApiErrorPanel from "@/components/ApiErrorPanel";
 import { useAuth, type UserRole } from "@/services/auth";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 
 type TabDef = {
   id: string;
