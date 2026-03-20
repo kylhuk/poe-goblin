@@ -3,6 +3,24 @@
   "dataset_table": "poe_trade.ml_price_dataset_v1",
   "family_counts": [],
   "feature_row_count": 0,
+  "feature_schema": {
+    "field_count": 11,
+    "fields": [
+      "category",
+      "base_type",
+      "rarity",
+      "ilvl",
+      "stack_size",
+      "corrupted",
+      "fractured",
+      "synthesised",
+      "mod_token_count",
+      "base_type_price_tier",
+      "category_price_tier"
+    ],
+    "fingerprint": "688c74b851c4092415b1a2d9a1ab7b3c28f272ae1ce0b5950604c89e8798f8f8",
+    "version": "v1"
+  },
   "features": [
     "category",
     "base_type",
@@ -12,9 +30,11 @@
     "corrupted",
     "fractured",
     "synthesised",
-    "mod_token_count"
+    "mod_token_count",
+    "base_type_price_tier",
+    "category_price_tier"
   ],
-  "fit_round": 34141,
+  "fit_round": 43381,
   "league": "Mirage",
   "model_backend": "heuristic_fallback",
   "model_bundle_path": null,
@@ -24,7 +44,7 @@
   "support_reference_p50": 0.0,
   "support_reference_row_count": 0,
   "train_row_count": 0,
-  "trained_at": "2026-03-16 20:49:37.530",
+  "trained_at": "2026-03-20 08:44:48.395",
   "training_status": "insufficient_rows",
   "warm_start_from": "artifacts/ml/mirage_v1/structured_boosted-Mirage.json"
 }

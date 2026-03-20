@@ -266,7 +266,7 @@ def test_report_includes_manifest_and_baseline_benchmark_metadata(
             return []
         if "FROM poe_trade.ml_price_predictions_v1" in query:
             return []
-        if "FROM poe_trade.ml_price_labels_v1" in query:
+        if "FROM poe_trade.ml_price_labels_v2" in query:
             return []
         return []
 
@@ -340,7 +340,7 @@ def test_report_handles_malformed_baseline_benchmark_metadata(monkeypatch, tmp_p
             return []
         if "FROM poe_trade.ml_price_predictions_v1" in query:
             return []
-        if "FROM poe_trade.ml_price_labels_v1" in query:
+        if "FROM poe_trade.ml_price_labels_v2" in query:
             return []
         return []
 
@@ -411,7 +411,7 @@ def test_report_handles_missing_manifest_row(monkeypatch, tmp_path):
             return []
         if "FROM poe_trade.ml_price_predictions_v1" in query:
             return []
-        if "FROM poe_trade.ml_price_labels_v1" in query:
+        if "FROM poe_trade.ml_price_labels_v2" in query:
             return []
         return []
 
@@ -486,7 +486,7 @@ def test_report_surfaces_integrity_hold_reason_fixtures(monkeypatch, tmp_path):
             return []
         if "FROM poe_trade.ml_price_predictions_v1" in query:
             return []
-        if "FROM poe_trade.ml_price_labels_v1" in query:
+        if "FROM poe_trade.ml_price_labels_v2" in query:
             return []
         return []
 
@@ -579,7 +579,7 @@ def test_report_surfaces_integrity_pass_fixture(monkeypatch, tmp_path):
             return []
         if "FROM poe_trade.ml_price_predictions_v1" in query:
             return []
-        if "FROM poe_trade.ml_price_labels_v1" in query:
+        if "FROM poe_trade.ml_price_labels_v2" in query:
             return []
         return []
 
@@ -656,7 +656,7 @@ def _report_fixture_query_for_shadow_gates(_client, query: str):
         return []
     if "FROM poe_trade.ml_price_predictions_v1" in query:
         return []
-    if "FROM poe_trade.ml_price_labels_v1" in query:
+    if "FROM poe_trade.ml_price_labels_v2" in query:
         return []
     return []
 

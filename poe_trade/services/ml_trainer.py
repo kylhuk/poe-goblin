@@ -35,8 +35,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog=SERVICE_NAME, description="Run autonomous ML trainer service"
     )
     _ = parser.add_argument("--league", default=None)
-    _ = parser.add_argument("--dataset-table", default="poe_trade.ml_price_dataset_v1")
-    _ = parser.add_argument("--model-dir", default="artifacts/ml/mirage_v1")
+    _ = parser.add_argument("--dataset-table", default="poe_trade.ml_price_dataset_v2")
+    _ = parser.add_argument("--model-dir", default="artifacts/ml/mirage_v2")
     _ = parser.add_argument("--once", action="store_true")
     _ = parser.add_argument("--interval-seconds", type=int, default=None)
     args = parser.parse_args(argv)

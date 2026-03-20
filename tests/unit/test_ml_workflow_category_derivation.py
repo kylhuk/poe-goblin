@@ -81,6 +81,7 @@ def test_build_dataset_uses_derived_category_sql(
     )
     monkeypatch.setattr(workflows, "_ensure_no_leakage_audit", lambda *_args: None)
     monkeypatch.setattr(workflows, "_write_leakage_audit", lambda *_args: None)
+    monkeypatch.setattr(workflows, "_env_bool", lambda key, default: False if key == "POE_ML_DATASET_CHUNK_BY_HOUR" else default)
     monkeypatch.setattr(
         workflows,
         "_populate_item_mod_features_from_tokens",
@@ -168,7 +169,7 @@ def test_dataset_rebuild_window_is_stable_for_unchanged_snapshot(
     }
 
     def _fake_query_rows(_client, query: str):
-        if "FROM poe_trade.ml_price_labels_v1" in query:
+        if "FROM poe_trade.ml_price_labels_v2" in query:
             return [dict(label_row)]
         if "FROM poe_trade.bronze_trade_metadata" in query:
             return [dict(trade_row)]
@@ -213,7 +214,7 @@ def test_dataset_rebuild_window_changes_when_snapshot_digest_changes(
     }
 
     def _fake_query_rows(_client, query: str):
-        if "FROM poe_trade.ml_price_labels_v1" in query:
+        if "FROM poe_trade.ml_price_labels_v2" in query:
             return [dict(label_row)]
         if "FROM poe_trade.bronze_trade_metadata" in query:
             return [dict(trade_row)]
@@ -272,3 +273,74 @@ def test_route_slice_id_changes_when_holdout_content_changes() -> None:
     slice_b = workflows._route_slice_id("structured_boosted", rows_b)
 
     assert slice_a != slice_b
+
+
+def test_sparse_route_training_predicate_excludes_fungible_families() -> None:
+    predicate = workflows._route_training_predicate("sparse_retrieval")
+
+    assert "rarity = 'Rare'" in predicate
+    assert "cluster_jewel" in predicate
+    assert (
+        "category NOT IN ('essence', 'fossil', 'scarab', 'logbook', 'cluster_jewel')"
+        in predicate
+    )
+
+
+def test_route_for_item_assigns_rare_maps_to_sparse_retrieval() -> None:
+    routed = workflows._route_for_item(
+        {
+            "category": "map",
+            "rarity": "Rare",
+        }
+    )
+
+    assert routed["route"] == "sparse_retrieval"
+    assert routed["route_reason"] == "sparse_high_dimensional"
+
+
+def test_cluster_jewel_route_training_predicate_targets_cluster_jewel_only() -> None:
+    predicate = workflows._route_training_predicate("cluster_jewel_retrieval")
+
+    assert predicate == "category = 'cluster_jewel'"
+
+
+def test_fungible_route_training_predicate_excludes_maps() -> None:
+    predicate = workflows._route_training_predicate("fungible_reference")
+
+    assert predicate == "category IN ('essence', 'fossil', 'scarab', 'logbook')"
+
+
+def test_route_for_item_assigns_cluster_jewel_dedicated_route() -> None:
+    routed = workflows._route_for_item(
+        {
+            "category": "cluster_jewel",
+            "rarity": "Rare",
+        }
+    )
+
+    assert routed["route"] == "cluster_jewel_retrieval"
+    assert routed["route_reason"] == "cluster_jewel_specialized"
+
+
+def test_prediction_records_canonicalize_split_family_labels() -> None:
+    rows = [
+        {
+            "category": "ring",
+            "family": "ring",
+            "normalized_price_chaos": 10.0,
+        },
+        {
+            "category": "cluster_jewel",
+            "family": "cluster_jewel",
+            "normalized_price_chaos": 20.0,
+        },
+    ]
+
+    records = workflows._prediction_records_from_rows(
+        rows,
+        bundle=None,
+        reference_price=5.0,
+    )
+
+    assert records[0]["family"] == "other"
+    assert records[1]["family"] == "cluster_jewel"

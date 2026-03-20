@@ -15,6 +15,7 @@ class BackendUnavailable(RuntimeError):
 
 
 _MIRAGE_ROLLOUT_LEAGUE = "Mirage"
+_AUTOMATION_DATASET_TABLE = "poe_trade.ml_price_dataset_v2"
 
 
 def contract_payload(settings: Settings) -> dict[str, Any]:
@@ -282,13 +283,26 @@ def fetch_automation_history(
             ]
         ),
     )
+    route_run_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT run_id, route, sum(sample_count) AS sample_count, avg(mdape) AS avg_mdape, avg(interval_80_coverage) AS avg_cov, max(recorded_at) AS recorded_at",
+                "FROM poe_trade.ml_route_eval_v1",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY run_id, route",
+                "ORDER BY recorded_at DESC, route ASC",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
     dataset_route_rows = _query_rows(
         client,
         " ".join(
             [
-                "WITH multiIf(category IN ('essence','fossil','scarab','map','logbook'), 'fungible_reference', ifNull(rarity, '') = 'Unique', 'structured_boosted', ifNull(rarity, '') = 'Rare' OR category = 'cluster_jewel', 'sparse_retrieval', 'fallback_abstain') AS route",
+                "WITH multiIf(category IN ('essence','fossil','scarab','logbook'), 'fungible_reference', ifNull(rarity, '') = 'Unique', 'structured_boosted', category = 'cluster_jewel', 'cluster_jewel_retrieval', ifNull(rarity, '') = 'Rare', 'sparse_retrieval', 'fallback_abstain') AS route",
                 "SELECT route, count() AS rows",
-                "FROM poe_trade.ml_price_dataset_v1",
+                f"FROM {_AUTOMATION_DATASET_TABLE}",
                 f"WHERE league = {_quote(league)}",
                 "GROUP BY route",
                 "ORDER BY rows DESC, route ASC",
@@ -301,7 +315,7 @@ def fetch_automation_history(
         " ".join(
             [
                 "SELECT count() AS total_rows, uniqExact(base_type) AS base_type_count",
-                "FROM poe_trade.ml_price_dataset_v1",
+                f"FROM {_AUTOMATION_DATASET_TABLE}",
                 f"WHERE league = {_quote(league)}",
                 "FORMAT JSONEachRow",
             ]
@@ -362,6 +376,43 @@ def fetch_automation_history(
         }
         for row in route_rows
     ]
+    run_by_id: dict[str, dict[str, Any]] = {}
+    for row in history:
+        run_id = _opt_str(row.get("runId") or row.get("run_id")) or ""
+        eval_run_id = _opt_str(row.get("evalRunId") or row.get("eval_run_id")) or ""
+        if run_id:
+            run_by_id[run_id] = row
+        if eval_run_id:
+            run_by_id[eval_run_id] = row
+    per_model_history = [
+        {
+            "runId": _opt_str(row.get("run_id")),
+            "route": _opt_str(row.get("route")),
+            "activeModelVersion": _opt_model_version(
+                (run_by_id.get(_opt_str(row.get("run_id")) or "") or {}).get(
+                    "activeModelVersion"
+                )
+            ),
+            "rowsProcessed": _opt_int(
+                (run_by_id.get(_opt_str(row.get("run_id")) or "") or {}).get(
+                    "rowsProcessed"
+                )
+            ),
+            "sampleCount": _opt_int(row.get("sample_count")),
+            "avgMdape": _opt_float(row.get("avg_mdape")),
+            "avgIntervalCoverage": _opt_float(row.get("avg_cov")),
+            "recordedAt": _as_iso_utc(row.get("recorded_at")),
+        }
+        for row in route_run_rows
+        if _opt_str(row.get("run_id"))
+    ]
+    latest_per_model: dict[str, dict[str, Any]] = {}
+    for row in per_model_history:
+        route = _opt_str(row.get("route")) or "unknown"
+        if route in latest_per_model:
+            continue
+        latest_per_model[route] = row
+    model_metrics = list(latest_per_model.values())
 
     total_rows = (
         _opt_int((dataset_totals[0] if dataset_totals else {}).get("total_rows")) or 0
@@ -428,6 +479,8 @@ def fetch_automation_history(
         "qualityTrend": quality_trend,
         "trainingCadence": _training_cadence_series(history),
         "routeMetrics": route_metrics,
+        "modelMetrics": model_metrics,
+        "modelHistory": per_model_history,
         "datasetCoverage": {
             "totalRows": total_rows,
             "supportedRows": supported_rows,

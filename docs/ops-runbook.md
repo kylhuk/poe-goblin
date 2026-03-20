@@ -5,7 +5,7 @@
 - If `POE_ENABLE_CXAPI=true`, also confirm `POE_OAUTH_SCOPE` includes `service:cxapi` before starting the daemon.
 - Run `docker compose config` to validate the clickhouse + schema_migrator + market_harvester topology.
 - `make up` to build and launch ClickHouse, schema_migrator, and market_harvester.
-- `poe-migrate --status` before starting the collectors to guarantee no pending schema changes, then run `poe-migrate --apply` once ClickHouse is healthy.
+- `poe-migrate --status` before starting the collectors to guarantee no pending schema changes, then run `poe-migrate --apply` once ClickHouse is healthy. Keep the new migration `schema/migrations/0044_poeninja_serving_profile_table_v1.sql` up to date so the serving profile table is created next time this workflow runs.
 - After services start, `docker compose exec clickhouse clickhouse-client --query "SELECT 1"` to verify connectivity, and check `poe_ingest_status` for the newest `market_harvester` heartbeats.
 
 ## Monitoring & SLOs
@@ -27,6 +27,40 @@
 - `v_slo_metrics.ingest_latency_seconds` and `v_slo_metrics.alert_latency_seconds` drive the penalty tiles; any measurement above the 60s/30s targets should be treated as a service-level loss of availability.
 - The `PoeNinjaSnapshotScheduler` caches responses for up to 180 seconds; if a league stays in `stale=true` territory for longer, trigger the fallback drill described in `docs/evidence/ops-automation/README.md`.
 - Alert when `poe_trade.poe_ingest_status` shows `status` containing `rate_limited` for more than a minute—use that as a cue to inspect `poe_trade.bronze_requests` rather than hammering the API.
+
+## PoeNinja steady-state pipeline
+- `poeninja_snapshot` now writes raw PoeNinja snapshots for incremental ClickHouse derivation; it no longer rebuilds the ML dataset in the default service loop.
+- Confirm steady-state mode from `.sisyphus/state/poeninja_snapshot-last-run.json`; `snapshot_mode` should be `steady_state_snapshot_only` and `downstream_rebuild_triggered` should be `false` unless you explicitly ran a backfill.
+- Verify raw snapshot freshness with `clickhouse-client --query "SELECT count(), max(sample_time_utc) FROM poe_trade.raw_poeninja_currency_overview WHERE league='Mirage'"`.
+- Verify incremental FX freshness with `clickhouse-client --query "SELECT count(), max(hour_ts) FROM poe_trade.ml_fx_hour_v2 WHERE league='Mirage'"`.
+- Verify incremental dataset growth with `clickhouse-client --query "SELECT count(), max(as_of_ts) FROM poe_trade.ml_price_dataset_v2 WHERE league='Mirage'"`.
+- Use `poe-ledger-cli service --name poeninja_snapshot -- --once --league Mirage --full-rebuild-backfill` only for explicit repair/backfill work; this is not the steady-state path.
+
+## Mod-rollup governance (32GB shared host)
+- Baseline evidence must exist at `.sisyphus/evidence/task-1-baseline-shared-host.json` before any rollup cutover decision.
+- Shadow parity evidence must exist at `.sisyphus/evidence/task-5-shadow-read.json`; strict-order diagnostics can be inspected at `.sisyphus/evidence/task-5-shadow-read-strict.json`.
+- Fallback readiness evidence must exist at `.sisyphus/evidence/task-6-fallback-pass.json` and `.sisyphus/evidence/task-6-fallback-error.log`.
+- Active ClickHouse guardrails for `poe_ingest` are verified from `.sisyphus/evidence/task-7-settings-active.txt` and must show `max_memory_usage=1610612736`, `max_threads=4`, `max_execution_time=180`, `max_bytes_before_external_group_by=268435456`, `max_bytes_before_external_sort=268435456`.
+- Parity contract invariants now live in `poe_trade.qa_parity_contract`; run `PYTHONPATH=. python3 scripts/verify_parity_contract.py --output .sisyphus/evidence/task-1-parity-contract.json` to lock the documented keys/modes before cutover.
+- Cutover gate file is `.sisyphus/evidence/task-10-cutover-gate.json`; rollout is blocked unless `cutover_approved=true`.
+
+### Cutover command sequence
+- `POE_CLICKHOUSE_URL=http://localhost:8123 POE_CLICKHOUSE_USER=default POE_CLICKHOUSE_PASSWORD='' PYTHONPATH=. .venv/bin/python -m poe_trade.db.migrations --status --dry-run`
+- `PYTHONPATH=. python3 scripts/compare_mod_feature_paths.py --league Mirage --page-size 5000 --comparison-mode strict --output .sisyphus/evidence/task-3-dual-read-baseline.json`
+- `PYTHONPATH=. python3 scripts/verify_mod_rollup_rollback.py --output .sisyphus/evidence/task-9-rollback-ready.json`
+- `PYTHONPATH=. python3 scripts/evaluate_cutover_gate.py --baseline .sisyphus/evidence/task-1-baseline-shared-host.json --candidate .sisyphus/evidence/task-8-final-benchmark.json --shadow .sisyphus/evidence/task-5-shadow-read-strict.json --fallback .sisyphus/evidence/task-6-fallback-pass.json --settings .sisyphus/evidence/task-7-settings-active.txt --user-config config/clickhouse/users/poe.xml --output .sisyphus/evidence/task-10-cutover-gate.json`
+
+### Cutover thresholds
+- `parity_mismatch_count == 0`
+- `candidate_memory_mean <= 1610612736`
+- `read_bytes_reduction >= 0.30`
+- `duration_reduction >= 0.20`
+
+### Fallback and rollback trigger
+- Trigger immediate fallback when any cutover threshold fails or when `.sisyphus/evidence/task-10-cutover-gate.json` contains `cutover_approved=false`.
+- Force legacy bounded path by exporting `POE_ML_MOD_ROLLUP_FORCE_LEGACY=true` and keeping `POE_ML_MOD_FEATURE_FALLBACK_PAGE_SIZE_CAP=1000`.
+- Disable rollup primary mode by exporting `POE_ML_MOD_ROLLUP_PRIMARY_ENABLED=false`.
+- Re-verify rollback readiness with `PYTHONPATH=. python3 scripts/verify_mod_rollup_rollback.py --output .sisyphus/evidence/task-9-rollback-ready.json`.
 
 ## Reference commands
 - `curl -i http://127.0.0.1:8080/healthz` for unauthenticated API health checks.
@@ -51,3 +85,11 @@
 - `poe-migrate --dry-run --apply` for migrations; the runner stores state in `poe_trade.poe_schema_migrations`, so reruns are safe.
 - `clickhouse-client --query "SELECT * FROM poe_trade.bronze_ingest_checkpoints ORDER BY retrieved_at DESC LIMIT 5"` for the freshest checkpoint metadata.
 - `clickhouse-client --query "SELECT status, count() FROM poe_trade.research_backtest_summary GROUP BY status ORDER BY status"` to verify typed backtest summary outcomes.
+
+## Mod-rollup backfill and cutover runbook
+- Chunked backfill: `PYTHONPATH=. python3 scripts/run_mod_feature_backfill.py --run-id <run-id> --league Mirage --chunk-size 5000` drives `ml_item_mod_feature_states_v1` in bounded offsets while checkpoint rows track chunk progress.
+- Monitor progress and resumable recovery: `PYTHONPATH=. python3 scripts/monitor_mod_feature_backfill.py --run-id <run-id>` prints completed/running/failed chunk counts and, with `--auto-resume`, re-invokes the runner from the first stuck chunk.
+- Guardrail proof: `PYTHONPATH=. python3 scripts/check_mod_feature_settings.py` writes `.sisyphus/evidence/task-7-settings-active.txt` that must show `ml_heavy` values `max_memory_usage=1610612736`, `max_threads=4`, `max_execution_time=180`, `max_bytes_before_external_group_by=268435456`, and `max_bytes_before_external_sort=268435456` while `config/clickhouse/users/poe.xml` keeps `<max_concurrent_queries>1</max_concurrent_queries>`.
+- Rollback checklist: `PYTHONPATH=. python3 scripts/verify_mod_rollup_rollback.py --output .sisyphus/evidence/task-9-rollback-ready.json` verifies required migrations, shadow evidence, fallback proof, and helper scripts before cutover.
+- Cutover gate command: `PYTHONPATH=. python3 scripts/evaluate_cutover_gate.py --candidate <candidate-metrics.json> --baseline .sisyphus/evidence/task-1-baseline-shared-host.json --shadow .sisyphus/evidence/task-5-shadow-read-strict.json --fallback .sisyphus/evidence/task-6-fallback-pass.json --settings .sisyphus/evidence/task-7-settings-active.txt --output .sisyphus/evidence/task-10-cutover-gate.json` enforces zero mismatches, <=1.5 GiB p95 memory, >=30% read-bytes reduction, >=20% p95 duration drop, strict shadow mode, and guardrail compliance.
+- Final release decision: `PYTHONPATH=. python3 scripts/final_release_gate.py --cutover-gate .sisyphus/evidence/task-10-cutover-gate.json --rollback-ready .sisyphus/evidence/task-9-rollback-ready.json --runbook-check .sisyphus/evidence/task-11-runbook-check.txt --parity-log .sisyphus/evidence/task-2-parity-order.log --service-regression-log .sisyphus/evidence/task-8-cadence.log --output .sisyphus/evidence/task-12-final-release-gate.json` summarizes parity, memory, rollback, and documentation readiness into a single approve/reject artifact.

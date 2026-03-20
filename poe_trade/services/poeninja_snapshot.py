@@ -1,5 +1,3 @@
-"""ML data pipeline service - FX snapshots and dataset rebuild."""
-
 from __future__ import annotations
 
 import argparse
@@ -17,6 +15,7 @@ from ..ml import workflows as ml_workflows
 
 LOGGER = logging.getLogger(__name__)
 SERVICE_NAME = "poeninja_snapshot"
+MIN_REBUILD_INTERVAL_SECONDS = 1800
 
 
 def _configure_logging() -> None:
@@ -27,27 +26,10 @@ def _configure_logging() -> None:
     )
 
 
-def _load_previous_rebuild_window_id(status_file: Path, *, league: str) -> str:
-    if not status_file.exists():
-        return ""
-    try:
-        payload = json.loads(status_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
-    if not isinstance(payload, dict):
-        return ""
-    if str(payload.get("league") or "") != league:
-        return ""
-    rebuild_window = payload.get("rebuild_window")
-    if not isinstance(rebuild_window, dict):
-        return ""
-    return str(rebuild_window.get("window_id") or "")
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog=SERVICE_NAME,
-        description="Orchestrate ML data pipeline: FX snapshots and dataset rebuild",
+        description="Ingest PoeNinja raw snapshot data for incremental derivation",
     )
     parser.add_argument(
         "--league",
@@ -80,8 +62,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--model-dir",
-        default="artifacts/ml/mirage_v1",
-        help="Model directory (default: artifacts/ml/mirage_v1)",
+        default="artifacts/ml/mirage_v2",
+        help="Model directory (default: artifacts/ml/mirage_v2)",
     )
     parser.add_argument(
         "--interval-seconds",
@@ -92,6 +74,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--once",
         action="store_true",
         help="Run one pipeline cycle and exit",
+    )
+    parser.add_argument(
+        "--full-rebuild-backfill",
+        action="store_true",
+        help=(
+            "Run explicit downstream full rebuild work after snapshot ingest "
+            "(not used in steady-state mode)"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -119,6 +109,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     interval = args.interval_seconds or getattr(
         cfg, "poe_ml_dataset_rebuild_interval_seconds", 900
     )
+    if not args.once and interval < MIN_REBUILD_INTERVAL_SECONDS:
+        LOGGER.warning(
+            "%s interval %ss below floor %ss; clamping",
+            SERVICE_NAME,
+            interval,
+            MIN_REBUILD_INTERVAL_SECONDS,
+        )
+        interval = MIN_REBUILD_INTERVAL_SECONDS
 
     LOGGER.info(
         "%s starting league=%s once=%s interval=%ss",
@@ -140,10 +138,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         while True:
             start_time = time.time()
             LOGGER.info("%s: Starting pipeline cycle", SERVICE_NAME)
-            previous_rebuild_window_id = _load_previous_rebuild_window_id(
-                status_file,
-                league=league,
-            )
 
             # Step 1: Snapshot PoeNinja currency data
             LOGGER.info("Step 1: Snapshot PoeNinja currency")
@@ -155,121 +149,75 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             snapshot_rows = snapshot_result.get("rows_written", 0)
             LOGGER.info("Snapshot complete: %d rows", snapshot_rows)
+            fx_rows = 0
+            labels_rows = 0
+            events_rows = 0
+            dataset_rows = 0
+            comps_rows = 0
+            serving_profile_rows = 0
+            serving_profile_as_of_ts = ""
+            rebuild_window: dict[str, object] = {}
+            previous_rebuild_window_id = ""
+            rebuild_skipped = True
+            rebuild_skip_reason = "steady_state_snapshot_only"
+            pipeline_mode = "steady_state_snapshot_only"
+            downstream_rebuild_triggered = False
 
-            # Step 2: Build FX rates
-            LOGGER.info("Step 2: Build FX rates")
-            fx_result = ml_workflows.build_fx(
-                ck_client,
-                league=league,
-                output_table=args.fx_table,
-                snapshot_table=args.snapshot_table,
-            )
-            fx_rows = fx_result.get("rows_written", 0)
-            LOGGER.info("FX built: %d rows", fx_rows)
-
-            # Step 3: Normalize prices
-            LOGGER.info("Step 3: Normalize prices")
-            labels_result = ml_workflows.normalize_prices(
-                ck_client,
-                league=league,
-                output_table=args.labels_table,
-                fx_table=args.fx_table,
-            )
-            labels_rows = labels_result.get("rows_written", 0)
-            LOGGER.info("Normalization complete: %d rows", labels_rows)
-
-            rebuild_window = ml_workflows.dataset_rebuild_window(
-                ck_client,
-                league=league,
-                labels_table=args.labels_table,
-            )
-            if not isinstance(rebuild_window, dict):
-                rebuild_window = {}
-            current_rebuild_window_id = str(rebuild_window.get("window_id") or "")
-            rebuild_skipped = bool(
-                previous_rebuild_window_id
-                and current_rebuild_window_id
-                and previous_rebuild_window_id == current_rebuild_window_id
-            )
-            rebuild_skip_reason = ""
-
-            if rebuild_skipped:
-                rebuild_skip_reason = "unchanged_snapshot_window"
+            if args.full_rebuild_backfill:
                 LOGGER.info(
-                    "Step 4-6: Skipping listing events/dataset/comps rebuild "
-                    "reason=%s window_id=%s",
-                    rebuild_skip_reason,
-                    current_rebuild_window_id,
+                    "Step 2: Running explicit full rebuild backfill after snapshot ingest"
                 )
-                events_rows = 0
-                dataset_rows = 0
-                comps_rows = 0
-            else:
-                if previous_rebuild_window_id and current_rebuild_window_id:
-                    LOGGER.info(
-                        "Snapshot window changed; rebuilding downstream tables "
-                        "previous_window_id=%s current_window_id=%s",
-                        previous_rebuild_window_id,
-                        current_rebuild_window_id,
-                    )
-                else:
-                    LOGGER.info(
-                        "Snapshot window baseline unavailable; rebuilding downstream tables"
-                    )
-
-                # Step 4: Build listing events and labels
-                LOGGER.info("Step 4: Build listing events and labels")
-                events_result = ml_workflows.build_listing_events_and_labels(
+                backfill_result = ml_workflows.run_full_snapshot_rebuild_backfill(
                     ck_client,
                     league=league,
-                )
-                events_rows = events_result.get(
-                    "rows_written",
-                    events_result.get("listing_rows", 0),
-                )
-                LOGGER.info("Events built: %d rows", events_rows)
-
-                # Step 5: Build dataset
-                LOGGER.info("Step 5: Build dataset")
-                as_of_ts = datetime.now(UTC).isoformat()
-                dataset_result = ml_workflows.build_dataset(
-                    ck_client,
-                    league=league,
-                    as_of_ts=as_of_ts,
-                    output_table=args.dataset_table,
-                )
-                dataset_rows = dataset_result.get("rows_written", 0)
-                LOGGER.info("Dataset built: %d rows", dataset_rows)
-
-                # Step 6: Build comps (optional)
-                LOGGER.info("Step 6: Build comps")
-                comps_result = ml_workflows.build_comps(
-                    ck_client,
-                    league=league,
+                    snapshot_table=args.snapshot_table,
+                    fx_table=args.fx_table,
+                    labels_table=args.labels_table,
                     dataset_table=args.dataset_table,
-                    output_table=args.comps_table,
+                    comps_table=args.comps_table,
                 )
-                comps_rows = comps_result.get("rows_written", 0)
-                LOGGER.info("Comps built: %d rows", comps_rows)
-
-            LOGGER.info("Step 7: Refresh serving profile aggregates")
-            serving_profile_result = ml_workflows.build_serving_profile(
-                ck_client,
-                league=league,
-                dataset_table=args.dataset_table,
-                snapshot_window_id=current_rebuild_window_id,
-            )
-            serving_profile_rows = serving_profile_result.get("rows_written", 0)
-            serving_profile_as_of_ts = serving_profile_result.get(
-                "profile_as_of_ts", ""
-            )
-            LOGGER.info("Serving profile refreshed: %d rows", serving_profile_rows)
+                fx_rows = int(backfill_result.get("fx_rows") or 0)
+                labels_rows = int(backfill_result.get("labels_rows") or 0)
+                events_rows = int(backfill_result.get("events_rows") or 0)
+                dataset_rows = int(backfill_result.get("dataset_rows") or 0)
+                comps_rows = int(backfill_result.get("comps_rows") or 0)
+                serving_profile_rows = int(backfill_result.get("serving_profile_rows") or 0)
+                serving_profile_as_of_ts = str(
+                    backfill_result.get("serving_profile_as_of_ts") or ""
+                )
+                raw_rebuild_window = backfill_result.get("rebuild_window")
+                if isinstance(raw_rebuild_window, dict):
+                    rebuild_window = raw_rebuild_window
+                rebuild_skipped = False
+                rebuild_skip_reason = ""
+                pipeline_mode = "explicit_full_rebuild_backfill"
+                downstream_rebuild_triggered = True
+            else:
+                LOGGER.info(
+                    "Step 2: Running incremental v2 label repair for FX normalization gaps"
+                )
+                label_repair_result = ml_workflows.repair_incremental_price_labels_v2(
+                    ck_client,
+                    league=league,
+                )
+                labels_rows = int(label_repair_result.get("rows_repaired") or 0)
+                LOGGER.info(
+                    "Step 2: Running incremental v2 dataset repair for MV propagation gaps"
+                )
+                repair_result = ml_workflows.repair_incremental_price_dataset_v2(
+                    ck_client,
+                    league=league,
+                )
+                dataset_rows = int(repair_result.get("rows_repaired") or 0)
 
             # Write status
             elapsed = time.time() - start_time
             status = {
                 "timestamp": datetime.now(UTC).isoformat(),
                 "league": league,
+                "snapshot_mode": pipeline_mode,
+                "downstream_derivation_owner": "clickhouse_v2",
+                "downstream_rebuild_triggered": downstream_rebuild_triggered,
                 "snapshot_rows": snapshot_rows,
                 "fx_rows": fx_rows,
                 "labels_rows": labels_rows,

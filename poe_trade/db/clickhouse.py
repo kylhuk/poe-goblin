@@ -39,7 +39,7 @@ class ClickHouseClient:
     database: str | None = None
     user: str | None = None
     password: str | None = None
-    timeout: float = 30.0
+    timeout: float = 300.0
 
     @classmethod
     def from_env(cls, endpoint: str, database: str | None = None) -> "ClickHouseClient":
@@ -52,7 +52,7 @@ class ClickHouseClient:
             user=os.getenv("POE_CLICKHOUSE_USER") or os.getenv("CH_USER"),
             password=os.getenv("POE_CLICKHOUSE_PASSWORD") or os.getenv("CH_PASSWORD"),
             timeout=float(
-                os.getenv("POE_CLICKHOUSE_TIMEOUT") or os.getenv("CH_TIMEOUT") or "30"
+                os.getenv("POE_CLICKHOUSE_TIMEOUT") or os.getenv("CH_TIMEOUT") or "300"
             ),
         )
 

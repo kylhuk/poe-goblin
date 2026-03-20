@@ -229,3 +229,82 @@ def test_account_stash_account_scope_migration_is_additive() -> None:
     assert "ALTER TABLE poe_trade.raw_account_stash_snapshot" in sql
     assert "ALTER TABLE poe_trade.silver_account_stash_items" in sql
     assert "ADD COLUMN IF NOT EXISTS account_name String DEFAULT ''" in sql
+
+
+def test_mod_feature_stage_mv_migration_defines_materialized_view() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0047_poeninja_mod_feature_stage_mv_v1.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.ml_item_mod_features_sql_stage_v1" in sql
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "poe_trade.mv_ml_item_mod_features_sql_stage_v1" in sql
+    )
+
+
+def test_incremental_v2_migration_defines_side_by_side_pipeline() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0048_ml_pricing_incremental_v2.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.ml_fx_hour_v2" in sql
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "poe_trade.mv_raw_poeninja_to_ml_fx_hour_v2" in sql
+    )
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.ml_price_labels_v2" in sql
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "poe_trade.mv_silver_ps_items_to_price_labels_v2" in sql
+    )
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.ml_price_dataset_v2" in sql
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "poe_trade.mv_price_labels_to_dataset_v2" in sql
+    )
+
+
+def test_incremental_v2_fx_currency_key_fix_migration_rebuilds_price_label_mv() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0049_ml_pricing_v2_fx_currency_key_fix.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "DROP TABLE IF EXISTS poe_trade.mv_silver_ps_items_to_price_labels_v2" in sql
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "poe_trade.mv_silver_ps_items_to_price_labels_v2" in sql
+    )
+    assert "replaceRegexpAll(lowerUTF8(trimBoth(fx.currency))" in sql
+    assert "IN ('div', 'divine', 'divines'), 'divine'" in sql
+
+
+def test_incremental_v2_fx_alias_expansion_migration_maps_common_shorthand() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0050_ml_pricing_v2_fx_currency_alias_expansion.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "IN ('alch', 'alchemy'), 'orb of alchemy'" in sql
+    assert "IN ('gcp', 'gemcutter', 'gemcutters', 'gemcutter''s prism'), 'gemcutter''s prism'" in sql
+    assert "IN ('mirror',), 'mirror of kalandra'" in sql
+    assert "IN ('exa', 'exalt', 'exalted', 'exalts'), 'exalted'" in sql

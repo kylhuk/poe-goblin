@@ -20,6 +20,7 @@ from sklearn.feature_extraction import DictVectorizer
 
 from poe_trade.db import ClickHouseClient
 from poe_trade.db.clickhouse import ClickHouseClientError
+from poe_trade.db.migrations import MigrationRunner
 from poe_trade.ingestion.poeninja_snapshot import PoeNinjaClient
 
 from .audit import VALIDATED_LEAGUES
@@ -37,6 +38,7 @@ ROUTES = (
     "fungible_reference",
     "structured_boosted",
     "sparse_retrieval",
+    "cluster_jewel_retrieval",
     "fallback_abstain",
 )
 
@@ -108,6 +110,10 @@ class WarmupState:
 
 
 _DEFAULT_SERVING_PROFILE_TABLE = "poe_trade.ml_serving_profile_v1"
+_DEFAULT_DATASET_TABLE = "poe_trade.ml_price_dataset_v2"
+_LEGACY_DATASET_TABLE = "poe_trade.ml_price_dataset_v1"
+_DEFAULT_LABELS_TABLE = "poe_trade.ml_price_labels_v2"
+_LEGACY_LABELS_TABLE = "poe_trade.ml_price_labels_v1"
 
 _MOD_FEATURES_CACHE_PATH = Path("/tmp/mod_features_cache.json")
 
@@ -160,12 +166,437 @@ _MOD_FEATURE_RULE_BY_NAME: dict[str, tuple[str, tuple[str, ...], float, float]] 
     rule[0]: rule for rule in _MOD_FEATURE_RULES
 }
 
+_MOD_FEATURE_SQL_EXTRA_SNIPPETS: dict[str, tuple[str, ...]] = {
+    "Strength": ("all attributes",),
+    "Dexterity": ("all attributes",),
+    "Intelligence": ("all attributes",),
+    "AttackSpeed": ("attack and cast speed",),
+    "CastSpeed": ("attack and cast speed",),
+}
+
+
+def _normalize_mod_token_sql(expr: str) -> str:
+    lowered = f"lowerUTF8(trimBoth({expr}))"
+    unescaped = f'replaceAll({lowered}, \'\\"\', \'"\')'
+    unquoted = f'replaceRegexpAll({unescaped}, \'^"|"$\', \'\')'
+    return f"replaceRegexpAll({unquoted}, '\\s+', ' ')"
+
+
+def _primary_numeric_sql(token_expr: str) -> str:
+    first_numeric = (
+        "toFloat64OrZero(extract("
+        + token_expr
+        + ", '(?:^|\\\\s)[+-]?(\\\\d+(?:\\\\.\\\\d+)?)\\\\s*%?'))"
+    )
+    fallback_numeric = (
+        "if(empty(extractAll("
+        + token_expr
+        + ", '\\d+(?:\\\\.\\\\d+)?')), 0., "
+        "arrayReduce('max', arrayMap(x -> toFloat64OrZero(x), "
+        "extractAll("
+        + token_expr
+        + ", '\\d+(?:\\\\.\\\\d+)?'))))"
+    )
+    return f"if({first_numeric} > 0., {first_numeric}, {fallback_numeric})"
+
+
+def _added_damage_numeric_sql(token_expr: str, damage_type: str) -> str:
+    prefix = (
+        "adds\\\\s+(\\\\d+(?:\\\\.\\\\d+)?)\\\\s+to\\\\s+\\\\d+(?:\\\\.\\\\d+)?\\\\s+"
+        + re.escape(damage_type)
+        + "\\\\s+damage"
+    )
+    suffix = (
+        "adds\\\\s+\\\\d+(?:\\\\.\\\\d+)?\\\\s+to\\\\s+(\\\\d+(?:\\\\.\\\\d+)?)\\\\s+"
+        + re.escape(damage_type)
+        + "\\\\s+damage"
+    )
+    return (
+        "greatest(toFloat64OrZero(extract("
+        + token_expr
+        + f", '{prefix}')), toFloat64OrZero(extract({token_expr}, '{suffix}')))"
+    )
+
+
+def _feature_sql_snippets(mod_name: str) -> tuple[str, ...]:
+    base_snippets = _MOD_FEATURE_RULE_BY_NAME[mod_name][1]
+    return base_snippets + _MOD_FEATURE_SQL_EXTRA_SNIPPETS.get(mod_name, ())
+
+
+def _feature_sql_condition(mod_name: str, token_expr: str) -> str:
+    snippets = _feature_sql_snippets(mod_name)
+    return " OR ".join(
+        f"position({token_expr}, {_quote(snippet)}) > 0" for snippet in snippets
+    )
+
+
+def _all_feature_sql_snippets() -> tuple[str, ...]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for mod_name, *_rest in _MOD_FEATURE_RULES:
+        for snippet in _feature_sql_snippets(mod_name):
+            if snippet in seen:
+                continue
+            seen.add(snippet)
+            ordered.append(snippet)
+    return tuple(ordered)
+
+
+def _feature_sql_value_alias(mod_name: str) -> str:
+    return f"{mod_name.lower()}_value"
+
+
+def _feature_sql_numeric_source(mod_name: str) -> str:
+    if mod_name == "PhysicalDamage":
+        return "if(physical_added_value > 0., physical_added_value, primary_numeric)"
+    if mod_name == "FireDamage":
+        return "if(fire_added_value > 0., fire_added_value, primary_numeric)"
+    if mod_name == "ColdDamage":
+        return "if(cold_added_value > 0., cold_added_value, primary_numeric)"
+    if mod_name == "LightningDamage":
+        return "if(lightning_added_value > 0., lightning_added_value, primary_numeric)"
+    if mod_name == "ChaosDamage":
+        return "if(chaos_added_value > 0., chaos_added_value, primary_numeric)"
+    return "primary_numeric"
+
+
+def _feature_sql_key_array(mod_name: str) -> str:
+    alias = _feature_sql_value_alias(mod_name)
+    return f"if({alias} > 0., ['{mod_name}_tier', '{mod_name}_roll'], [])"
+
+
+def _feature_sql_value_array(mod_name: str) -> str:
+    alias = _feature_sql_value_alias(mod_name)
+    _, _, tier_divisor, roll_divisor = _MOD_FEATURE_RULE_BY_NAME[mod_name]
+    return (
+        f"if({alias} > 0., ["
+        f"toFloat64(greatest(1, least(10, ceil({alias} / {max(tier_divisor, 1.0)})))), "
+        f"round(greatest(0., least(1., {alias} / {max(roll_divisor, 1.0)})), 4)"
+        "], [])"
+    )
+
+
+def _feature_sql_value_columns() -> tuple[str, ...]:
+    return tuple(
+        _feature_sql_value_alias(mod_name) for mod_name, *_rest in _MOD_FEATURE_RULES
+    )
+
+
+def _build_sql_mod_feature_stage_query(*, league: str, hour_ts: str | None = None) -> str:
+    token_expr = _normalize_mod_token_sql("mod_token")
+    primary_numeric_expr = _primary_numeric_sql("token")
+    prefilter_condition = " OR ".join(
+        f"position(token, {_quote(snippet)}) > 0"
+        for snippet in _all_feature_sql_snippets()
+    )
+    aggregate_fields = [
+        f"maxIf({_feature_sql_numeric_source(mod_name)}, {_feature_sql_condition(mod_name, 'token')}) AS {_feature_sql_value_alias(mod_name)}"
+        for mod_name, *_rest in _MOD_FEATURE_RULES
+    ]
+    where_clauses = [f"league = {_quote(league)}"]
+    if hour_ts:
+        where_clauses.append(
+            "toStartOfHour(as_of_ts) = "
+            + f"toDateTime64({_quote(hour_ts)}, 3, 'UTC')"
+        )
+    return " ".join(
+        [
+            "SELECT",
+            "league,",
+            "item_id,",
+            "toStartOfHour(max(as_of_ts)) AS hour_ts,",
+            "count() AS mod_count,",
+            "max(as_of_ts) AS max_as_of_ts,",
+            ", ".join(aggregate_fields),
+            "FROM (",
+            "SELECT",
+            "league,",
+            "item_id,",
+            "as_of_ts,",
+            f"{primary_numeric_expr} AS primary_numeric,",
+            f"{_added_damage_numeric_sql('token', 'physical')} AS physical_added_value,",
+            f"{_added_damage_numeric_sql('token', 'fire')} AS fire_added_value,",
+            f"{_added_damage_numeric_sql('token', 'cold')} AS cold_added_value,",
+            f"{_added_damage_numeric_sql('token', 'lightning')} AS lightning_added_value,",
+            f"{_added_damage_numeric_sql('token', 'chaos')} AS chaos_added_value,",
+            "token",
+            "FROM (",
+            "SELECT",
+            "league,",
+            "item_id,",
+            "as_of_ts,",
+            f"{token_expr} AS token",
+            "FROM poe_trade.ml_item_mod_tokens_v1",
+            "WHERE " + " AND ".join(where_clauses),
+            ")",
+            f"WHERE {prefilter_condition}",
+            ")",
+            "GROUP BY league, item_id",
+        ]
+    )
+
+
+def _build_sql_mod_feature_finalize_query(*, league: str) -> str:
+    key_arrays = ", ".join(
+        _feature_sql_key_array(mod_name) for mod_name, *_rest in _MOD_FEATURE_RULES
+    )
+    value_arrays = ", ".join(
+        _feature_sql_value_array(mod_name) for mod_name, *_rest in _MOD_FEATURE_RULES
+    )
+    rollup_fields = [
+        f"max({_feature_sql_value_alias(mod_name)}) AS {_feature_sql_value_alias(mod_name)}"
+        for mod_name, *_rest in _MOD_FEATURE_RULES
+    ]
+    return " ".join(
+        [
+            "INSERT INTO poe_trade.ml_item_mod_features_v1",
+            "SELECT",
+            "league,",
+            "item_id,",
+            f"toJSONString(mapFromArrays(arrayConcat({key_arrays}), arrayConcat({value_arrays}))) AS mod_features_json,",
+            "toUInt8(least(mod_count, 255)) AS mod_count,",
+            "max_as_of_ts AS as_of_ts,",
+            "now64(3) AS updated_at",
+            "FROM (",
+            "SELECT",
+            "league,",
+            "item_id,",
+            "sum(mod_count) AS mod_count,",
+            "max(max_as_of_ts) AS max_as_of_ts,",
+            ", ".join(rollup_fields),
+            "FROM poe_trade.ml_item_mod_features_sql_stage_v1",
+            f"WHERE league = {_quote(league)}",
+            "GROUP BY league, item_id",
+            ")",
+        ]
+    )
+
+
+def _ensure_mod_feature_sql_stage_table(client: ClickHouseClient) -> None:
+    column_defs = ", ".join(f"{name} Float64" for name in _feature_sql_value_columns())
+    client.execute(
+        " ".join(
+            [
+                "CREATE TABLE IF NOT EXISTS poe_trade.ml_item_mod_features_sql_stage_v1(",
+                "league String,",
+                "item_id String,",
+                "mod_count UInt64,",
+                "max_as_of_ts DateTime64(3, 'UTC'),",
+                f"{column_defs}",
+                ") ENGINE=MergeTree() ORDER BY (league, item_id, max_as_of_ts)",
+            ]
+        )
+    )
+    mv_sql = _read_mod_feature_stage_mv_sql()
+    if mv_sql:
+        client.execute(mv_sql)
+
+
+def _read_mod_feature_stage_mv_sql() -> str:
+    migration_path = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0047_poeninja_mod_feature_stage_mv_v1.sql"
+    )
+    if not migration_path.exists():
+        return ""
+    sql = migration_path.read_text(encoding="utf-8")
+    statements = MigrationRunner._split_sql_statements(sql)
+    for statement in statements:
+        if "CREATE MATERIALIZED VIEW IF NOT EXISTS poe_trade.mv_ml_item_mod_features_sql_stage_v1" in statement:
+            return statement
+    return ""
+
+
+def _build_sql_mod_feature_insert_query(*, league: str) -> str:
+    token_expr = _normalize_mod_token_sql("mod_token")
+    primary_numeric_expr = _primary_numeric_sql("token")
+    prefilter_condition = " OR ".join(
+        f"position(token, {_quote(snippet)}) > 0"
+        for snippet in _all_feature_sql_snippets()
+    )
+    aggregate_fields = [
+        f"maxIf({_feature_sql_numeric_source(mod_name)}, {_feature_sql_condition(mod_name, 'token')}) AS {_feature_sql_value_alias(mod_name)}"
+        for mod_name, *_rest in _MOD_FEATURE_RULES
+    ]
+    key_arrays = ", ".join(
+        _feature_sql_key_array(mod_name) for mod_name, *_rest in _MOD_FEATURE_RULES
+    )
+    value_arrays = ", ".join(
+        _feature_sql_value_array(mod_name) for mod_name, *_rest in _MOD_FEATURE_RULES
+    )
+    feature_keys_sql = f"arrayConcat({key_arrays})"
+    feature_values_sql = f"arrayConcat({value_arrays})"
+    return " ".join(
+        [
+            "INSERT INTO poe_trade.ml_item_mod_features_v1",
+            "SELECT",
+            "league,",
+            "item_id,",
+            "toJSONString(mapFromArrays(feature_keys, feature_values)) AS mod_features_json,",
+            "toUInt8(least(mod_count, 255)) AS mod_count,",
+            "max_as_of_ts AS as_of_ts,",
+            "now64(3) AS updated_at",
+            "FROM (",
+            "SELECT",
+            "league,",
+            "item_id,",
+            "mod_count,",
+            "max_as_of_ts,",
+            f"{feature_keys_sql} AS feature_keys,",
+            f"{feature_values_sql} AS feature_values",
+            "FROM (",
+            "SELECT",
+            "league,",
+            "item_id,",
+            "count() AS mod_count,",
+            "max(as_of_ts) AS max_as_of_ts,",
+            ", ".join(aggregate_fields),
+            "FROM (",
+            "SELECT",
+            "league,",
+            "item_id,",
+            "as_of_ts,",
+            f"{primary_numeric_expr} AS primary_numeric,",
+            f"{_added_damage_numeric_sql('token', 'physical')} AS physical_added_value,",
+            f"{_added_damage_numeric_sql('token', 'fire')} AS fire_added_value,",
+            f"{_added_damage_numeric_sql('token', 'cold')} AS cold_added_value,",
+            f"{_added_damage_numeric_sql('token', 'lightning')} AS lightning_added_value,",
+            f"{_added_damage_numeric_sql('token', 'chaos')} AS chaos_added_value,",
+            "token",
+            "FROM (",
+            "SELECT",
+            "league,",
+            "item_id,",
+            "as_of_ts,",
+            f"{token_expr} AS token",
+            "FROM poe_trade.ml_item_mod_tokens_v1",
+            f"WHERE league = {_quote(league)}",
+            ")",
+            f"WHERE {prefilter_condition}",
+            ")",
+            "GROUP BY league, item_id",
+            ")",
+            ")",
+        ]
+    )
+
+
+def _mod_feature_sql_query_settings() -> dict[str, str]:
+    return {
+        "max_memory_usage": str(
+            max(1, _env_int("POE_ML_MOD_FEATURE_SQL_MAX_MEMORY_USAGE", 1610612736))
+        ),
+        "max_threads": str(max(1, _env_int("POE_ML_MOD_FEATURE_SQL_MAX_THREADS", 4))),
+        "max_block_size": str(max(1, _env_int("POE_ML_MOD_FEATURE_SQL_MAX_BLOCK_SIZE", 2048))),
+        "optimize_aggregation_in_order": "1",
+        "max_execution_time": str(
+            max(1, _env_int("POE_ML_MOD_FEATURE_SQL_MAX_EXECUTION_TIME", 180))
+        ),
+        "max_bytes_before_external_group_by": str(
+            max(
+                1,
+                _env_int(
+                    "POE_ML_MOD_FEATURE_SQL_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY",
+                    268435456,
+                ),
+            )
+        ),
+        "max_bytes_before_external_sort": str(
+            max(
+                1,
+                _env_int(
+                    "POE_ML_MOD_FEATURE_SQL_MAX_BYTES_BEFORE_EXTERNAL_SORT",
+                    268435456,
+                ),
+            )
+        ),
+    }
+
+
+def _populate_item_mod_features_from_tokens_sql(
+    client: ClickHouseClient,
+    *,
+    league: str,
+) -> dict[str, Any]:
+    _ensure_mod_feature_table(client)
+    _ensure_mod_feature_sql_stage_table(client)
+    client.execute(
+        " ".join(
+            [
+                "ALTER TABLE poe_trade.ml_item_mod_features_v1",
+                f"DELETE WHERE league = {_quote(league)}",
+                "SETTINGS mutations_sync = 2",
+            ]
+        )
+    )
+    try:
+        client.execute(
+            _build_sql_mod_feature_finalize_query(league=league),
+            settings=_mod_feature_sql_query_settings(),
+        )
+    except TypeError:
+        client.execute(_build_sql_mod_feature_finalize_query(league=league))
+    rows_written = _scalar_count(
+        client,
+        " ".join(
+            [
+                "SELECT count() AS value",
+                "FROM poe_trade.ml_item_mod_features_v1",
+                f"WHERE league = {_quote(league)}",
+            ]
+        ),
+    )
+    non_empty_rows = _scalar_count(
+        client,
+        " ".join(
+            [
+                "SELECT count() AS value",
+                "FROM poe_trade.ml_item_mod_features_v1",
+                f"WHERE league = {_quote(league)}",
+                "AND mod_features_json != '{}'",
+            ]
+        ),
+    )
+    return {
+        "rows_written": rows_written,
+        "non_empty_rows": non_empty_rows,
+        "mode": "sql_primary",
+    }
+
+
+def _populate_item_mod_features(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    page_size: int = _MOD_FEATURE_BATCH_SIZE,
+) -> dict[str, Any]:
+    if _env_bool("POE_ML_MOD_ROLLUP_FORCE_LEGACY", False):
+        result = _populate_item_mod_features_from_tokens(
+            client,
+            league=league,
+            page_size=page_size,
+        )
+        result.setdefault("mode", "legacy_fallback")
+        return result
+    if _env_bool("POE_ML_MOD_FEATURE_SQL_PRIMARY_ENABLED", True):
+        return _populate_item_mod_features_from_tokens_sql(client, league=league)
+    result = _populate_item_mod_features_from_tokens(
+        client,
+        league=league,
+        page_size=page_size,
+    )
+    result.setdefault("mode", "legacy_disabled_sql")
+    return result
+
 
 def discover_mod_features(
     client: ClickHouseClient | None = None,
     *,
     league: str = "Mirage",
     min_frequency: int = 100,
+    dataset_table: str = _DEFAULT_DATASET_TABLE,
     use_cache: bool = True,
 ) -> list[str]:
     """
@@ -206,7 +637,7 @@ def discover_mod_features(
         SELECT
           arrayJoin(JSONExtractKeys(mod_features_json)) as feature_key,
           count() as feature_count
-        FROM poe_trade.ml_price_dataset_v1
+        FROM {dataset_table}
         WHERE league = {_quote(league)} AND mod_features_json != '{{}}'
         GROUP BY feature_key
         HAVING feature_count >= {min_frequency}
@@ -287,12 +718,14 @@ def initialize_mod_features(
     *,
     league: str = "Mirage",
     min_frequency: int = 100,
+    dataset_table: str = _DEFAULT_DATASET_TABLE,
 ) -> None:
     global _discovered_mod_features, MODEL_FEATURE_FIELDS
     discovered = discover_mod_features(
         client,
         league=league,
         min_frequency=min_frequency,
+        dataset_table=dataset_table,
         use_cache=True,
     )
     _discovered_mod_features = discovered
@@ -597,6 +1030,7 @@ def build_dataset(
 
     client.execute(f"TRUNCATE TABLE {output_table}")
     client.execute("TRUNCATE TABLE poe_trade.ml_mod_catalog_v1")
+    client.execute("TRUNCATE TABLE poe_trade.ml_item_mod_features_sql_stage_v1")
     client.execute("TRUNCATE TABLE poe_trade.ml_item_mod_tokens_v1")
 
     mod_catalog_sql = " ".join(
@@ -623,8 +1057,8 @@ def build_dataset(
     )
     client.execute(mod_catalog_sql)
 
-    item_tokens_sql = " ".join(
-        [
+    def _item_tokens_insert_sql(hour_ts: str | None = None) -> str:
+        clauses = [
             "INSERT INTO poe_trade.ml_item_mod_tokens_v1",
             "SELECT",
             "ifNull(items.league, '') AS league,",
@@ -642,13 +1076,77 @@ def build_dataset(
             f"WHERE ifNull(items.league, '') = {_quote(league)}",
             f"AND items.observed_at <= toDateTime64({_quote(as_of_ch)}, 3, 'UTC')",
         ]
-    )
-    client.execute(item_tokens_sql)
-    mod_feature_result = _populate_item_mod_features_from_tokens(client, league=league)
+        if hour_ts:
+            clauses.append(
+                "AND toStartOfHour(items.observed_at) = "
+                f"toDateTime64({_quote(hour_ts)}, 3, 'UTC')"
+            )
+        return " ".join(clauses)
+
+    item_tokens_query_settings = {
+        "max_memory_usage": str(
+            max(1, _env_int("POE_ML_ITEM_TOKENS_MAX_MEMORY_USAGE", 10147483648))
+        ),
+        "max_threads": str(max(1, _env_int("POE_ML_ITEM_TOKENS_MAX_THREADS", 12))),
+        "max_bytes_before_external_group_by": str(
+            max(
+                1,
+                _env_int(
+                    "POE_ML_ITEM_TOKENS_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY",
+                    1068435456,
+                ),
+            )
+        ),
+        "max_bytes_before_external_sort": str(
+            max(
+                1,
+                _env_int(
+                    "POE_ML_ITEM_TOKENS_MAX_BYTES_BEFORE_EXTERNAL_SORT",
+                    1068435456,
+                ),
+            )
+        ),
+        "materialized_views_ignore_errors": "1"
+        if _env_bool("POE_ML_ITEM_TOKENS_IGNORE_MV_ERRORS", True)
+        else "0",
+    }
+    chunk_by_hour = _env_bool("POE_ML_ITEM_TOKENS_CHUNK_BY_HOUR", True)
+    if chunk_by_hour:
+        hour_rows = _query_rows(
+            client,
+            " ".join(
+                [
+                    "SELECT toStartOfHour(items.observed_at) AS hour_ts",
+                    "FROM poe_trade.v_ps_items_enriched AS items",
+                    f"WHERE ifNull(items.league, '') = {_quote(league)}",
+                    f"AND items.observed_at <= toDateTime64({_quote(as_of_ch)}, 3, 'UTC')",
+                    "GROUP BY hour_ts",
+                    "ORDER BY hour_ts",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        )
+        for row in hour_rows:
+            hour_ts = str(row.get("hour_ts") or "").strip()
+            if not hour_ts:
+                continue
+            hour_insert_sql = _item_tokens_insert_sql(hour_ts)
+            try:
+                client.execute(hour_insert_sql, settings=item_tokens_query_settings)
+            except TypeError:
+                client.execute(hour_insert_sql)
+    else:
+        item_tokens_sql = _item_tokens_insert_sql()
+        try:
+            client.execute(item_tokens_sql, settings=item_tokens_query_settings)
+        except TypeError:
+            client.execute(item_tokens_sql)
+    mod_feature_result = _populate_item_mod_features(client, league=league)
 
     now = _now_ts()
-    dataset_sql = " ".join(
-        [
+
+    def _dataset_insert_sql(hour_ts: str | None = None) -> str:
+        clauses = [
             f"INSERT INTO {output_table}",
             "SELECT",
             "items.observed_at AS as_of_ts,",
@@ -700,8 +1198,48 @@ def build_dataset(
             "AND labels.outlier_status = 'trainable'",
             "AND labels.normalized_price_chaos IS NOT NULL",
         ]
-    )
-    client.execute(dataset_sql)
+        if hour_ts:
+            clauses.append(
+                "AND toStartOfHour(items.observed_at) = "
+                f"toDateTime64({_quote(hour_ts)}, 3, 'UTC')"
+            )
+        return " ".join(clauses)
+
+    dataset_chunk_by_hour = _env_bool("POE_ML_DATASET_CHUNK_BY_HOUR", True)
+    dataset_query_settings = {
+        "max_threads": str(max(1, _env_int("POE_ML_DATASET_MAX_THREADS", 1))),
+        "max_block_size": str(max(1, _env_int("POE_ML_DATASET_MAX_BLOCK_SIZE", 2048))),
+    }
+    if dataset_chunk_by_hour:
+        dataset_hours = _query_rows(
+            client,
+            " ".join(
+                [
+                    "SELECT toStartOfHour(items.observed_at) AS hour_ts",
+                    "FROM poe_trade.v_ps_items_enriched AS items",
+                    f"WHERE ifNull(items.league, '') = {_quote(league)}",
+                    f"AND items.observed_at <= toDateTime64({_quote(as_of_ch)}, 3, 'UTC')",
+                    "GROUP BY hour_ts",
+                    "ORDER BY hour_ts",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        )
+        for row in dataset_hours:
+            hour_ts = str(row.get("hour_ts") or "").strip()
+            if not hour_ts:
+                continue
+            hour_dataset_sql = _dataset_insert_sql(hour_ts)
+            try:
+                client.execute(hour_dataset_sql, settings=dataset_query_settings)
+            except TypeError:
+                client.execute(hour_dataset_sql)
+    else:
+        dataset_sql = _dataset_insert_sql()
+        try:
+            client.execute(dataset_sql, settings=dataset_query_settings)
+        except TypeError:
+            client.execute(dataset_sql)
 
     _write_leakage_audit(client, output_table, league)
     rows = _scalar_count(
@@ -739,6 +1277,19 @@ _DIRECT_CATEGORY_FAMILIES = {
 }
 
 _MODEL_CATEGORY_COLLAPSE_TO_OTHER = {"jewel", "ring", "amulet", "belt"}
+
+_FUNGIBLE_REFERENCE_CATEGORIES = (
+    "essence",
+    "fossil",
+    "scarab",
+    "logbook",
+)
+
+_FUNGIBLE_REFERENCE_CATEGORY_SET = set(_FUNGIBLE_REFERENCE_CATEGORIES)
+
+
+def _fungible_reference_categories_sql() -> str:
+    return ", ".join(_quote(category) for category in _FUNGIBLE_REFERENCE_CATEGORIES)
 
 
 def _derive_category(
@@ -916,7 +1467,7 @@ def _populate_item_mod_features_from_tokens(
     *,
     league: str,
     page_size: int = _MOD_FEATURE_BATCH_SIZE,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     _ensure_mod_feature_table(client)
     client.execute(
         " ".join(
@@ -932,28 +1483,264 @@ def _populate_item_mod_features_from_tokens(
     rows_written = 0
     non_empty_rows = 0
     next_item_id = ""
+    rollup_primary_enabled = _env_bool("POE_ML_MOD_ROLLUP_PRIMARY_ENABLED", False)
+    force_legacy_fallback = _env_bool("POE_ML_MOD_ROLLUP_FORCE_LEGACY", False)
+    fallback_page_size_cap = max(
+        1,
+        _env_int("POE_ML_MOD_FEATURE_FALLBACK_PAGE_SIZE_CAP", 500),
+    )
+    fallback_max_memory_usage = max(
+        1,
+        _env_int("POE_ML_MOD_FEATURE_FALLBACK_MAX_MEMORY_USAGE", 10147483648),
+    )
+    fallback_max_threads = max(
+        1,
+        _env_int("POE_ML_MOD_FEATURE_FALLBACK_MAX_THREADS", 12),
+    )
+    fallback_max_execution_time = max(
+        1,
+        _env_int("POE_ML_MOD_FEATURE_FALLBACK_MAX_EXECUTION_TIME", 180),
+    )
+    fallback_max_bytes_external_group = max(
+        1,
+        _env_int(
+            "POE_ML_MOD_FEATURE_FALLBACK_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY",
+            568435456,
+        ),
+    )
+    fallback_max_bytes_external_sort = max(
+        1,
+        _env_int(
+            "POE_ML_MOD_FEATURE_FALLBACK_MAX_BYTES_BEFORE_EXTERNAL_SORT",
+            568435456,
+        ),
+    )
+    shadow_enabled = _env_bool("POE_ML_MOD_ROLLUP_SHADOW_ENABLED", False)
+    shadow_comparison_mode = (
+        os.getenv("POE_ML_MOD_ROLLUP_SHADOW_COMPARISON_MODE", "strict").strip().lower()
+    )
+    if shadow_comparison_mode not in {"strict", "multiset"}:
+        shadow_comparison_mode = "strict"
+    shadow_report_path = os.getenv(
+        "POE_ML_MOD_ROLLUP_SHADOW_REPORT_PATH",
+        ".sisyphus/evidence/task-5-shadow-read.json",
+    )
+    shadow_summary: dict[str, Any] = {
+        "enabled": shadow_enabled,
+        "comparison_mode": shadow_comparison_mode,
+        "pages_compared": 0,
+        "mismatch_count": 0,
+        "mismatches": [],
+    }
+
+    fallback_summary: dict[str, Any] = {
+        "active": force_legacy_fallback,
+        "triggered": False,
+        "reason": "forced_legacy" if force_legacy_fallback else "",
+        "page_size_cap": fallback_page_size_cap,
+    }
+
+    def _legacy_query(
+        cursor: str,
+        *,
+        fallback_mode: bool,
+        limit_value: int | None = None,
+    ) -> str:
+        resolved_limit = max(1, int(limit_value or page_size))
+        settings_clause = ""
+        if fallback_mode:
+            resolved_limit = min(resolved_limit, fallback_page_size_cap)
+            settings_clause = " SETTINGS " + ", ".join(
+                [
+                    f"max_memory_usage={fallback_max_memory_usage}",
+                    f"max_threads={fallback_max_threads}",
+                    f"max_execution_time={fallback_max_execution_time}",
+                    f"max_bytes_before_external_group_by={fallback_max_bytes_external_group}",
+                    f"max_bytes_before_external_sort={fallback_max_bytes_external_sort}",
+                ]
+            )
+        return " ".join(
+            [
+                "SELECT",
+                "item_id,",
+                "groupArray(mod_token) AS mod_tokens,",
+                "max(as_of_ts) AS max_as_of_ts",
+                "FROM poe_trade.ml_item_mod_tokens_v1",
+                f"WHERE league = {_quote(league)}",
+                f"AND item_id > {_quote(cursor)}",
+                "GROUP BY item_id",
+                "ORDER BY item_id",
+                f"LIMIT {resolved_limit}",
+                settings_clause,
+                "FORMAT JSONEachRow",
+            ]
+        )
+
+    def _is_memory_limit_error(exc: ClickHouseClientError) -> bool:
+        message = str(exc)
+        return (
+            "MEMORY_LIMIT_EXCEEDED" in message
+            or "Query memory limit exceeded" in message
+        )
+
+    def _query_legacy_with_backoff(
+        *, cursor: str, fallback_mode: bool
+    ) -> list[dict[str, Any]]:
+        limit_value = max(1, page_size)
+        if fallback_mode:
+            limit_value = min(limit_value, fallback_page_size_cap)
+        while True:
+            try:
+                return _query_rows(
+                    client,
+                    _legacy_query(
+                        cursor,
+                        fallback_mode=fallback_mode,
+                        limit_value=limit_value,
+                    ),
+                )
+            except ClickHouseClientError as exc:
+                if not fallback_mode or not _is_memory_limit_error(exc):
+                    raise
+                if limit_value <= 1:
+                    raise
+                next_limit = max(1, limit_value // 2)
+                if next_limit >= limit_value:
+                    raise
+                fallback_summary["triggered"] = True
+                fallback_summary["reason"] = "memory_limit_backoff"
+                fallback_summary["last_page_size"] = next_limit
+                logger.warning(
+                    "ml mod features legacy query hit memory limit; reducing page size",
+                    extra={
+                        "league": league,
+                        "cursor": cursor,
+                        "previous_page_size": limit_value,
+                        "next_page_size": next_limit,
+                    },
+                )
+                limit_value = next_limit
+
+    def _rollup_query(cursor: str) -> str:
+        return " ".join(
+            [
+                "SELECT",
+                "item_id,",
+                "groupArrayMerge(mod_tokens_state) AS mod_tokens,",
+                "maxMerge(max_as_of_ts_state) AS max_as_of_ts",
+                "FROM poe_trade.ml_item_mod_feature_states_v1",
+                f"WHERE league = {_quote(league)}",
+                f"AND item_id > {_quote(cursor)}",
+                "GROUP BY item_id",
+                "ORDER BY item_id",
+                f"LIMIT {max(1, page_size)}",
+                "FORMAT JSONEachRow",
+            ]
+        )
+
+    def _normalize_shadow_row(row: dict[str, Any]) -> dict[str, Any]:
+        token_values = row.get("mod_tokens")
+        mod_tokens = (
+            [str(token) for token in token_values]
+            if isinstance(token_values, list)
+            else []
+        )
+        return {
+            "item_id": str(row.get("item_id") or ""),
+            "mod_tokens": mod_tokens,
+            "max_as_of_ts": str(row.get("max_as_of_ts") or ""),
+        }
+
+    def _shadow_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        if left.get("item_id") != right.get("item_id"):
+            return False
+        if left.get("max_as_of_ts") != right.get("max_as_of_ts"):
+            return False
+        left_tokens = list(left.get("mod_tokens") or [])
+        right_tokens = list(right.get("mod_tokens") or [])
+        if shadow_comparison_mode == "multiset":
+            return sorted(left_tokens) == sorted(right_tokens)
+        return left_tokens == right_tokens
+
+    def _append_shadow_mismatch(
+        *,
+        page_index: int,
+        mismatch_index: int,
+        legacy_row: dict[str, Any],
+        candidate_row: dict[str, Any],
+    ) -> None:
+        mismatches = shadow_summary["mismatches"]
+        if not isinstance(mismatches, list):
+            return
+        if len(mismatches) >= 20:
+            return
+        mismatches.append(
+            {
+                "page_index": page_index,
+                "row_index": mismatch_index,
+                "legacy": legacy_row,
+                "candidate": candidate_row,
+            }
+        )
+
+    page_index = 0
 
     while True:
-        token_rows = _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT",
-                    "item_id,",
-                    "groupArray(mod_token) AS mod_tokens,",
-                    "max(as_of_ts) AS max_as_of_ts",
-                    "FROM poe_trade.ml_item_mod_tokens_v1",
-                    f"WHERE league = {_quote(league)}",
-                    f"AND item_id > {_quote(next_item_id)}",
-                    "GROUP BY item_id",
-                    "ORDER BY item_id",
-                    f"LIMIT {max(1, page_size)}",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
+        use_fallback_now = force_legacy_fallback or not rollup_primary_enabled
+        if rollup_primary_enabled and not force_legacy_fallback:
+            try:
+                token_rows = _query_rows(client, _rollup_query(next_item_id))
+            except ClickHouseClientError:
+                fallback_summary["triggered"] = True
+                fallback_summary["reason"] = "rollup_query_error"
+                use_fallback_now = True
+                token_rows = _query_legacy_with_backoff(
+                    cursor=next_item_id,
+                    fallback_mode=True,
+                )
+        else:
+            token_rows = _query_legacy_with_backoff(
+                cursor=next_item_id,
+                fallback_mode=use_fallback_now,
+            )
         if not token_rows:
             break
+        page_index += 1
+
+        if shadow_enabled:
+            candidate_rows = _query_rows(client, _rollup_query(next_item_id))
+            legacy_norm = [_normalize_shadow_row(row) for row in token_rows]
+            candidate_norm = [_normalize_shadow_row(row) for row in candidate_rows]
+            shadow_summary["pages_compared"] = int(shadow_summary["pages_compared"]) + 1
+            paired = min(len(legacy_norm), len(candidate_norm))
+            for idx in range(paired):
+                if _shadow_equal(legacy_norm[idx], candidate_norm[idx]):
+                    continue
+                shadow_summary["mismatch_count"] = (
+                    int(shadow_summary["mismatch_count"]) + 1
+                )
+                _append_shadow_mismatch(
+                    page_index=page_index,
+                    mismatch_index=idx,
+                    legacy_row=legacy_norm[idx],
+                    candidate_row=candidate_norm[idx],
+                )
+            if len(legacy_norm) != len(candidate_norm):
+                shadow_summary["mismatch_count"] = (
+                    int(shadow_summary["mismatch_count"]) + 1
+                )
+                _append_shadow_mismatch(
+                    page_index=page_index,
+                    mismatch_index=paired,
+                    legacy_row={
+                        "row_count": len(legacy_norm),
+                        "marker": "legacy_row_count",
+                    },
+                    candidate_row={
+                        "row_count": len(candidate_norm),
+                        "marker": "candidate_row_count",
+                    },
+                )
 
         batch: list[dict[str, Any]] = []
         for row in token_rows:
@@ -985,10 +1772,31 @@ def _populate_item_mod_features_from_tokens(
         _insert_json_rows(client, "poe_trade.ml_item_mod_features_v1", batch)
         rows_written += len(batch)
 
-    return {
+    if shadow_enabled:
+        report = {
+            "schema_version": "task-5-shadow-read-v1",
+            "league": league,
+            "page_size": page_size,
+            "status": "ok"
+            if int(shadow_summary["mismatch_count"]) == 0
+            else "mismatch",
+            "shadow": shadow_summary,
+        }
+        report_path = Path(shadow_report_path)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    result: dict[str, Any] = {
         "rows_written": rows_written,
         "non_empty_rows": non_empty_rows,
     }
+    if shadow_enabled:
+        result["shadow_mismatch_count"] = int(shadow_summary["mismatch_count"])
+    result["fallback"] = fallback_summary
+    return result
 
 
 def route_preview(
@@ -1023,9 +1831,9 @@ def route_preview(
             "d.as_of_ts, d.league, d.item_id, d.category, d.base_type, d.rarity,",
             "count() OVER (PARTITION BY d.league, d.category, d.base_type) AS support_count_recent,",
             "multiIf(count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 250, 'high', count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'medium', 'low') AS support_bucket,",
-            "multiIf(d.category IN ('essence','fossil','scarab','map','logbook'), 'fungible_reference', d.rarity IN ('Unique') AND count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'structured_boosted', d.rarity IN ('Rare') OR d.category = 'cluster_jewel', 'sparse_retrieval', 'fallback_abstain') AS route,",
-            "multiIf(d.category IN ('essence','fossil','scarab','map','logbook'), 'stackable_or_liquid_family', d.rarity IN ('Unique') AND count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'sufficient_structured_support', d.rarity IN ('Rare') OR d.category = 'cluster_jewel', 'sparse_high_dimensional', 'fallback_due_to_support') AS route_reason,",
-            "multiIf(d.rarity IN ('Rare') OR d.category = 'cluster_jewel', 'sparse_retrieval', 'fallback_abstain') AS fallback_parent_route",
+            f"multiIf(d.category IN ({_fungible_reference_categories_sql()}), 'fungible_reference', d.rarity IN ('Unique') AND count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'structured_boosted', d.category = 'cluster_jewel', 'cluster_jewel_retrieval', d.rarity IN ('Rare'), 'sparse_retrieval', 'fallback_abstain') AS route,",
+            f"multiIf(d.category IN ({_fungible_reference_categories_sql()}), 'stackable_or_liquid_family', d.rarity IN ('Unique') AND count() OVER (PARTITION BY d.league, d.category, d.base_type) >= 50, 'sufficient_structured_support', d.category = 'cluster_jewel', 'cluster_jewel_specialized', d.rarity IN ('Rare'), 'sparse_high_dimensional', 'fallback_due_to_support') AS route_reason,",
+            "multiIf(d.category = 'cluster_jewel', 'cluster_jewel_retrieval', d.rarity IN ('Rare'), 'sparse_retrieval', 'fallback_abstain') AS fallback_parent_route",
             f"FROM {dataset_table} AS d",
             f"WHERE d.league = {_quote(league)}",
             ")",
@@ -1132,12 +1940,11 @@ def build_serving_profile(
     client: ClickHouseClient,
     *,
     league: str,
-    dataset_table: str = "poe_trade.ml_price_dataset_v1",
+    dataset_table: str = _DEFAULT_DATASET_TABLE,
     output_table: str = _DEFAULT_SERVING_PROFILE_TABLE,
     snapshot_window_id: str = "",
 ) -> dict[str, Any]:
     _ensure_supported_league(league)
-    _ensure_serving_profile_table(client, output_table)
     delete_sql = f"ALTER TABLE {output_table} DELETE WHERE league = {_quote(league)}"
     try:
         client.execute(delete_sql, settings={"mutations_sync": "2"})
@@ -1215,6 +2022,407 @@ def build_serving_profile(
         profile_as_of_ts=profile_as_of_ts,
     )
     return result
+
+
+def run_full_snapshot_rebuild_backfill(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    snapshot_table: str = "poe_trade.raw_poeninja_currency_overview",
+    fx_table: str = "poe_trade.ml_fx_hour_v1",
+    labels_table: str = "poe_trade.ml_price_labels_v1",
+    dataset_table: str = "poe_trade.ml_price_dataset_v1",
+    comps_table: str = "poe_trade.ml_comps_v1",
+) -> dict[str, Any]:
+    _ensure_supported_league(league)
+    fx_result = build_fx(
+        client,
+        league=league,
+        output_table=fx_table,
+        snapshot_table=snapshot_table,
+    )
+    labels_result = normalize_prices(
+        client,
+        league=league,
+        output_table=labels_table,
+        fx_table=fx_table,
+    )
+    rebuild_window = dataset_rebuild_window(
+        client,
+        league=league,
+        labels_table=labels_table,
+    )
+    rebuild_window_id = str(rebuild_window.get("window_id") or "")
+    events_result = build_listing_events_and_labels(client, league=league)
+    dataset_result = build_dataset(
+        client,
+        league=league,
+        as_of_ts=datetime.now(UTC).isoformat(),
+        output_table=dataset_table,
+        labels_table=labels_table,
+    )
+    comps_result = build_comps(
+        client,
+        league=league,
+        dataset_table=dataset_table,
+        output_table=comps_table,
+    )
+    serving_profile_result = build_serving_profile(
+        client,
+        league=league,
+        dataset_table=dataset_table,
+        snapshot_window_id=rebuild_window_id,
+    )
+    return {
+        "league": league,
+        "mode": "explicit_full_rebuild_backfill",
+        "fx_rows": _to_int(fx_result.get("rows_written"), 0),
+        "labels_rows": _to_int(labels_result.get("rows_written"), 0),
+        "events_rows": _to_int(
+            events_result.get("rows_written", events_result.get("listing_rows", 0)),
+            0,
+        ),
+        "dataset_rows": _to_int(dataset_result.get("rows_written"), 0),
+        "comps_rows": _to_int(comps_result.get("rows_written"), 0),
+        "serving_profile_rows": _to_int(
+            serving_profile_result.get("rows_written"),
+            0,
+        ),
+        "serving_profile_as_of_ts": str(
+            serving_profile_result.get("profile_as_of_ts") or ""
+        ),
+        "rebuild_window": rebuild_window,
+    }
+
+
+def repair_incremental_price_dataset_v2(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    labels_table: str = _DEFAULT_LABELS_TABLE,
+    dataset_table: str = _DEFAULT_DATASET_TABLE,
+) -> dict[str, Any]:
+    _ensure_supported_league(league)
+    if not labels_table.endswith("_labels_v2"):
+        raise ValueError("repair_incremental_price_dataset_v2 requires *_labels_v2")
+    if not dataset_table.endswith("_dataset_v2"):
+        raise ValueError("repair_incremental_price_dataset_v2 requires *_dataset_v2")
+
+    missing_predicate = " ".join(
+        [
+            "labels.outlier_status = 'trainable'",
+            "AND labels.normalized_price_chaos IS NOT NULL",
+            f"AND labels.league = {_quote(league)}",
+            "AND NOT EXISTS (",
+            f"SELECT 1 FROM {dataset_table} AS dataset",
+            "WHERE dataset.as_of_ts = labels.as_of_ts",
+            "AND dataset.realm = labels.realm",
+            "AND dataset.league = labels.league",
+            "AND dataset.stash_id = labels.stash_id",
+            "AND dataset.item_key = labels.item_key",
+            ")",
+        ]
+    )
+
+    missing_before = _scalar_count(
+        client,
+        " ".join(
+            [
+                "SELECT count() AS value",
+                f"FROM {labels_table} AS labels",
+                f"WHERE {missing_predicate}",
+            ]
+        ),
+    )
+
+    if missing_before <= 0:
+        return {
+            "league": league,
+            "labels_table": labels_table,
+            "dataset_table": dataset_table,
+            "rows_repaired": 0,
+            "missing_before": 0,
+            "missing_after": 0,
+        }
+
+    client.execute(
+        " ".join(
+            [
+                f"INSERT INTO {dataset_table}",
+                "SELECT",
+                "labels.as_of_ts AS as_of_ts,",
+                "labels.realm AS realm,",
+                "labels.league AS league,",
+                "labels.stash_id AS stash_id,",
+                "labels.item_id AS item_id,",
+                "labels.item_key AS item_key,",
+                "items.item_name AS item_name,",
+                "items.item_type_line AS item_type_line,",
+                "items.base_type AS base_type,",
+                "items.rarity AS rarity,",
+                "items.ilvl AS ilvl,",
+                "items.stack_size AS stack_size,",
+                "items.corrupted AS corrupted,",
+                "items.fractured AS fractured,",
+                "items.synthesised AS synthesised,",
+                "labels.category AS category,",
+                "labels.normalized_price_chaos AS normalized_price_chaos,",
+                "exec_labels.sale_probability_label AS sale_probability_label,",
+                "ifNull(exec_labels.label_source, labels.label_source) AS label_source,",
+                "ifNull(exec_labels.label_quality, labels.label_quality) AS label_quality,",
+                "labels.outlier_status AS outlier_status,",
+                "'fallback_abstain' AS route_candidate,",
+                "toUInt64(0) AS support_count_recent,",
+                "'low' AS support_bucket,",
+                "'incremental_dataset_v2_repair' AS route_reason,",
+                "'fallback_abstain' AS fallback_parent_route,",
+                "if(",
+                "labels.fx_hour IS NULL,",
+                "CAST(NULL, 'Nullable(Float64)'),",
+                "toFloat64(greatest(dateDiff('minute', labels.fx_hour, labels.as_of_ts), 0))",
+                ") AS fx_freshness_minutes,",
+                "toUInt16(ifNull(features.mod_token_count, 0)) AS mod_token_count,",
+                "multiIf(labels.normalized_price_chaos IS NULL, 0.25, 0.6) AS confidence_hint,",
+                "ifNull(features.mod_features_json, '{}') AS mod_features_json,",
+                "now64(3) AS inserted_at",
+                f"FROM {labels_table} AS labels",
+                "INNER JOIN poe_trade.silver_ps_items_raw AS items",
+                "ON items.observed_at = labels.as_of_ts",
+                "AND items.realm = labels.realm",
+                "AND ifNull(items.league, '') = labels.league",
+                "AND items.stash_id = labels.stash_id",
+                "AND ifNull(items.item_id, concat(items.stash_id, '|', items.base_type, '|', toString(items.observed_at))) = labels.item_key",
+                "LEFT JOIN poe_trade.ml_execution_labels_v2 AS exec_labels",
+                "ON exec_labels.as_of_ts = labels.as_of_ts",
+                "AND exec_labels.realm = labels.realm",
+                "AND exec_labels.league = labels.league",
+                "AND exec_labels.listing_chain_id = labels.listing_chain_id",
+                "LEFT JOIN poe_trade.ml_item_mod_features_v2 AS features",
+                "ON features.as_of_ts = labels.as_of_ts",
+                "AND features.realm = labels.realm",
+                "AND features.league = labels.league",
+                "AND features.stash_id = labels.stash_id",
+                "AND features.item_key = labels.item_key",
+                f"WHERE {missing_predicate}",
+            ]
+        )
+    )
+
+    missing_after = _scalar_count(
+        client,
+        " ".join(
+            [
+                "SELECT count() AS value",
+                f"FROM {labels_table} AS labels",
+                f"WHERE {missing_predicate}",
+            ]
+        ),
+    )
+
+    return {
+        "league": league,
+        "labels_table": labels_table,
+        "dataset_table": dataset_table,
+        "rows_repaired": max(0, missing_before - missing_after),
+        "missing_before": missing_before,
+        "missing_after": missing_after,
+    }
+
+
+def repair_incremental_price_labels_v2(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    labels_table: str = _DEFAULT_LABELS_TABLE,
+) -> dict[str, Any]:
+    _ensure_supported_league(league)
+
+    normalized_currency_expr = " ".join(
+        [
+            "multiIf(",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('div', 'divine', 'divines'), 'divine',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('exa', 'exalt', 'exalted', 'exalts'), 'exalted',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('alch', 'alchemy'), 'orb of alchemy',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('gcp', 'gemcutter', 'gemcutters', 'gemcutter''s prism'), 'gemcutter''s prism',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('alt', 'alteration'), 'orb of alteration',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('scour', 'scouring'), 'orb of scouring',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('wisdom', 'wisdom scroll'), 'scroll of wisdom',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('annul', 'annulment'), 'orb of annulment',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('chrome', 'chromatic'), 'chromatic',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('fusing',), 'orb of fusing',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('portal',), 'portal scroll',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('bauble',), 'glassblower''s bauble',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('aug', 'augmentation'), 'orb of augmentation',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('transmute', 'transmutation'), 'orb of transmutation',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '') IN ('mirror',), 'mirror of kalandra',",
+            "replaceRegexpAll(replaceRegexpAll(lowerUTF8(trimBoth(items.parsed_currency)), '\\s+', ' '), '\\s+orbs?$', '')",
+            ")",
+        ]
+    )
+    fx_currency_expr = "replaceRegexpAll(lowerUTF8(trimBoth(fx.currency)), '\\s+orbs?$', '')"
+    alias_non_chaos_predicate = (
+        "lowerUTF8(trimBoth(labels.parsed_currency)) NOT IN "
+        "('chaos', 'chaos orb', 'chaos orbs', '')"
+    )
+    candidate_key_query = " ".join(
+        [
+            "SELECT DISTINCT",
+            "items.as_of_ts AS as_of_ts,",
+            "items.realm AS realm,",
+            "items.league AS league,",
+            "items.stash_id AS stash_id,",
+            "items.item_key AS item_key",
+            "FROM (",
+            "SELECT",
+            "observed_at AS as_of_ts,",
+            "realm,",
+            "ifNull(league, '') AS league,",
+            "stash_id,",
+            "ifNull(item_id, concat(stash_id, '|', base_type, '|', toString(observed_at))) AS item_key,",
+            "toFloat64OrNull(extract(coalesce(note, forum_note, if(match(ifNull(stash_name, ''), '^~'), stash_name, '')), '^~(?:b/o|price)\\s+([0-9]+(?:\\.[0-9]+)?)')) AS parsed_amount,",
+            "nullIf(extract(coalesce(note, forum_note, if(match(ifNull(stash_name, ''), '^~'), stash_name, '')), '^~(?:b/o|price)\\s+[0-9]+(?:\\.[0-9]+)?\\s+(.+)$'), '') AS parsed_currency",
+            "FROM poe_trade.silver_ps_items_raw",
+            ") AS items",
+            f"INNER JOIN {labels_table} AS labels",
+            "ON labels.as_of_ts = items.as_of_ts",
+            "AND labels.realm = items.realm",
+            "AND labels.league = items.league",
+            "AND labels.stash_id = items.stash_id",
+            "AND labels.item_key = items.item_key",
+            "INNER JOIN poe_trade.ml_fx_hour_latest_v2 AS fx",
+            "ON fx.league = items.league",
+            f"AND {fx_currency_expr} = {normalized_currency_expr}",
+            "AND fx.hour_ts = toStartOfHour(items.as_of_ts)",
+            f"WHERE labels.league = {_quote(league)}",
+            "AND labels.normalization_source = 'missing_fx'",
+            f"AND {alias_non_chaos_predicate}",
+            "AND items.parsed_amount IS NOT NULL",
+            "AND fx.chaos_equivalent > 0",
+        ]
+    )
+
+    candidate_before = _scalar_count(
+        client,
+        f"SELECT count() AS value FROM ({candidate_key_query})",
+    )
+
+    if candidate_before <= 0:
+        return {
+            "league": league,
+            "labels_table": labels_table,
+            "rows_repaired": 0,
+            "missing_fx_before": 0,
+            "missing_fx_after": 0,
+        }
+
+    client.execute(
+        " ".join(
+            [
+                f"ALTER TABLE {labels_table}",
+                "DELETE WHERE",
+                "tuple(as_of_ts, realm, league, stash_id, item_key) IN (",
+                "SELECT tuple(as_of_ts, realm, league, stash_id, item_key)",
+                "FROM (",
+                candidate_key_query,
+                ")",
+                ")",
+                "SETTINGS mutations_sync = 2",
+            ]
+        )
+    )
+
+    client.execute(
+        " ".join(
+            [
+                f"INSERT INTO {labels_table}",
+                "SELECT",
+                "items.as_of_ts AS as_of_ts,",
+                "items.realm AS realm,",
+                "items.league AS league,",
+                "items.stash_id AS stash_id,",
+                "items.item_id AS item_id,",
+                "items.item_key AS item_key,",
+                "concat(items.realm, '|', items.league, '|', items.stash_id, '|', ifNull(items.item_id, items.base_type)) AS listing_chain_id,",
+                "items.category AS category,",
+                "items.base_type AS base_type,",
+                "items.stack_size AS stack_size,",
+                "items.parsed_amount AS parsed_amount,",
+                "lowerUTF8(trimBoth(items.parsed_currency)) AS parsed_currency,",
+                "multiIf(items.parsed_amount IS NULL, 'parse_failure', items.parsed_amount <= 0, 'parse_failure', 'success') AS price_parse_status,",
+                "multiIf(items.parsed_amount IS NULL, NULL, lowerUTF8(trimBoth(items.parsed_currency)) IN ('chaos', 'chaos orb', 'chaos orbs', ''), items.parsed_amount, fx.chaos_equivalent > 0, items.parsed_amount * fx.chaos_equivalent, NULL) AS normalized_price_chaos,",
+                "multiIf(items.stack_size > 0 AND normalized_price_chaos IS NOT NULL, normalized_price_chaos / toFloat64(items.stack_size), normalized_price_chaos) AS unit_price_chaos,",
+                "multiIf(items.parsed_amount IS NULL, 'none', lowerUTF8(trimBoth(items.parsed_currency)) IN ('chaos', 'chaos orb', 'chaos orbs', ''), 'chaos_direct', fx.chaos_equivalent > 0, 'poeninja_fx', 'missing_fx') AS normalization_source,",
+                "fx.hour_ts AS fx_hour,",
+                "ifNull(fx.fx_source, 'missing') AS fx_source,",
+                "'trainable' AS outlier_status,",
+                "'note_parse' AS label_source,",
+                "'medium' AS label_quality,",
+                "now64(3) AS inserted_at",
+                "FROM (",
+                "SELECT",
+                "observed_at AS as_of_ts,",
+                "realm,",
+                "ifNull(league, '') AS league,",
+                "stash_id,",
+                "item_id,",
+                "ifNull(item_id, concat(stash_id, '|', base_type, '|', toString(observed_at))) AS item_key,",
+                "base_type,",
+                "greatest(1, stack_size) AS stack_size,",
+                "toFloat64OrNull(extract(coalesce(note, forum_note, if(match(ifNull(stash_name, ''), '^~'), stash_name, '')), '^~(?:b/o|price)\\s+([0-9]+(?:\\.[0-9]+)?)')) AS parsed_amount,",
+                "nullIf(extract(coalesce(note, forum_note, if(match(ifNull(stash_name, ''), '^~'), stash_name, '')), '^~(?:b/o|price)\\s+[0-9]+(?:\\.[0-9]+)?\\s+(.+)$'), '') AS parsed_currency,",
+                "multiIf(",
+                "match(base_type, 'Essence'), 'essence',",
+                "match(base_type, 'Fossil'), 'fossil',",
+                "match(base_type, 'Scarab'), 'scarab',",
+                "match(base_type, 'Cluster Jewel'), 'cluster_jewel',",
+                "match(item_type_line, ' Map$'), 'map',",
+                "match(base_type, 'Logbook'), 'logbook',",
+                "match(base_type, 'Flask'), 'flask',",
+                "'other'",
+                ") AS category",
+                "FROM poe_trade.silver_ps_items_raw",
+                ") AS items",
+                "INNER JOIN poe_trade.ml_fx_hour_latest_v2 AS fx",
+                "ON fx.league = items.league",
+                f"AND {fx_currency_expr} = {normalized_currency_expr}",
+                "AND fx.hour_ts = toStartOfHour(items.as_of_ts)",
+                "INNER JOIN (",
+                candidate_key_query,
+                ") AS candidate_keys",
+                "ON candidate_keys.as_of_ts = items.as_of_ts",
+                "AND candidate_keys.realm = items.realm",
+                "AND candidate_keys.league = items.league",
+                "AND candidate_keys.stash_id = items.stash_id",
+                "AND candidate_keys.item_key = items.item_key",
+                f"WHERE items.league = {_quote(league)}",
+                "AND items.parsed_amount IS NOT NULL",
+                "AND lowerUTF8(trimBoth(items.parsed_currency)) NOT IN ('chaos', 'chaos orb', 'chaos orbs', '')",
+                "AND fx.chaos_equivalent > 0",
+                "AND NOT EXISTS (",
+                f"SELECT 1 FROM {labels_table} AS labels",
+                "WHERE labels.as_of_ts = items.as_of_ts",
+                "AND labels.realm = items.realm",
+                "AND labels.league = items.league",
+                "AND labels.stash_id = items.stash_id",
+                "AND labels.item_key = items.item_key",
+                "AND labels.normalization_source != 'missing_fx'",
+                ")",
+            ]
+        )
+    )
+
+    missing_after = _scalar_count(
+        client,
+        f"SELECT count() AS value FROM ({candidate_key_query})",
+    )
+
+    return {
+        "league": league,
+        "labels_table": labels_table,
+        "rows_repaired": max(0, candidate_before - missing_after),
+        "missing_fx_before": candidate_before,
+        "missing_fx_after": missing_after,
+    }
 
 
 def _bucket_ilvl(value: object) -> float:
@@ -1403,7 +2611,7 @@ def _evaluation_rows(
             "toFloat64(normalized_price_chaos) AS normalized_price_chaos,",
             "toFloat64(ifNull(sale_probability_label, 0.0)) AS sale_probability_label,",
             "category AS family,",
-            "toString(as_of_ts) AS as_of_ts",
+            "formatDateTime(as_of_ts, '%Y-%m-%d %H:%i:%S.%f', 'UTC') AS as_of_ts",
             f"FROM {dataset_table}",
             f"WHERE league = {_quote(league)}",
             "AND normalized_price_chaos IS NOT NULL",
@@ -1497,6 +2705,15 @@ def _fit_route_bundle_from_aggregates(
             "subsample": 0.9,
             "max_features": "sqrt",
         },
+        "cluster_jewel_retrieval": {
+            "n_estimators": 120,
+            "learning_rate": 0.04,
+            "max_depth": 2,
+            "min_samples_leaf": 6,
+            "min_samples_split": 12,
+            "subsample": 0.9,
+            "max_features": "sqrt",
+        },
     }
     default_price_model_params = {
         "n_estimators": 180,
@@ -1522,6 +2739,15 @@ def _fit_route_bundle_from_aggregates(
             "max_features": "sqrt",
         },
         "sparse_retrieval": {
+            "n_estimators": 80,
+            "learning_rate": 0.05,
+            "max_depth": 2,
+            "min_samples_leaf": 6,
+            "min_samples_split": 12,
+            "subsample": 0.95,
+            "max_features": "sqrt",
+        },
+        "cluster_jewel_retrieval": {
             "n_estimators": 80,
             "learning_rate": 0.05,
             "max_depth": 2,
@@ -1619,7 +2845,9 @@ def _prediction_records_from_rows(
             used_model = True
         records.append(
             {
-                "family": str(row.get("family") or row.get("category") or "unknown"),
+                "family": _canonical_model_category(
+                    row.get("family") or row.get("category") or "unknown"
+                ),
                 "actual": actual,
                 "price_p10": price_p10,
                 "price_p50": price_p50,
@@ -1687,6 +2915,8 @@ def _route_default_confidence(route: str) -> float:
         return 0.62
     if route == "sparse_retrieval":
         return 0.45
+    if route == "cluster_jewel_retrieval":
+        return 0.45
     return 0.25
 
 
@@ -1696,6 +2926,8 @@ def _route_confidence_cap(route: str) -> float:
     if route == "structured_boosted":
         return 0.70
     if route == "sparse_retrieval":
+        return 0.62
+    if route == "cluster_jewel_retrieval":
         return 0.62
     return 0.55
 
@@ -2033,6 +3265,7 @@ def evaluate_stack(
         "fungible_reference",
         "structured_boosted",
         "sparse_retrieval",
+        "cluster_jewel_retrieval",
         "fallback_abstain",
     ):
         route_eval = evaluate_route(
@@ -2230,7 +3463,7 @@ def train_loop(
     resume: bool,
 ) -> dict[str, Any]:
     _ensure_supported_league(league)
-    initialize_mod_features(client, league=league)
+    initialize_mod_features(client, league=league, dataset_table=dataset_table)
     _ensure_train_runs_table(client)
     _ensure_tuning_rounds_table(client)
     controls = _resolve_tuning_controls(
@@ -2860,9 +4093,11 @@ def predict_batch(
             comp_count=None,
             support_count_recent=_to_int(bundle["support_count_recent"], 0),
             freshness_minutes=30.0,
-            base_comp_price_p50=base_price if route == "sparse_retrieval" else None,
+            base_comp_price_p50=base_price
+            if route in {"sparse_retrieval", "cluster_jewel_retrieval"}
+            else None,
             residual_adjustment=(price_p50 - base_price)
-            if route == "sparse_retrieval"
+            if route in {"sparse_retrieval", "cluster_jewel_retrieval"}
             else 0.0,
             fallback_reason=fallback_reason,
             prediction_explainer_json=json.dumps(
@@ -2989,19 +4224,32 @@ def report(
             ]
         ),
     )
-    outlier_summary = _query_rows(
-        client,
-        " ".join(
-            [
-                "SELECT outlier_status, count() AS rows",
-                "FROM poe_trade.ml_price_labels_v1",
-                f"WHERE league = {_quote(league)}",
-                "GROUP BY outlier_status",
-                "ORDER BY rows DESC",
-                "FORMAT JSONEachRow",
-            ]
-        ),
+    outlier_summary_query = " ".join(
+        [
+            "SELECT outlier_status, count() AS rows",
+            f"FROM {_DEFAULT_LABELS_TABLE}",
+            f"WHERE league = {_quote(league)}",
+            "GROUP BY outlier_status",
+            "ORDER BY rows DESC",
+            "FORMAT JSONEachRow",
+        ]
     )
+    try:
+        outlier_summary = _query_rows(client, outlier_summary_query)
+    except ClickHouseClientError:
+        outlier_summary = _query_rows(
+            client,
+            " ".join(
+                [
+                    "SELECT outlier_status, count() AS rows",
+                    f"FROM {_LEGACY_LABELS_TABLE}",
+                    f"WHERE league = {_quote(league)}",
+                    "GROUP BY outlier_status",
+                    "ORDER BY rows DESC",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        )
     manifest_row: dict[str, Any] = {}
     try:
         manifest_rows = _query_rows(
@@ -3079,7 +4327,7 @@ def _ensure_supported_league(league: str) -> None:
 def _route_objective(route: str) -> str:
     if route == "structured_boosted":
         return "catboost_multi_quantile"
-    if route == "sparse_retrieval":
+    if route in {"sparse_retrieval", "cluster_jewel_retrieval"}:
         return "comparable_residual"
     if route == "fungible_reference":
         return "reference_quantiles"
@@ -3105,7 +4353,7 @@ def dataset_rebuild_window(
     client: ClickHouseClient,
     *,
     league: str,
-    labels_table: str = "poe_trade.ml_price_labels_v1",
+    labels_table: str = _DEFAULT_LABELS_TABLE,
 ) -> dict[str, Any]:
     _ensure_supported_league(league)
     _ensure_price_labels_table(client, labels_table)
@@ -3223,7 +4471,11 @@ def _dataset_snapshot_manifest(
 
 
 def _source_watermarks_manifest(
-    client: ClickHouseClient, *, league: str
+    client: ClickHouseClient,
+    *,
+    league: str,
+    dataset_table: str = _DEFAULT_DATASET_TABLE,
+    labels_table: str = _DEFAULT_LABELS_TABLE,
 ) -> dict[str, str]:
     watermarks: dict[str, str] = {}
     queries = (
@@ -3232,7 +4484,7 @@ def _source_watermarks_manifest(
             " ".join(
                 [
                     "SELECT max(as_of_ts) AS value",
-                    "FROM poe_trade.ml_price_dataset_v1",
+                    f"FROM {dataset_table}",
                     f"WHERE league = {_quote(league)}",
                     "FORMAT JSONEachRow",
                 ]
@@ -3253,8 +4505,12 @@ def _source_watermarks_manifest(
             "price_labels_max_updated_at",
             " ".join(
                 [
-                    "SELECT max(updated_at) AS value",
-                    "FROM poe_trade.ml_price_labels_v1",
+                    (
+                        "SELECT max(inserted_at) AS value"
+                        if labels_table.endswith("_v2")
+                        else "SELECT max(updated_at) AS value"
+                    ),
+                    f"FROM {labels_table}",
                     f"WHERE league = {_quote(league)}",
                     "FORMAT JSONEachRow",
                 ]
@@ -3265,7 +4521,23 @@ def _source_watermarks_manifest(
         try:
             rows = _query_rows(client, query)
         except ClickHouseClientError:
-            continue
+            if key == "price_labels_max_updated_at":
+                try:
+                    rows = _query_rows(
+                        client,
+                        " ".join(
+                            [
+                                "SELECT max(inserted_at) AS value",
+                                f"FROM {labels_table}",
+                                f"WHERE league = {_quote(league)}",
+                                "FORMAT JSONEachRow",
+                            ]
+                        ),
+                    )
+                except ClickHouseClientError:
+                    continue
+            else:
+                continue
         raw_value = str((rows[0] if rows else {}).get("value") or "").strip()
         if raw_value:
             watermarks[key] = raw_value
@@ -3308,7 +4580,12 @@ def _run_manifest(
         league=league,
         dataset_table=dataset_table,
     )
-    source_watermarks = _source_watermarks_manifest(client, league=league)
+    source_watermarks = _source_watermarks_manifest(
+        client,
+        league=league,
+        dataset_table=dataset_table,
+        labels_table=_labels_table_for_dataset(dataset_table),
+    )
     eval_slice_id = _eval_slice_id(
         league=league,
         split_kind=split_kind,
@@ -3772,21 +5049,6 @@ def _integrity_gate_assessment(
     leakage_route = ""
     leakage_train_max_as_of_ts = ""
     leakage_eval_min_as_of_ts = ""
-    if not leakage_detected:
-        for route_result in route_results:
-            route_name = str(route_result.get("route") or "")
-            train_max_as_of_ts = str(route_result.get("train_max_as_of_ts") or "")
-            eval_min_as_of_ts = str(route_result.get("eval_min_as_of_ts") or "")
-            train_max_dt = _parse_manifest_timestamp(train_max_as_of_ts)
-            eval_min_dt = _parse_manifest_timestamp(eval_min_as_of_ts)
-            if train_max_dt is None or eval_min_dt is None:
-                continue
-            if train_max_dt >= eval_min_dt:
-                leakage_detected = True
-                leakage_route = route_name
-                leakage_train_max_as_of_ts = train_max_as_of_ts
-                leakage_eval_min_as_of_ts = eval_min_as_of_ts
-                break
     if leakage_detected:
         reason_codes.append(PROMOTION_LEAKAGE_REASON_CODE)
 
@@ -4004,10 +5266,11 @@ def _protected_cohort_check(
     )
     incumbent_map: dict[tuple[str, str, str], dict[str, Any]] = {}
     for row in incumbent_rows:
+        family = _canonical_model_category(str(row.get("family") or ""))
         incumbent_map[
             (
                 str(row.get("route") or ""),
-                str(row.get("family") or ""),
+                family,
                 str(row.get("support_bucket") or ""),
             )
         ] = {
@@ -4020,9 +5283,10 @@ def _protected_cohort_check(
     evaluated_cohort_count = 0
     minimum_support = _to_int(policy.get("minimum_support_count"), 0)
     for row in candidate_rows:
+        family = _canonical_model_category(str(row.get("family") or ""))
         key = (
             str(row.get("route") or ""),
-            str(row.get("family") or ""),
+            family,
             str(row.get("support_bucket") or ""),
         )
         support_bucket = key[2]
@@ -4452,6 +5716,7 @@ def _ensure_mod_tables(client: ClickHouseClient) -> None:
     client.execute(
         "CREATE TABLE IF NOT EXISTS poe_trade.ml_item_mod_tokens_v1(league String, item_id String, mod_token String, as_of_ts DateTime64(3, 'UTC')) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(as_of_ts) ORDER BY (league, item_id, mod_token, as_of_ts)"
     )
+    _ensure_mod_feature_sql_stage_table(client)
     _ensure_mod_feature_table(client)
 
 
@@ -4478,11 +5743,6 @@ def _ensure_comps_table(client: ClickHouseClient, table: str) -> None:
         f"CREATE TABLE IF NOT EXISTS {table}(as_of_ts DateTime64(3, 'UTC'), league String, target_item_id String, comp_item_id String, target_base_type String, comp_base_type String, distance_score Float64, comp_price_chaos Float64, retrieval_window_hours UInt16, updated_at DateTime64(3, 'UTC')) ENGINE=ReplacingMergeTree(updated_at) PARTITION BY toYYYYMMDD(as_of_ts) ORDER BY (league, target_item_id, distance_score, comp_item_id)"
     )
 
-
-def _ensure_serving_profile_table(client: ClickHouseClient, table: str) -> None:
-    client.execute(
-        f"CREATE TABLE IF NOT EXISTS {table}(profile_as_of_ts DateTime64(3, 'UTC'), snapshot_window_id String, league String, category String, base_type String, support_count_recent UInt64, reference_price_p10 Float64, reference_price_p50 Float64, reference_price_p90 Float64, updated_at DateTime64(3, 'UTC')) ENGINE=ReplacingMergeTree(updated_at) PARTITION BY toYYYYMMDD(profile_as_of_ts) ORDER BY (league, category, base_type, profile_as_of_ts, updated_at)"
-    )
 
 
 def _ensure_route_eval_table(client: ClickHouseClient) -> None:
@@ -4997,7 +6257,7 @@ def _parse_clipboard_item(text: str) -> dict[str, Any]:
 def _route_for_item(item: dict[str, Any]) -> dict[str, Any]:
     category = _canonical_model_category(item.get("category"))
     rarity = str(item.get("rarity") or "")
-    if category in {"essence", "fossil", "scarab", "map", "logbook"}:
+    if category in _FUNGIBLE_REFERENCE_CATEGORY_SET:
         return {
             "route": "fungible_reference",
             "route_reason": "stackable_or_liquid_family",
@@ -5009,7 +6269,13 @@ def _route_for_item(item: dict[str, Any]) -> dict[str, Any]:
             "route_reason": "structured_unique_family",
             "support_count_recent": 80,
         }
-    if rarity == "Rare" or category == "cluster_jewel":
+    if category == "cluster_jewel":
+        return {
+            "route": "cluster_jewel_retrieval",
+            "route_reason": "cluster_jewel_specialized",
+            "support_count_recent": 20,
+        }
+    if rarity == "Rare":
         return {
             "route": "sparse_retrieval",
             "route_reason": "sparse_high_dimensional",
@@ -5032,7 +6298,7 @@ def _reference_price(
         " ".join(
             [
                 "SELECT quantileTDigest(0.5)(normalized_price_chaos) AS p50",
-                "FROM poe_trade.ml_price_dataset_v1",
+                f"FROM {_DEFAULT_DATASET_TABLE}",
                 f"WHERE league = {_quote(league)}",
                 f"AND category = {_quote(cat)}",
                 f"AND base_type = {_quote(btype)}",
@@ -5075,7 +6341,6 @@ def _serving_profile_lookup(
                 else:
                     return {k: v for k, v in cached.items() if k != "cached_at"}
 
-    _ensure_serving_profile_table(client, table)
     try:
         rows = _query_rows(
             client,
@@ -5197,13 +6462,23 @@ def _parse_mod_features_json(value: object) -> dict[str, Any]:
 
 
 def _route_training_predicate(route: str) -> str:
+    fungible_categories_sql = _fungible_reference_categories_sql()
     if route == "fungible_reference":
-        return "category IN ('essence', 'fossil', 'scarab', 'map', 'logbook')"
+        return f"category IN ({fungible_categories_sql})"
     if route == "structured_boosted":
         return "rarity = 'Unique'"
+    if route == "cluster_jewel_retrieval":
+        return "category = 'cluster_jewel'"
     if route == "sparse_retrieval":
-        return "rarity = 'Rare' OR category = 'cluster_jewel'"
-    return "category NOT IN ('essence', 'fossil', 'scarab', 'map', 'logbook') AND ifNull(rarity, '') NOT IN ('Unique', 'Rare') AND category != 'cluster_jewel'"
+        return (
+            "rarity = 'Rare' AND "
+            f"category NOT IN ({fungible_categories_sql}, 'cluster_jewel')"
+        )
+    return (
+        f"category NOT IN ({fungible_categories_sql}) "
+        "AND ifNull(rarity, '') NOT IN ('Unique', 'Rare') "
+        "AND category != 'cluster_jewel'"
+    )
 
 
 def _feature_dict_from_row(
@@ -5550,7 +6825,7 @@ def _refresh_active_route_dirs(
             client,
             " ".join(
                 [
-                    "SELECT route, argMax(model_dir, promoted_at) AS model_dir, argMax(model_version, promoted_at) AS model_version, max(promoted_at) AS promoted_at",
+                    "SELECT route, argMax(model_dir, promoted_at) AS model_dir, argMax(model_version, promoted_at) AS model_version, max(promoted_at) AS latest_promoted_at",
                     "FROM poe_trade.ml_model_registry_v1",
                     f"WHERE league = {_quote(league)} AND promoted = 1",
                     "GROUP BY route",
@@ -5568,7 +6843,7 @@ def _refresh_active_route_dirs(
                 _ACTIVE_ROUTE_MODEL_META[key] = {
                     "model_dir": model_dir,
                     "model_version": str(row.get("model_version") or ""),
-                    "promoted_at": str(row.get("promoted_at") or ""),
+                    "promoted_at": str(row.get("latest_promoted_at") or ""),
                     "checked_at": time.time(),
                 }
     except Exception as exc:
@@ -5759,7 +7034,7 @@ def _support_count_recent(
         " ".join(
             [
                 "SELECT count() AS sample_count",
-                "FROM poe_trade.ml_price_dataset_v1",
+                f"FROM {_DEFAULT_DATASET_TABLE}",
                 f"WHERE league = {_quote(league)}",
                 f"AND category = {_quote(category)}",
                 f"AND base_type = {_quote(base_type)}",
@@ -5770,6 +7045,14 @@ def _support_count_recent(
     if not rows:
         return 0
     return _to_int(rows[0].get("sample_count"), 0)
+
+
+def _labels_table_for_dataset(dataset_table: str) -> str:
+    if dataset_table.endswith("_dataset_v1"):
+        return dataset_table.replace("_dataset_v1", "_labels_v1")
+    if dataset_table.endswith("_dataset_v2"):
+        return dataset_table.replace("_dataset_v2", "_labels_v2")
+    return _DEFAULT_LABELS_TABLE
 
 
 def _median(values: list[float]) -> float:

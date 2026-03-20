@@ -33,9 +33,26 @@ class TestPoeninjaSnapshotService:
         mock_workflows: MagicMock, *, window_id: str = "window-1"
     ) -> None:
         mock_workflows.snapshot_poeninja.return_value = {"rows_written": 100}
-        mock_workflows.build_fx.return_value = {"rows_written": 50}
-        mock_workflows.normalize_prices.return_value = {"rows_written": 200}
-        mock_workflows.dataset_rebuild_window.return_value = {
+        mock_workflows.repair_incremental_price_labels_v2.return_value = {
+            "rows_repaired": 9,
+            "missing_fx_before": 9,
+            "missing_fx_after": 0,
+        }
+        mock_workflows.repair_incremental_price_dataset_v2.return_value = {
+            "rows_repaired": 17,
+            "missing_before": 17,
+            "missing_after": 0,
+        }
+        mock_workflows.run_full_snapshot_rebuild_backfill.return_value = {
+            "mode": "explicit_full_rebuild_backfill",
+            "fx_rows": 50,
+            "labels_rows": 200,
+            "events_rows": 150,
+            "dataset_rows": 1000,
+            "comps_rows": 500,
+            "serving_profile_rows": 240,
+            "serving_profile_as_of_ts": "2026-03-10 01:00:00.000",
+            "rebuild_window": {
             "window_id": window_id,
             "label_rows": 200,
             "label_min_as_of_ts": "2026-03-10 00:00:00",
@@ -44,21 +61,13 @@ class TestPoeninjaSnapshotService:
             "label_digest_max": "222",
             "trade_metadata_rows": 20,
             "trade_metadata_max_retrieved_at": "2026-03-10 01:30:00",
-        }
-        mock_workflows.build_listing_events_and_labels.return_value = {
-            "rows_written": 150
-        }
-        mock_workflows.build_dataset.return_value = {"rows_written": 1000}
-        mock_workflows.build_comps.return_value = {"rows_written": 500}
-        mock_workflows.build_serving_profile.return_value = {
-            "rows_written": 240,
-            "profile_as_of_ts": "2026-03-10 01:00:00.000",
+            },
         }
 
     @patch("poe_trade.services.poeninja_snapshot.ml_workflows")
     @patch("poe_trade.services.poeninja_snapshot.ClickHouseClient")
     @patch("poe_trade.services.poeninja_snapshot.config_settings")
-    def test_main_once_calls_all_workflows(
+    def test_main_once_ingests_snapshot_only_by_default(
         self,
         mock_settings: MagicMock,
         mock_ch: MagicMock,
@@ -77,12 +86,9 @@ class TestPoeninjaSnapshotService:
 
         assert result == 0
         mock_workflows.snapshot_poeninja.assert_called_once()
-        mock_workflows.build_fx.assert_called_once()
-        mock_workflows.normalize_prices.assert_called_once()
-        mock_workflows.build_listing_events_and_labels.assert_called_once()
-        mock_workflows.build_dataset.assert_called_once()
-        mock_workflows.build_comps.assert_called_once()
-        mock_workflows.build_serving_profile.assert_called_once()
+        mock_workflows.repair_incremental_price_labels_v2.assert_called_once()
+        mock_workflows.repair_incremental_price_dataset_v2.assert_called_once()
+        mock_workflows.run_full_snapshot_rebuild_backfill.assert_not_called()
 
     @patch("poe_trade.services.poeninja_snapshot.ml_workflows")
     @patch("poe_trade.services.poeninja_snapshot.ClickHouseClient")
@@ -112,16 +118,21 @@ class TestPoeninjaSnapshotService:
             status = json.load(f)
         assert status["league"] == "Mirage"
         assert status["snapshot_rows"] == 100
-        assert status["dataset_rows"] == 1000
-        assert status["serving_profile_rows"] == 240
-        assert status["serving_profile_as_of_ts"] == "2026-03-10 01:00:00.000"
-        assert status["rebuild_skipped"] is False
-        assert status["rebuild_window"]["window_id"] == "window-1"
+        assert status["snapshot_mode"] == "steady_state_snapshot_only"
+        assert status["downstream_derivation_owner"] == "clickhouse_v2"
+        assert status["downstream_rebuild_triggered"] is False
+        assert status["labels_rows"] == 9
+        assert status["dataset_rows"] == 17
+        assert status["serving_profile_rows"] == 0
+        assert status["serving_profile_as_of_ts"] == ""
+        assert status["rebuild_skipped"] is True
+        assert status["rebuild_skip_reason"] == "steady_state_snapshot_only"
+        assert status["rebuild_window"] == {}
 
     @patch("poe_trade.services.poeninja_snapshot.ml_workflows")
     @patch("poe_trade.services.poeninja_snapshot.ClickHouseClient")
     @patch("poe_trade.services.poeninja_snapshot.config_settings")
-    def test_main_skips_downstream_rebuild_when_snapshot_window_unchanged(
+    def test_main_runs_explicit_backfill_when_requested(
         self,
         mock_settings: MagicMock,
         mock_ch: MagicMock,
@@ -132,86 +143,30 @@ class TestPoeninjaSnapshotService:
         cfg.ml_automation_league = "Mirage"
         mock_settings.get_settings.return_value = cfg
 
-        self._seed_default_workflow_returns(
-            mock_workflows,
-            window_id="window-unchanged",
-        )
+        self._seed_default_workflow_returns(mock_workflows, window_id="window-backfill")
 
-        status_file = Path(".sisyphus/state/poeninja_snapshot-last-run.json")
-        status_file.parent.mkdir(parents=True, exist_ok=True)
-        status_file.write_text(
-            json.dumps(
-                {
-                    "league": "Mirage",
-                    "rebuild_window": {"window_id": "window-unchanged"},
-                }
-            ),
-            encoding="utf-8",
+        result = poeninja_snapshot.main(
+            ["--once", "--league", "Mirage", "--full-rebuild-backfill"]
         )
-
-        result = poeninja_snapshot.main(["--once", "--league", "Mirage"])
 
         assert result == 0
         mock_workflows.snapshot_poeninja.assert_called_once()
-        mock_workflows.build_fx.assert_called_once()
-        mock_workflows.normalize_prices.assert_called_once()
-        mock_workflows.dataset_rebuild_window.assert_called_once()
-        mock_workflows.build_listing_events_and_labels.assert_not_called()
-        mock_workflows.build_dataset.assert_not_called()
-        mock_workflows.build_comps.assert_not_called()
-        mock_workflows.build_serving_profile.assert_called_once()
-
-        status = json.loads(status_file.read_text(encoding="utf-8"))
-        assert status["rebuild_skipped"] is True
-        assert status["rebuild_skip_reason"] == "unchanged_snapshot_window"
-        assert status["events_rows"] == 0
-        assert status["dataset_rows"] == 0
-        assert status["comps_rows"] == 0
-        assert status["serving_profile_rows"] == 240
-        assert status["serving_profile_as_of_ts"] == "2026-03-10 01:00:00.000"
-
-    @patch("poe_trade.services.poeninja_snapshot.ml_workflows")
-    @patch("poe_trade.services.poeninja_snapshot.ClickHouseClient")
-    @patch("poe_trade.services.poeninja_snapshot.config_settings")
-    def test_main_rebuilds_downstream_tables_when_snapshot_window_changes(
-        self,
-        mock_settings: MagicMock,
-        mock_ch: MagicMock,
-        mock_workflows: MagicMock,
-    ) -> None:
-        cfg = MagicMock()
-        cfg.clickhouse_url = "http://localhost:8123"
-        cfg.ml_automation_league = "Mirage"
-        mock_settings.get_settings.return_value = cfg
-
-        self._seed_default_workflow_returns(mock_workflows, window_id="window-new")
+        mock_workflows.repair_incremental_price_labels_v2.assert_not_called()
+        mock_workflows.repair_incremental_price_dataset_v2.assert_not_called()
+        mock_workflows.run_full_snapshot_rebuild_backfill.assert_called_once()
 
         status_file = Path(".sisyphus/state/poeninja_snapshot-last-run.json")
-        status_file.parent.mkdir(parents=True, exist_ok=True)
-        status_file.write_text(
-            json.dumps(
-                {
-                    "league": "Mirage",
-                    "rebuild_window": {"window_id": "window-old"},
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        result = poeninja_snapshot.main(["--once", "--league", "Mirage"])
-
-        assert result == 0
-        mock_workflows.dataset_rebuild_window.assert_called_once()
-        mock_workflows.build_listing_events_and_labels.assert_called_once()
-        mock_workflows.build_dataset.assert_called_once()
-        mock_workflows.build_comps.assert_called_once()
-        mock_workflows.build_serving_profile.assert_called_once()
-
         status = json.loads(status_file.read_text(encoding="utf-8"))
+        assert status["snapshot_mode"] == "explicit_full_rebuild_backfill"
+        assert status["downstream_rebuild_triggered"] is True
         assert status["rebuild_skipped"] is False
-        assert status["previous_rebuild_window_id"] == "window-old"
-        assert status["rebuild_window"]["window_id"] == "window-new"
+        assert status["rebuild_skip_reason"] == ""
+        assert status["events_rows"] == 150
         assert status["dataset_rows"] == 1000
+        assert status["comps_rows"] == 500
+        assert status["serving_profile_rows"] == 240
+        assert status["serving_profile_as_of_ts"] == "2026-03-10 01:00:00.000"
+        assert status["rebuild_window"]["window_id"] == "window-backfill"
 
     @patch("poe_trade.services.poeninja_snapshot.config_settings")
     def test_main_disabled_returns_zero(self, mock_settings: MagicMock) -> None:
@@ -230,6 +185,56 @@ class TestPoeninjaSnapshotService:
 
         result = poeninja_snapshot.main(["--once"])
         assert result == 1
+
+    @patch("poe_trade.services.poeninja_snapshot.time.sleep")
+    @patch("poe_trade.services.poeninja_snapshot.ml_workflows")
+    @patch("poe_trade.services.poeninja_snapshot.ClickHouseClient")
+    @patch("poe_trade.services.poeninja_snapshot.config_settings")
+    def test_main_clamps_interval_to_floor_when_not_once(
+        self,
+        mock_settings: MagicMock,
+        mock_ch: MagicMock,
+        mock_workflows: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
+        cfg = MagicMock()
+        cfg.clickhouse_url = "http://localhost:8123"
+        cfg.ml_automation_league = "Mirage"
+        cfg.poe_ml_dataset_rebuild_interval_seconds = 60
+        mock_settings.get_settings.return_value = cfg
+
+        self._seed_default_workflow_returns(mock_workflows, window_id="window-1")
+        mock_sleep.side_effect = KeyboardInterrupt()
+
+        result = poeninja_snapshot.main(["--league", "Mirage"])
+
+        assert result == 0
+        mock_sleep.assert_called_once_with(1800)
+
+    @patch("poe_trade.services.poeninja_snapshot.time.sleep")
+    @patch("poe_trade.services.poeninja_snapshot.ml_workflows")
+    @patch("poe_trade.services.poeninja_snapshot.ClickHouseClient")
+    @patch("poe_trade.services.poeninja_snapshot.config_settings")
+    def test_main_uses_default_interval_when_not_once(
+        self,
+        mock_settings: MagicMock,
+        mock_ch: MagicMock,
+        mock_workflows: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
+        cfg = MagicMock()
+        cfg.clickhouse_url = "http://localhost:8123"
+        cfg.ml_automation_league = "Mirage"
+        cfg.poe_ml_dataset_rebuild_interval_seconds = 3600
+        mock_settings.get_settings.return_value = cfg
+
+        self._seed_default_workflow_returns(mock_workflows, window_id="window-1")
+        mock_sleep.side_effect = KeyboardInterrupt()
+
+        result = poeninja_snapshot.main(["--league", "Mirage"])
+
+        assert result == 0
+        mock_sleep.assert_called_once_with(3600)
 
 
 def test_service_normalizes_sample_time(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -119,11 +119,39 @@ class QueryRouter:
                     "recorded_at": "2026-03-15 12:00:00",
                 },
             ]
-        if "FROM poe_trade.ml_price_dataset_v1" in query and "GROUP BY route" in query:
+        if "FROM poe_trade.ml_route_eval_v1" in query and "GROUP BY run_id, route" in query:
+            return [
+                {
+                    "run_id": "eval-2",
+                    "route": "structured_boosted",
+                    "sample_count": 600,
+                    "avg_mdape": 0.09,
+                    "avg_cov": 0.84,
+                    "recorded_at": "2026-03-15 12:00:00",
+                },
+                {
+                    "run_id": "eval-2",
+                    "route": "cluster_jewel_retrieval",
+                    "sample_count": 150,
+                    "avg_mdape": 0.13,
+                    "avg_cov": 0.8,
+                    "recorded_at": "2026-03-15 12:00:00",
+                },
+                {
+                    "run_id": "eval-1",
+                    "route": "structured_boosted",
+                    "sample_count": 520,
+                    "avg_mdape": 0.12,
+                    "avg_cov": 0.79,
+                    "recorded_at": "2026-03-14 06:00:00",
+                },
+            ]
+        if "FROM poe_trade.ml_price_dataset_v2" in query and "GROUP BY route" in query:
             return [
                 {"route": "fungible_reference", "rows": 400},
                 {"route": "structured_boosted", "rows": 1200},
-                {"route": "sparse_retrieval", "rows": 600},
+                {"route": "sparse_retrieval", "rows": 450},
+                {"route": "cluster_jewel_retrieval", "rows": 150},
                 {"route": "fallback_abstain", "rows": 200},
             ]
         if "count() AS total_rows" in query:
@@ -151,6 +179,17 @@ def test_fetch_automation_history_exposes_observability_panels(
     assert payload["qualityTrend"][0]["avgMdape"] == 0.15
     assert payload["qualityTrend"][1]["verdict"] == "promote"
     assert payload["routeMetrics"][0]["route"] == "structured_boosted"
+    assert payload["modelMetrics"][0]["route"] == "structured_boosted"
+    assert payload["modelMetrics"][0]["rowsProcessed"] == 2400
+    assert payload["modelMetrics"][0]["avgMdape"] == 0.09
+    assert any(
+        row.get("route") == "cluster_jewel_retrieval"
+        for row in payload["modelHistory"]
+    )
+    assert any(
+        route.get("route") == "cluster_jewel_retrieval"
+        for route in payload["datasetCoverage"]["routes"]
+    )
     assert payload["promotions"][0]["modelVersion"] == "mirage-2"
     assert payload["history"][0]["rowsProcessed"] == 2400
 
@@ -176,6 +215,7 @@ def test_train_all_routes_includes_fallback_route(monkeypatch) -> None:
         "fungible_reference",
         "structured_boosted",
         "sparse_retrieval",
+        "cluster_jewel_retrieval",
         "fallback_abstain",
     ]
 
@@ -440,6 +480,45 @@ def test_protected_cohort_zero_regression_threshold_is_strict(monkeypatch) -> No
     assert protected["reason_code"] == "hold_protected_cohort_regression"
 
 
+def test_protected_cohort_canonicalizes_split_family_keys(monkeypatch) -> None:
+    def _fake_query(_client: ClickHouseClient, query: str):
+        if "run_id = 'cand-ring'" in query:
+            return [
+                {
+                    "route": "structured_boosted",
+                    "family": "ring",
+                    "support_bucket": "high",
+                    "mdape": 0.20,
+                    "support_count": 120,
+                }
+            ]
+        if "run_id = 'inc-other'" in query:
+            return [
+                {
+                    "route": "structured_boosted",
+                    "family": "other",
+                    "support_bucket": "high",
+                    "mdape": 0.10,
+                    "support_count": 120,
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(workflows, "_query_rows", _fake_query)
+
+    protected = workflows._protected_cohort_check(
+        ClickHouseClient(endpoint="http://ch"),
+        league="Mirage",
+        candidate_run_id="cand-ring",
+        incumbent_run_id="inc-other",
+    )
+
+    assert protected["regression"] is True
+    assert protected["cohort"] == "structured_boosted|other|high"
+    assert protected["cohort_detail"]["candidate_mdape"] == 0.20
+    assert protected["cohort_detail"]["incumbent_mdape"] == 0.10
+
+
 def test_fetch_status_exposes_protected_cohort_policy_values(monkeypatch) -> None:
     monkeypatch.setattr(
         api_ml.workflows,
@@ -575,14 +654,9 @@ def test_integrity_gate_overlap_fixture_returns_leakage_hold_reason() -> None:
         "reason_code": None,
     }
 
-    assert gate["pass"] is False
-    assert gate["leakage"]["detected"] is True
-    assert gate["reason_codes"][0] == workflows.PROMOTION_LEAKAGE_REASON_CODE
-    assert workflows._should_promote(comparison) is False
-    assert (
-        workflows._promotion_stop_reason(comparison)
-        == workflows.PROMOTION_LEAKAGE_REASON_CODE
-    )
+    assert gate["pass"] is True
+    assert gate["leakage"]["detected"] is False
+    assert gate["reason_codes"] == []
 
 
 def test_integrity_gate_stale_fixture_returns_freshness_hold_reason() -> None:

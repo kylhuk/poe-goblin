@@ -44,9 +44,9 @@ class _Args(argparse.Namespace):
     league: str = ""
     output: str | None = None
     output_table: str | None = None
-    dataset_table: str = "poe_trade.ml_price_dataset_v1"
+    dataset_table: str = "poe_trade.ml_price_dataset_v2"
     comps_table: str = "poe_trade.ml_comps_v1"
-    model_dir: str = "artifacts/ml/mirage_v1"
+    model_dir: str = "artifacts/ml/mirage_v2"
     as_of: str = ""
     max_iterations: int | None = None
     max_wall_clock_seconds: int | None = None
@@ -98,14 +98,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     route_preview_parser = subparsers.add_parser("route-preview")
     _ = route_preview_parser.add_argument("--league", required=True)
     _ = route_preview_parser.add_argument(
-        "--dataset-table", default="poe_trade.ml_price_dataset_v1"
+        "--dataset-table", default="poe_trade.ml_price_dataset_v2"
     )
     _ = route_preview_parser.add_argument("--limit", type=int, default=1000)
 
     build_comps_parser = subparsers.add_parser("build-comps")
     _ = build_comps_parser.add_argument("--league", required=True)
     _ = build_comps_parser.add_argument(
-        "--dataset-table", default="poe_trade.ml_price_dataset_v1"
+        "--dataset-table", default="poe_trade.ml_price_dataset_v2"
     )
     _ = build_comps_parser.add_argument(
         "--output-table", default="poe_trade.ml_comps_v1"
@@ -115,7 +115,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _ = train_route_parser.add_argument("--route", required=True)
     _ = train_route_parser.add_argument("--league", required=True)
     _ = train_route_parser.add_argument(
-        "--dataset-table", default="poe_trade.ml_price_dataset_v1"
+        "--dataset-table", default="poe_trade.ml_price_dataset_v2"
     )
     _ = train_route_parser.add_argument(
         "--comps-table", default="poe_trade.ml_comps_v1"
@@ -126,7 +126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _ = eval_route_parser.add_argument("--route", required=True)
     _ = eval_route_parser.add_argument("--league", required=True)
     _ = eval_route_parser.add_argument(
-        "--dataset-table", default="poe_trade.ml_price_dataset_v1"
+        "--dataset-table", default="poe_trade.ml_price_dataset_v2"
     )
     _ = eval_route_parser.add_argument("--comps-table", default="poe_trade.ml_comps_v1")
     _ = eval_route_parser.add_argument("--model-dir", required=True)
@@ -134,28 +134,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     train_parser = subparsers.add_parser("train")
     _ = train_parser.add_argument("--league", required=True)
     _ = train_parser.add_argument(
-        "--dataset-table", default="poe_trade.ml_price_dataset_v1"
+        "--dataset-table", default="poe_trade.ml_price_dataset_v2"
     )
     _ = train_parser.add_argument("--model-dir", required=True)
 
     train_saleability_parser = subparsers.add_parser("train-saleability")
     _ = train_saleability_parser.add_argument("--league", required=True)
     _ = train_saleability_parser.add_argument(
-        "--dataset-table", default="poe_trade.ml_price_dataset_v1"
+        "--dataset-table", default="poe_trade.ml_price_dataset_v2"
     )
     _ = train_saleability_parser.add_argument("--model-dir", required=True)
 
     eval_saleability_parser = subparsers.add_parser("evaluate-saleability")
     _ = eval_saleability_parser.add_argument("--league", required=True)
     _ = eval_saleability_parser.add_argument(
-        "--dataset-table", default="poe_trade.ml_price_dataset_v1"
+        "--dataset-table", default="poe_trade.ml_price_dataset_v2"
     )
     _ = eval_saleability_parser.add_argument("--model-dir", required=True)
 
     evaluate_parser = subparsers.add_parser("evaluate")
     _ = evaluate_parser.add_argument("--league", required=True)
     _ = evaluate_parser.add_argument(
-        "--dataset-table", default="poe_trade.ml_price_dataset_v1"
+        "--dataset-table", default="poe_trade.ml_price_dataset_v2"
     )
     _ = evaluate_parser.add_argument("--model-dir", required=True)
     _ = evaluate_parser.add_argument("--split", default="rolling")
@@ -163,7 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     train_loop_parser = subparsers.add_parser("train-loop")
     _ = train_loop_parser.add_argument("--league", required=True)
     _ = train_loop_parser.add_argument(
-        "--dataset-table", default="poe_trade.ml_price_dataset_v1"
+        "--dataset-table", default="poe_trade.ml_price_dataset_v2"
     )
     _ = train_loop_parser.add_argument("--model-dir", required=True)
     _ = train_loop_parser.add_argument("--max-iterations", type=int, default=None)
@@ -197,7 +197,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--source", choices=("dataset", "latest"), default="dataset"
     )
     _ = predict_batch_parser.add_argument(
-        "--dataset-table", default="poe_trade.ml_price_dataset_v1"
+        "--dataset-table", default="poe_trade.ml_price_dataset_v2"
     )
     _ = predict_batch_parser.add_argument(
         "--output-table", default="poe_trade.ml_price_predictions_v1"
