@@ -71,6 +71,10 @@ def test_price_check_payload_uses_base_type_lookup_and_returns_recent_comparable
             "saleProbabilityPercent": 58.0,
             "priceRecommendationEligible": True,
             "fallbackReason": "",
+            "mlPredicted": True,
+            "predictionSource": "ml",
+            "estimateTrust": "normal",
+            "estimateWarning": None,
         },
     )
     client = _RecordingClickHouse(
@@ -104,6 +108,10 @@ def test_price_check_payload_uses_base_type_lookup_and_returns_recent_comparable
     ]
     assert any("base_type = 'Hubris Circlet'" in query for query in client.queries)
     assert not any("Grim Bane" in query for query in client.queries)
+    assert payload["mlPredicted"] is True
+    assert payload["predictionSource"] == "ml"
+    assert payload["estimateTrust"] == "normal"
+    assert payload["estimateWarning"] is None
 
 
 def test_predict_one_uses_serving_profile_when_present(monkeypatch) -> None:
@@ -132,7 +140,6 @@ def test_predict_one_uses_serving_profile_when_present(monkeypatch) -> None:
 
     client = _RecordingClickHouse(
         [
-            "",
             '{"support_count_recent":91,"reference_price_p50":13.25,"snapshot_window_id":"window-123","profile_as_of_ts":"2026-03-15 12:00:00"}',
         ]
     )
@@ -145,7 +152,7 @@ def test_predict_one_uses_serving_profile_when_present(monkeypatch) -> None:
 
     assert payload["support_count_recent"] == 91
     assert payload["price_p50"] == 13.25
-    assert payload["fallback_reason"] == ""
+    assert payload["fallback_reason"] == "ml_no_prediction_static_fallback"
     assert any(
         "FROM poe_trade.ml_serving_profile_v1" in query for query in client.queries
     )
@@ -191,7 +198,6 @@ def test_predict_one_profile_miss_uses_deterministic_fallback_without_error(
     client = _RecordingClickHouse(
         [
             "",
-            "",
             '{"sample_count":7}',
             '{"p50":9.5}',
         ]
@@ -206,18 +212,18 @@ def test_predict_one_profile_miss_uses_deterministic_fallback_without_error(
 
     assert payload["support_count_recent"] == 7
     assert payload["price_p50"] == 9.5
-    assert payload["fallback_reason"] == ""
+    assert payload["fallback_reason"] == "ml_no_prediction_static_fallback"
     assert any(
         "predict_one serving profile miss; using deterministic fallback" in message
         for message in caplog.messages
     )
     assert any(
-        "FROM poe_trade.ml_price_dataset_v1" in query
+        "FROM poe_trade.ml_price_dataset_" in query
         and "count() AS sample_count" in query
         for query in client.queries
     )
     assert any(
-        "FROM poe_trade.ml_price_dataset_v1" in query
+        "FROM poe_trade.ml_price_dataset_" in query
         and "quantileTDigest(0.5)(normalized_price_chaos) AS p50" in query
         for query in client.queries
     )

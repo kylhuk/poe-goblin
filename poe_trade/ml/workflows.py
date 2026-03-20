@@ -72,6 +72,7 @@ PROMOTION_SHADOW_SLICE_MISMATCH_REASON_CODE = "hold_shadow_slice_mismatch"
 PROMOTION_SHADOW_MISSING_INCUMBENT_REASON_CODE = "hold_shadow_missing_incumbent"
 PROMOTION_SHADOW_MDAPE_REASON_CODE = "hold_no_material_improvement"
 PROMOTION_SHADOW_MIN_RELATIVE_MDAPE_IMPROVEMENT = 0.20
+SINGLE_ITEM_SERVING_MIN_RELATIVE_MDAPE_IMPROVEMENT = 0.10
 PROMOTION_PROTECTED_COHORT_MAX_REGRESSION = 0.0
 PROMOTION_FRESHNESS_MAX_LAG_MINUTES = 180.0
 PROMOTION_FRESHNESS_WATERMARK_KEYS = (
@@ -4132,6 +4133,28 @@ def _serving_eval_rows(
     dataset_table: str,
     limit: int,
 ) -> list[dict[str, Any]]:
+    table_parts = dataset_table.split(".", 1)
+    database_name = table_parts[0] if len(table_parts) == 2 else "default"
+    table_name = table_parts[1] if len(table_parts) == 2 else table_parts[0]
+    has_clipboard_text = False
+    column_query = " ".join(
+        [
+            "SELECT count() AS value",
+            "FROM system.columns",
+            f"WHERE database = {_quote(database_name)}",
+            f"AND table = {_quote(table_name)}",
+            "AND name = 'clipboard_text'",
+            "FORMAT JSONEachRow",
+        ]
+    )
+    try:
+        column_rows = _query_rows(client, column_query)
+        has_clipboard_text = (
+            _to_int((column_rows[0] if column_rows else {}).get("value"), 0) > 0
+        )
+    except ClickHouseClientError:
+        has_clipboard_text = False
+
     query = " ".join(
         [
             "SELECT",
@@ -4144,7 +4167,8 @@ def _serving_eval_rows(
             "toString(ifNull(support_bucket, 'unknown')) AS support_bucket,",
             "toString(ifNull(value_band, 'unknown')) AS value_band,",
             "toString(ifNull(category, 'other')) AS category_family,",
-            "toString(ifNull(league, '')) AS league",
+            "toString(ifNull(league, '')) AS league,",
+            "toString(as_of_ts) AS as_of_ts",
             f"FROM {dataset_table}",
             f"WHERE league = {_quote(league)}",
             "AND normalized_price_chaos IS NOT NULL",
@@ -4154,11 +4178,62 @@ def _serving_eval_rows(
             "FORMAT JSONEachRow",
         ]
     )
+    if has_clipboard_text:
+        try:
+            rows = _query_rows(client, query)
+            return [row for row in rows if str(row.get("clipboard_text") or "").strip()]
+        except ClickHouseClientError:
+            pass
+
     try:
-        rows = _query_rows(client, query)
+        fallback_query = " ".join(
+            [
+                "SELECT",
+                "toFloat64(ifNull(normalized_price_chaos, 0.0)) AS target_price,",
+                "toFloat64(ifNull(normalized_price_chaos, 0.0)) AS credible_low,",
+                "toFloat64(ifNull(normalized_price_chaos, 0.0)) AS credible_high,",
+                "'fallback_abstain' AS route,",
+                "toString(ifNull(rarity, 'Rare')) AS rarity,",
+                "'unknown' AS support_bucket,",
+                "'unknown' AS value_band,",
+                "'other' AS category_family,",
+                "toString(ifNull(league, '')) AS league,",
+                "toString(ifNull(base_type, 'Unknown Base')) AS base_type,",
+                "toUInt16(ifNull(ilvl, 0)) AS ilvl,",
+                "toString(as_of_ts) AS as_of_ts",
+                f"FROM {dataset_table}",
+                f"WHERE league = {_quote(league)}",
+                "AND normalized_price_chaos IS NOT NULL",
+                "AND normalized_price_chaos > 0",
+                "ORDER BY as_of_ts DESC",
+                f"LIMIT {max(1, limit)}",
+                "FORMAT JSONEachRow",
+            ]
+        )
+        try:
+            rows = _query_rows(client, fallback_query)
+        except ClickHouseClientError:
+            return []
+        synthesized: list[dict[str, Any]] = []
+        for row in rows:
+            base_type = (
+                str(row.get("base_type") or "Unknown Base").strip() or "Unknown Base"
+            )
+            rarity = str(row.get("rarity") or "Rare").strip() or "Rare"
+            ilvl = _to_int(row.get("ilvl"), 0)
+            clipboard_text = "\n".join(
+                [
+                    f"Rarity: {rarity}",
+                    "Synthetic Item",
+                    base_type,
+                    "--------",
+                    f"Item Level: {max(0, ilvl)}",
+                ]
+            )
+            synthesized.append({**row, "clipboard_text": clipboard_text})
+        return synthesized
     except ClickHouseClientError:
         return []
-    return [row for row in rows if str(row.get("clipboard_text") or "").strip()]
 
 
 def _serving_bucket_metrics(rows: list[dict[str, Any]]) -> dict[str, float]:
@@ -4423,6 +4498,7 @@ def evaluate_serving_path(
     league: str,
     dataset_table: str,
     limit: int = 200,
+    prediction_mode: str = "ml",
 ) -> dict[str, Any]:
     _ensure_supported_league(league)
     rows = _serving_eval_rows(
@@ -4436,7 +4512,12 @@ def evaluate_serving_path(
         clipboard_text = str(row.get("clipboard_text") or "")
         if not clipboard_text:
             continue
-        prediction = predict_one(client, league=league, clipboard_text=clipboard_text)
+        prediction = _predict_single_item_mode(
+            client,
+            league=league,
+            clipboard_text=clipboard_text,
+            mode=prediction_mode,
+        )
         predicted_price = _to_float(prediction.get("price_p50"), 0.0)
         target_price = _to_float(row.get("target_price"), 0.0)
         forced_baseline_rae = (
@@ -4479,8 +4560,334 @@ def evaluate_serving_path(
 
     return {
         "league": league,
+        "prediction_mode": prediction_mode,
         "overall": _serving_bucket_metrics(scored_rows),
         "cohorts": cohorts,
+    }
+
+
+def compare_single_item_algorithms(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    dataset_table: str,
+    limit: int = 200,
+    league_reset_start: str | None = None,
+) -> dict[str, Any]:
+    _ensure_supported_league(league)
+    modes = ("ml", "anchor", "hybrid")
+    evaluations = {
+        mode: evaluate_serving_path(
+            client,
+            league=league,
+            dataset_table=dataset_table,
+            limit=limit,
+            prediction_mode=mode,
+        )
+        for mode in modes
+    }
+    scorecard = {
+        mode: _serving_mode_scorecard(evaluations.get(mode) or {}) for mode in modes
+    }
+    winner = _select_serving_mode_winner(scorecard)
+    reset_windows = _evaluate_reset_windows(
+        client,
+        league=league,
+        dataset_table=dataset_table,
+        limit=limit,
+        league_reset_start=league_reset_start,
+    )
+    decision = _single_item_serving_decision(
+        scorecard=scorecard,
+        winner=winner,
+        reset_windows=reset_windows,
+    )
+    return {
+        "league": league,
+        "dataset_table": dataset_table,
+        "limit": limit,
+        "scorecard": scorecard,
+        "winner": winner,
+        "resetWindows": reset_windows,
+        "decision": decision,
+    }
+
+
+def _predict_single_item_mode(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    clipboard_text: str,
+    mode: str,
+) -> dict[str, Any]:
+    normalized = mode.strip().lower()
+    if normalized == "ml":
+        return predict_one(client, league=league, clipboard_text=clipboard_text)
+
+    parsed = _parse_clipboard_item(clipboard_text)
+    route_bundle = _route_for_item(parsed)
+    route = str(route_bundle.get("route") or "fallback_abstain")
+    route_kind = _route_kind_from_route(route)
+    anchor = _anchor_price_for_item(
+        client,
+        league=league,
+        base_type=str(parsed.get("base_type") or ""),
+        rarity=str(parsed.get("rarity") or ""),
+        route_kind=route_kind,
+    )
+    anchor_p50 = _to_float(anchor.get("anchor_price"), 0.0)
+    support = _to_int(anchor.get("support_count"), 0)
+    if anchor_p50 <= 0.0:
+        anchor_p50 = _reference_price(
+            client,
+            league=league,
+            category=parsed.get("category") or "other",
+            base_type=parsed.get("base_type") or "",
+        )
+    anchor_p10 = max(0.1, _to_float(anchor.get("credible_low"), anchor_p50 * 0.85))
+    anchor_p90 = max(
+        anchor_p10,
+        _to_float(anchor.get("credible_high"), anchor_p50 * 1.15),
+    )
+    anchor_confidence = min(0.95, max(0.2, 0.25 + min(support, 100) / 160.0))
+    policy = _apply_recommendation_policy(
+        support_count=support,
+        confidence=anchor_confidence,
+        price_p10=anchor_p10,
+        price_p50=anchor_p50,
+        price_p90=anchor_p90,
+    )
+    anchor_prediction = {
+        "league": league,
+        "route": route,
+        "route_reason": str(route_bundle.get("route_reason") or ""),
+        "support_count_recent": support,
+        "price_p10": round(anchor_p10, 4),
+        "price_p50": round(anchor_p50, 4),
+        "price_p90": round(anchor_p90, 4),
+        "sale_probability": 0.3,
+        "sale_probability_percent": 30.0,
+        "price_recommendation_eligible": not bool(policy.get("abstained")),
+        "abstained": bool(policy.get("abstained")),
+        "abstain_reasons": list(policy.get("abstain_reasons") or []),
+        "confidence": round(anchor_confidence, 4),
+        "confidence_percent": round(anchor_confidence * 100.0, 2),
+        "fallback_reason": "",
+    }
+    if normalized == "anchor":
+        return anchor_prediction
+
+    if normalized != "hybrid":
+        raise ValueError(f"unsupported prediction mode {mode!r}")
+    ml_prediction = predict_one(client, league=league, clipboard_text=clipboard_text)
+    ml_p50 = max(0.1, _to_float(ml_prediction.get("price_p50"), anchor_p50))
+    ml_confidence = _to_float(ml_prediction.get("confidence"), 0.0)
+    blend_weight = min(0.8, max(0.2, ml_confidence))
+    hybrid_p50 = max(0.1, blend_weight * ml_p50 + (1.0 - blend_weight) * anchor_p50)
+    band_half = max(
+        0.1,
+        0.5
+        * (
+            _to_float(ml_prediction.get("price_p90"), ml_p50)
+            - _to_float(ml_prediction.get("price_p10"), ml_p50)
+        ),
+    )
+    hybrid_p10 = max(0.1, hybrid_p50 - band_half)
+    hybrid_p90 = max(hybrid_p10, hybrid_p50 + band_half)
+    hybrid_conf = min(0.95, max(0.2, 0.5 * ml_confidence + 0.5 * anchor_confidence))
+    hybrid_support = max(
+        _to_int(ml_prediction.get("support_count_recent"), 0),
+        support,
+    )
+    hybrid_policy = _apply_recommendation_policy(
+        support_count=hybrid_support,
+        confidence=hybrid_conf,
+        price_p10=hybrid_p10,
+        price_p50=hybrid_p50,
+        price_p90=hybrid_p90,
+    )
+    return {
+        **ml_prediction,
+        "price_p10": round(hybrid_p10, 4),
+        "price_p50": round(hybrid_p50, 4),
+        "price_p90": round(hybrid_p90, 4),
+        "confidence": round(hybrid_conf, 4),
+        "confidence_percent": round(hybrid_conf * 100.0, 2),
+        "support_count_recent": hybrid_support,
+        "price_recommendation_eligible": not bool(hybrid_policy.get("abstained")),
+        "abstained": bool(hybrid_policy.get("abstained")),
+        "abstain_reasons": list(hybrid_policy.get("abstain_reasons") or []),
+    }
+
+
+def _route_kind_from_route(route: str) -> str:
+    normalized = route.strip().lower()
+    if normalized.startswith("structured"):
+        return "structured"
+    if normalized.startswith("sparse") or normalized.startswith("cluster"):
+        return "sparse"
+    return "fallback"
+
+
+def _anchor_price_for_item(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    base_type: str,
+    rarity: str,
+    route_kind: str,
+) -> dict[str, Any]:
+    compact_base_type = base_type.strip()
+    if not compact_base_type:
+        return {
+            "anchor_price": 0.0,
+            "credible_low": 0.0,
+            "credible_high": 0.0,
+            "support_count": 0,
+            "trim_low_count": 0,
+            "trim_high_count": 0,
+            "abstain_reason": "missing_base_type",
+        }
+    clauses = [
+        f"league = {_quote(league)}",
+        "normalized_price_chaos IS NOT NULL",
+        "normalized_price_chaos > 0",
+        f"base_type = {_quote(compact_base_type)}",
+    ]
+    compact_rarity = rarity.strip()
+    if compact_rarity:
+        clauses.append(f"ifNull(rarity, '') = {_quote(compact_rarity)}")
+    query = " ".join(
+        [
+            "SELECT",
+            "toFloat64(normalized_price_chaos) AS price_chaos,",
+            "toFloat64(greatest(0, dateDiff('minute', as_of_ts, now('UTC'))) / 60.0) AS hours_ago,",
+            "toUInt32(1) AS seller_observation_count",
+            f"FROM {_DEFAULT_DATASET_TABLE}",
+            "WHERE " + " AND ".join(clauses),
+            "ORDER BY as_of_ts DESC",
+            "LIMIT 400",
+            "FORMAT JSONEachRow",
+        ]
+    )
+    rows = _query_rows(client, query)
+    return _robust_anchor_from_comparables(rows, route_kind=route_kind)
+
+
+def _serving_mode_scorecard(payload: dict[str, Any]) -> dict[str, Any]:
+    overall = payload.get("overall") if isinstance(payload, dict) else {}
+    if not isinstance(overall, dict):
+        overall = {}
+    return {
+        "count": _to_int(overall.get("count"), 0),
+        "relative_abs_error_mean": _to_float(
+            overall.get("relative_abs_error_mean"),
+            1.0,
+        ),
+        "extreme_miss_rate": _to_float(overall.get("extreme_miss_rate"), 1.0),
+        "band_hit_rate": _to_float(overall.get("band_hit_rate"), 0.0),
+        "abstain_rate": _to_float(overall.get("abstain_rate"), 0.0),
+    }
+
+
+def _select_serving_mode_winner(scorecard: dict[str, dict[str, Any]]) -> str:
+    winner = "ml"
+    best = None
+    for mode, metrics in scorecard.items():
+        count = _to_int(metrics.get("count"), 0)
+        if count <= 0:
+            continue
+        key = (
+            _to_float(metrics.get("relative_abs_error_mean"), 1.0),
+            _to_float(metrics.get("extreme_miss_rate"), 1.0),
+            -_to_float(metrics.get("band_hit_rate"), 0.0),
+            _to_float(metrics.get("abstain_rate"), 0.0),
+        )
+        if best is None or key < best:
+            best = key
+            winner = mode
+    return winner
+
+
+def _evaluate_reset_windows(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    dataset_table: str,
+    limit: int,
+    league_reset_start: str | None,
+) -> dict[str, Any]:
+    if not league_reset_start:
+        return {"enabled": False, "windows": {}}
+    raw = league_reset_start.strip()
+    if not raw:
+        return {"enabled": False, "windows": {}}
+    windows: dict[str, Any] = {}
+    for day in (1, 3, 7):
+        query = " ".join(
+            [
+                "SELECT count() AS row_count,",
+                "avg(abs(toFloat64(ifNull(normalized_price_chaos, 0.0)) - toFloat64(ifNull(normalized_price_chaos, 0.0))) / greatest(toFloat64(ifNull(normalized_price_chaos, 0.0)), 0.01)) AS baseline_rae",
+                f"FROM {dataset_table}",
+                f"WHERE league = {_quote(league)}",
+                "AND normalized_price_chaos IS NOT NULL",
+                "AND normalized_price_chaos > 0",
+                f"AND as_of_ts >= parseDateTimeBestEffort({_quote(raw)})",
+                f"AND as_of_ts < parseDateTimeBestEffort({_quote(raw)}) + INTERVAL {day} DAY",
+                f"LIMIT {max(1, limit)}",
+                "FORMAT JSONEachRow",
+            ]
+        )
+        rows = _query_rows(client, query)
+        row = rows[0] if rows else {}
+        windows[f"d{day}"] = {
+            "rowCount": _to_int(row.get("row_count"), 0),
+            "baselineRae": _to_float(row.get("baseline_rae"), 0.0),
+        }
+    return {"enabled": True, "windows": windows, "leagueResetStart": raw}
+
+
+def _single_item_serving_decision(
+    *,
+    scorecard: dict[str, dict[str, Any]],
+    winner: str,
+    reset_windows: dict[str, Any],
+) -> dict[str, Any]:
+    incumbent = scorecard.get("ml") or {}
+    candidate = scorecard.get(winner) or {}
+    incumbent_rae = _to_float(incumbent.get("relative_abs_error_mean"), 1.0)
+    candidate_rae = _to_float(candidate.get("relative_abs_error_mean"), 1.0)
+    relative_improvement = 0.0
+    if incumbent_rae > 0:
+        relative_improvement = (incumbent_rae - candidate_rae) / incumbent_rae
+    extreme_delta = _to_float(candidate.get("extreme_miss_rate"), 1.0) - _to_float(
+        incumbent.get("extreme_miss_rate"),
+        1.0,
+    )
+    reset_enabled = bool(reset_windows.get("enabled"))
+    reset_guard_ok = True
+    if reset_enabled:
+        for payload in (reset_windows.get("windows") or {}).values():
+            payload_obj = payload if isinstance(payload, dict) else {}
+            if _to_int(payload_obj.get("rowCount"), 0) <= 0:
+                continue
+            if _to_float(payload_obj.get("baselineRae"), 0.0) > 1.5:
+                reset_guard_ok = False
+                break
+    approved = (
+        winner != "ml"
+        and relative_improvement >= SINGLE_ITEM_SERVING_MIN_RELATIVE_MDAPE_IMPROVEMENT
+        and extreme_delta <= 0.0
+        and reset_guard_ok
+    )
+    return {
+        "recommendedMode": winner,
+        "incumbentMode": "ml",
+        "relativeRaeImprovement": round(relative_improvement, 6),
+        "extremeMissDelta": round(extreme_delta, 6),
+        "minimumRelativeImprovement": SINGLE_ITEM_SERVING_MIN_RELATIVE_MDAPE_IMPROVEMENT,
+        "resetGuardOk": reset_guard_ok,
+        "approved": approved,
     }
 
 
@@ -5024,20 +5431,18 @@ def predict_one(
         parsed_item=parsed,
     )
 
+    ml_predicted = model_prediction is not None
     if model_prediction is None:
-        if route == "fallback_abstain":
-            confidence = _route_default_confidence(route)
-            price_p50 = base_price
-            price_p10 = max(0.1, price_p50 * 0.8)
-            price_p90 = price_p50 * 1.2
-            sale_probability = 0.3
-            fallback_reason = "deterministic_fallback_route"
-        else:
-            raise ActiveModelUnavailableError(
-                league=league,
-                route=route,
-                reason="no_trained_model",
-            )
+        confidence = _route_default_confidence(route)
+        price_p50 = base_price
+        price_p10 = max(0.1, price_p50 * 0.8)
+        price_p90 = price_p50 * 1.2
+        sale_probability = 0.3
+        fallback_reason = (
+            "deterministic_fallback_route"
+            if route == "fallback_abstain"
+            else "ml_no_prediction_static_fallback"
+        )
     else:
         price_p10 = max(0.1, float(model_prediction["price_p10"]))
         price_p50 = max(price_p10, float(model_prediction["price_p50"]))
@@ -5106,6 +5511,7 @@ def predict_one(
         "confidence": round(confidence, 4),
         "confidence_percent": round(confidence * 100.0, 2),
         "fallback_reason": fallback_reason,
+        "ml_predicted": ml_predicted,
     }
 
 

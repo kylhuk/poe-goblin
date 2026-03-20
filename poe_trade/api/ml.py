@@ -636,6 +636,21 @@ def normalize_predict_one_payload(
     fallback_reason = str(
         payload.get("fallbackReason") or payload.get("fallback_reason") or ""
     )
+    ml_predicted = bool(
+        payload.get("mlPredicted")
+        if "mlPredicted" in payload
+        else payload.get("ml_predicted", True)
+    )
+    prediction_source = "ml" if ml_predicted else "static_fallback"
+    estimate_trust = "normal" if ml_predicted else "low"
+    estimate_warning = (
+        None
+        if ml_predicted
+        else (
+            "ML could not predict this item (insufficient/unseen data). "
+            "This is a static fallback estimate and may be inaccurate."
+        )
+    )
     currency = str(payload.get("currency") or "chaos")
 
     return {
@@ -651,6 +666,10 @@ def normalize_predict_one_payload(
         "saleProbabilityPercent": sale_probability_percent,
         "priceRecommendationEligible": price_recommendation_eligible,
         "fallbackReason": fallback_reason,
+        "mlPredicted": ml_predicted,
+        "predictionSource": prediction_source,
+        "estimateTrust": estimate_trust,
+        "estimateWarning": estimate_warning,
         # Backward-compatible fields for existing clients.
         "price_p10": price_p10,
         "price_p50": price_p50,
@@ -659,6 +678,10 @@ def normalize_predict_one_payload(
         "sale_probability_percent": sale_probability_percent,
         "price_recommendation_eligible": price_recommendation_eligible,
         "fallback_reason": fallback_reason,
+        "ml_predicted": ml_predicted,
+        "prediction_source": prediction_source,
+        "estimate_trust": estimate_trust,
+        "estimate_warning": estimate_warning,
     }
 
 

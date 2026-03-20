@@ -352,8 +352,55 @@ def test_predict_one_returns_stable_dto(monkeypatch: pytest.MonkeyPatch) -> None
         "sale_probability_percent",
         "price_recommendation_eligible",
         "fallback_reason",
+        "mlPredicted",
+        "predictionSource",
+        "estimateTrust",
+        "estimateWarning",
+        "ml_predicted",
+        "prediction_source",
+        "estimate_trust",
+        "estimate_warning",
     }
     assert expected_keys.issubset(set(result))
+
+
+def test_predict_one_static_fallback_is_explicitly_marked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        api_ml.workflows,
+        "predict_one",
+        lambda _client, league, clipboard_text: {
+            "league": league,
+            "route": "sparse_retrieval",
+            "price_p10": 8.0,
+            "price_p50": 10.0,
+            "price_p90": 12.0,
+            "confidence_percent": 40.0,
+            "sale_probability_percent": 30.0,
+            "price_recommendation_eligible": False,
+            "fallback_reason": "ml_no_prediction_static_fallback",
+            "ml_predicted": False,
+        },
+    )
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+    payload = {
+        "input_format": "poe-clipboard",
+        "payload": "item payload",
+        "output_mode": "json",
+    }
+    body = json.dumps(payload).encode("utf-8")
+    response = app.handle(
+        method="POST",
+        raw_path="/api/v1/ml/leagues/Mirage/predict-one",
+        headers={**_auth_headers(), "Content-Length": str(len(body))},
+        body_reader=BytesIO(body),
+    )
+    result = json.loads(response.body.decode("utf-8"))
+    assert result["mlPredicted"] is False
+    assert result["predictionSource"] == "static_fallback"
+    assert result["estimateTrust"] == "low"
+    assert isinstance(result["estimateWarning"], str)
 
 
 def test_predict_one_returns_backend_unavailable_for_invalid_active_model(
@@ -636,6 +683,7 @@ def test_predict_one_cache_invalidates_after_promotion(
         league="Mirage",
         model_dir=client.model_dir,
         model_version=client.model_version,
+        routes=["sparse_retrieval"],
     )
     workflows.predict_one(
         _as_clickhouse(client),
@@ -644,10 +692,7 @@ def test_predict_one_cache_invalidates_after_promotion(
     )
 
     assert client.registry_query_count == 2
-    assert (
-        workflows._ACTIVE_ROUTE_MODEL_DIRS[("Mirage", "sparse_retrieval")]
-        == "artifacts/ml/mirage_v2"
-    )
+    assert workflows._ACTIVE_MODEL_VERSION_HINT.get("Mirage") == "mirage-v2"
 
 
 def test_predict_one_cache_invalidates_after_snapshot_refresh(
