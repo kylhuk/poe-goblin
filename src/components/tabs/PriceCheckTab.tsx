@@ -3,37 +3,50 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
 import { ConfidenceBadge } from '@/components/shared/StatusIndicators';
 import { api } from '@/services/api';
 import type { PriceCheckResponse } from '@/types/api';
-import { Brain } from 'lucide-react';
+import { Brain, AlertTriangle, ServerCrash, ShieldAlert, Info } from 'lucide-react';
 import { RenderState } from '@/components/shared/RenderState';
 import { useMouseGlow } from '@/hooks/useMouseGlow';
+
+function isLowTrustEstimate(r: PriceCheckResponse): boolean {
+  return r.mlPredicted === false || r.estimateTrust === 'low' || !!r.fallbackReason;
+}
 
 const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function PriceCheckTab(_props, ref) {
   const [text, setText] = useState('');
   const [result, setResult] = useState<PriceCheckResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const mouseGlow = useMouseGlow();
 
   const check = async () => {
     if (!text.trim()) {
       setError('Please paste item text first');
+      setErrorCode(null);
       return;
     }
     setLoading(true);
     setResult(null);
+    setError(null);
+    setErrorCode(null);
     try {
       const nextResult = await api.priceCheck({ itemText: text });
       setResult(nextResult);
-      setError(null);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Price prediction failed');
+      const msg = err instanceof Error ? err.message : 'Price prediction failed';
+      const code = msg.split(':')[0] ?? '';
+      setErrorCode(code.trim());
+      setError(msg);
     } finally {
       setLoading(false);
     }
   };
+
+  const lowTrust = result ? isLowTrustEstimate(result) : false;
 
   return (
     <div ref={ref} className="max-w-4xl mx-auto space-y-6" data-testid="panel-pricecheck-root">
@@ -61,25 +74,78 @@ Quality: +20%
           <Brain className="h-4 w-4" />
           {loading ? 'Checking...' : 'Check Price'}
         </Button>
-        {error && <RenderState kind="invalid_input" message={error} />}
+
+        {error && errorCode === 'backend_unavailable' && (
+          <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3">
+            <ServerCrash className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-destructive">Model not available</p>
+              <p className="text-xs text-muted-foreground mt-0.5">The prediction backend is currently unavailable. Try again later.</p>
+            </div>
+          </div>
+        )}
+        {error && errorCode === 'league_not_allowed' && (
+          <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3">
+            <ShieldAlert className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-warning">League not supported</p>
+              <p className="text-xs text-muted-foreground mt-0.5">This league is not currently enabled for price checking.</p>
+            </div>
+          </div>
+        )}
+        {error && errorCode !== 'backend_unavailable' && errorCode !== 'league_not_allowed' && (
+          <RenderState kind="invalid_input" message={error} />
+        )}
       </div>
 
       {result && (
-        <Card className="glow-gold card-game animate-scale-fade-in" onMouseMove={mouseGlow}>
+        <Card className={`card-game animate-scale-fade-in ${lowTrust ? 'border-warning/40' : 'glow-gold'}`} onMouseMove={mouseGlow}>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between gap-3">
               <CardTitle className="text-sm font-sans">ML Prediction</CardTitle>
-              <ConfidenceBadge value={result.confidence} />
+              <div className="flex items-center gap-2">
+                {result.predictionSource && (
+                  <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5">
+                    {result.predictionSource}
+                  </Badge>
+                )}
+                <ConfidenceBadge value={result.confidence} />
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
+            {/* Low-trust warning banner */}
+            {lowTrust && (
+              <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3">
+                <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-warning">Low confidence estimate</p>
+                  {result.estimateWarning && (
+                    <p className="text-xs text-muted-foreground mt-0.5">{result.estimateWarning}</p>
+                  )}
+                  {result.fallbackReason && (
+                    <p className="text-xs text-muted-foreground mt-0.5">Reason: {result.fallbackReason}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Not eligible notice */}
+            {result.priceRecommendationEligible === false && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Info className="h-3.5 w-3.5 shrink-0" />
+                Not eligible for price recommendation
+              </div>
+            )}
+
+            {/* Prediction value */}
             <div className="text-center py-4">
-              <p className="text-3xl font-mono font-semibold gold-shimmer-text">
+              <p className={`text-3xl font-mono font-semibold ${lowTrust ? 'text-muted-foreground' : 'gold-shimmer-text'}`}>
                 {result.predictedValue} <span className="text-lg text-muted-foreground">{result.currency}</span>
               </p>
               {result.interval && (
                 <p className="text-xs text-muted-foreground mt-1 font-mono">
-                  p10 {result.interval.p10 ?? 'n/a'} - p90 {result.interval.p90 ?? 'n/a'}
+                  p10 {result.interval.p10 ?? 'n/a'} – p90 {result.interval.p90 ?? 'n/a'}
                 </p>
               )}
               {typeof result.saleProbabilityPercent === 'number' && (
@@ -87,11 +153,9 @@ Quality: +20%
                   Sale Probability: {result.saleProbabilityPercent}%
                 </p>
               )}
-              {result.fallbackReason && (
-                <p className="text-xs text-warning mt-1">Fallback: {result.fallbackReason}</p>
-              )}
             </div>
 
+            {/* Comparables */}
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent Comparables</h3>

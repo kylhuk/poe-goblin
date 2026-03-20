@@ -856,21 +856,18 @@ export const api: ApiService = {
 
   async priceCheck(req) {
     const league = await primaryLeague();
-    return request<PriceCheckResponse>(`/api/v1/ops/leagues/${league}/price-check`, {
+    const payload = await request<Record<string, unknown>>(`/api/v1/ops/leagues/${encodeURIComponent(league)}/price-check`, {
       method: 'POST',
-      body: JSON.stringify(req),
+      body: JSON.stringify({ itemText: req.itemText.trim() }),
     });
+    return normalizePriceCheckResponse(payload);
   },
 
   async mlPredictOne(req) {
     const league = await primaryLeague();
     const payload = await request<Record<string, unknown>>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/predict-one`, {
       method: 'POST',
-      body: JSON.stringify({
-        input_format: 'poe-clipboard',
-        payload: req.clipboard,
-        output_mode: 'json',
-      }),
+      body: JSON.stringify({ itemText: req.itemText.trim() }),
     });
     return normalizeMlPredictOneResponse(payload);
   },
