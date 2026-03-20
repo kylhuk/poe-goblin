@@ -168,6 +168,12 @@ export interface MlPredictOneResponse {
   saleProbabilityPercent?: number | null;
   fallbackReason?: string;
   priceRecommendationEligible?: boolean;
+  league?: string;
+  route?: string;
+  mlPredicted?: boolean;
+  predictionSource?: string;
+  estimateTrust?: string;
+  estimateWarning?: string | null;
 }
 
 // ========== Search History Analytics ==========
