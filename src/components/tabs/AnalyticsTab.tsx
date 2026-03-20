@@ -41,10 +41,19 @@ import { api } from '@/services/api';
 import type { MlAutomationStatus, MlAutomationHistory, PricingOutliersResponse, SearchHistoryResponse, SearchSuggestion } from '@/types/api';
 import { RenderState } from '@/components/shared/RenderState';
 
-const AnalyticsTab = forwardRef<HTMLDivElement, Record<string, never>>(function AnalyticsTab(_props, ref) {
+interface AnalyticsTabProps {
+  subtab?: string;
+  onSubtabChange?: (subtab: string) => void;
+}
+
+const AnalyticsTab = forwardRef<HTMLDivElement, AnalyticsTabProps>(function AnalyticsTab({ subtab, onSubtabChange }, ref) {
+  const activeSubtab = subtab || "ingestion";
+  const handleSubtabChange = (value: string) => {
+    if (onSubtabChange) onSubtabChange(value);
+  };
   return (
     <div ref={ref}>
-    <Tabs defaultValue="ingestion" className="space-y-4">
+    <Tabs value={activeSubtab} onValueChange={handleSubtabChange} className="space-y-4">
       <TabsList className="flex-wrap h-auto gap-1 bg-secondary/50 p-1">
         <TabsTrigger data-testid="analytics-tab-ingestion" value="ingestion" className="tab-game text-xs">Ingestion</TabsTrigger>
         <TabsTrigger data-testid="analytics-tab-scanner" value="scanner" className="tab-game text-xs">Scanner</TabsTrigger>
