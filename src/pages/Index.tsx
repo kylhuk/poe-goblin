@@ -16,11 +16,11 @@ type TabDef = {
   id: string;
   label: string;
   icon: React.ReactNode;
-  content: React.ReactNode;
+  content: React.ReactNode | ((subtab?: string, onSubtabChange?: (s: string) => void) => React.ReactNode);
   roles: UserRole[];
 };
 
-const TABS: TabDef[] = [
+const makeTabs = (subtab?: string, onSubtabChange?: (s: string) => void): TabDef[] => [
   {
     id: "dashboard",
     label: "Dashboard",
@@ -46,7 +46,7 @@ const TABS: TabDef[] = [
     id: "analytics",
     label: "Analytics",
     icon: <BarChart3 className="h-3.5 w-3.5" />,
-    content: <AnalyticsTab />,
+    content: <AnalyticsTab subtab={subtab} onSubtabChange={onSubtabChange} />,
     roles: ["member", "admin"],
   },
   {
