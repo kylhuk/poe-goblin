@@ -18,6 +18,7 @@
 - `docker compose exec clickhouse clickhouse-client --query "SELECT 1"` to verify ClickHouse accepts connections.
 - `make down` to stop every container while keeping the ClickHouse data volume intact for the next `make up`.
 - `docker compose up --detach account_stash_harvester` to start the optional, credential-gated private stash sync.
+- `.venv/bin/python -m poe_trade.cli service --name account_stash_harvester -- --once --scan` runs one private stash harvest and then prices the full account stash snapshot with confidence and p10/p90 bands.
 - Refer to `docs/ops-runbook.md` for queue-based telemetry, checkpoint history, and failure patterns.
 
 ## ML Quick Start (Mirage)
@@ -86,6 +87,8 @@ Verify routes:
 - `curl -i -X POST -H "Authorization: Bearer phase1-token" -H "Content-Type: application/json" --data '{"itemText":"Item Class: Maps\nRarity: Rare\nGrim Veil\nCemetery Map"}' http://127.0.0.1:8080/api/v1/ops/leagues/Mirage/price-check`
 - `curl -i -H "Authorization: Bearer phase1-token" "http://127.0.0.1:8080/api/v1/ops/scanner/recommendations?sort=liquidity_score&limit=5&min_confidence=0.8"`
 - `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://poe.lama-lan.ch" "http://127.0.0.1:8080/api/v1/stash/tabs?league=Mirage&realm=pc"`
+- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://poe.lama-lan.ch" "http://127.0.0.1:8080/api/v1/stash/status?league=Mirage&realm=pc"` returns last successful full scan freshness and active scan progress.
+- `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://poe.lama-lan.ch" "http://127.0.0.1:8080/api/v1/stash/items/<itemFingerprint>/history?league=Mirage&realm=pc"` returns per-item valuation history with predicted price, confidence, and p10/p90 ranges.
 - `curl -i -H "Authorization: Bearer phase1-token" -H "Origin: https://evil.example.com" http://127.0.0.1:8080/api/v1/ml/leagues/Mirage/status`
 
 Current non-goals:

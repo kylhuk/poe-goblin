@@ -61,7 +61,12 @@ from .ops import (
 )
 from .responses import ApiError, Response, json_error, json_response
 from .routes import Router
-from .stash import StashBackendUnavailable, fetch_stash_tabs, stash_status_payload
+from .stash import (
+    StashBackendUnavailable,
+    fetch_stash_tabs,
+    stash_item_history_payload,
+    stash_status_payload,
+)
 from .service_control import (
     ServiceActionForbiddenError,
     ServiceActionInvalidError,
@@ -144,6 +149,11 @@ class ApiApp:
             "/api/v1/stash/status",
             ("GET", "OPTIONS"),
             self._stash_status,
+        )
+        self.router.add(
+            "/api/v1/stash/items/{item_fingerprint}/history",
+            ("GET", "OPTIONS"),
+            self._stash_item_history,
         )
         self.router.add("/api/v1/auth/login", ("GET", "OPTIONS"), self._auth_login)
         self.router.add(
@@ -733,6 +743,51 @@ class ApiApp:
                 realm=realm,
                 enable_account_stash=self.settings.enable_account_stash,
                 session=session,
+            )
+        except StashBackendUnavailable:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        return json_response(payload)
+
+    def _stash_item_history(self, context: Mapping[str, object]) -> Response:
+        params = _query_params_from_context(context)
+        league = _first_query_param(
+            params,
+            "league",
+            default=(self.settings.account_stash_league or ""),
+        )
+        realm = _first_query_param(
+            params,
+            "realm",
+            default=(self.settings.account_stash_realm or "pc"),
+        )
+        session_cookie = _session_cookie_from_headers(
+            _headers_from_context(context),
+            cookie_name=self.settings.auth_cookie_name,
+        )
+        session = get_session(self.settings, session_id=session_cookie)
+        if session is None:
+            raise ApiError(status=401, code="auth_required", message="session required")
+        account_name = str(session.get("account_name") or "")
+        if not account_name:
+            raise ApiError(status=401, code="auth_required", message="session required")
+        item_fingerprint = str(context.get("item_fingerprint") or "")
+        if not item_fingerprint:
+            raise ApiError(
+                status=400,
+                code="invalid_input",
+                message="item fingerprint required",
+            )
+        try:
+            payload = stash_item_history_payload(
+                self.client,
+                league=league,
+                realm=realm,
+                account_name=account_name,
+                item_fingerprint=item_fingerprint,
             )
         except StashBackendUnavailable:
             raise ApiError(
