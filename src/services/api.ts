@@ -244,8 +244,79 @@ export async function getAnalyticsBacktests() {
   return request<BacktestAnalytics>('/api/v1/ops/analytics/backtests');
 }
 
+function normalizeMlCandidateComparison(raw: unknown): MlCandidateComparison | null {
+  const o = asObject(raw);
+  if (Object.keys(o).length === 0) return null;
+  const hasAnyRunId = optString(o.candidate_run_id ?? o.candidateRunId);
+  if (!hasAnyRunId) return null;
+  return {
+    candidate_run_id: optString(o.candidate_run_id ?? o.candidateRunId) ?? '',
+    incumbent_run_id: optString(o.incumbent_run_id ?? o.incumbentRunId) ?? '',
+    candidate_avg_mdape: optNumber(o.candidate_avg_mdape ?? o.candidateAvgMdape) ?? 0,
+    incumbent_avg_mdape: optNumber(o.incumbent_avg_mdape ?? o.incumbentAvgMdape) ?? 0,
+    candidate_avg_interval_coverage: optNumber(o.candidate_avg_interval_coverage ?? o.candidateAvgIntervalCoverage) ?? 0,
+    incumbent_avg_interval_coverage: optNumber(o.incumbent_avg_interval_coverage ?? o.incumbentAvgIntervalCoverage) ?? 0,
+    mdape_improvement: optNumber(o.mdape_improvement ?? o.mdapeImprovement) ?? 0,
+    coverage_delta: optNumber(o.coverage_delta ?? o.coverageDelta) ?? 0,
+    coverage_floor_ok: typeof (o.coverage_floor_ok ?? o.coverageFloorOk) === 'boolean'
+      ? (o.coverage_floor_ok ?? o.coverageFloorOk) as boolean
+      : false,
+  };
+}
+
+function normalizeMlRouteHotspot(raw: unknown): MlRouteHotspot {
+  const o = asObject(raw);
+  return {
+    route: optString(o.route),
+    avg_mdape: optNumber(o.avg_mdape ?? o.avgMdape),
+    avg_interval_coverage: optNumber(o.avg_interval_coverage ?? o.avgIntervalCoverage),
+    sample_count: optNumber(o.sample_count ?? o.sampleCount),
+    anomaly: typeof (o.anomaly) === 'boolean' ? o.anomaly as boolean : null,
+    ...o,
+  };
+}
+
+function normalizeMlAnalytics(payload: unknown): MlAnalytics {
+  const root = asObject(payload);
+  const s = asObject(root.status);
+  const rawHotspots = Array.isArray(s.route_hotspots ?? s.routeHotspots)
+    ? (s.route_hotspots ?? s.routeHotspots) as unknown[]
+    : [];
+  const rawPolicy = s.promotion_policy ?? s.promotionPolicy;
+  const rawWarmup = s.warmup;
+
+  return {
+    status: {
+      league: optString(s.league) ?? '',
+      run: optString(s.run ?? s.runId ?? s.run_id) ?? '',
+      status: optString(s.status) ?? 'unknown',
+      promotion_verdict: optString(s.promotion_verdict ?? s.promotionVerdict) ?? '',
+      stop_reason: optString(s.stop_reason ?? s.stopReason) ?? '',
+      active_model_version: optString(s.active_model_version ?? s.activeModelVersion),
+      latest_avg_mdape: optNumber(s.latest_avg_mdape ?? s.latestAvgMdape) ?? 0,
+      latest_avg_interval_coverage: optNumber(s.latest_avg_interval_coverage ?? s.latestAvgIntervalCoverage) ?? 0,
+      candidate_vs_incumbent: normalizeMlCandidateComparison(s.candidate_vs_incumbent ?? s.candidateVsIncumbent),
+      route_hotspots: rawHotspots.map(normalizeMlRouteHotspot),
+      promotion_policy: rawPolicy && typeof rawPolicy === 'object' ? {
+        mdape_ceiling: optNumber((rawPolicy as Record<string, unknown>).mdape_ceiling ?? (rawPolicy as Record<string, unknown>).mdapeCeiling),
+        coverage_floor: optNumber((rawPolicy as Record<string, unknown>).coverage_floor ?? (rawPolicy as Record<string, unknown>).coverageFloor),
+        min_rows: optNumber((rawPolicy as Record<string, unknown>).min_rows ?? (rawPolicy as Record<string, unknown>).minRows),
+        ...(rawPolicy as Record<string, unknown>),
+      } : null,
+      warmup: rawWarmup && typeof rawWarmup === 'object' ? {
+        status: optString((rawWarmup as Record<string, unknown>).status) ?? '',
+        message: optString((rawWarmup as Record<string, unknown>).message),
+        runs_needed: optNumber((rawWarmup as Record<string, unknown>).runs_needed ?? (rawWarmup as Record<string, unknown>).runsNeeded),
+        runs_completed: optNumber((rawWarmup as Record<string, unknown>).runs_completed ?? (rawWarmup as Record<string, unknown>).runsCompleted),
+        ...(rawWarmup as Record<string, unknown>),
+      } : null,
+    },
+  };
+}
+
 export async function getAnalyticsMl() {
-  return request<MlAnalytics>('/api/v1/ops/analytics/ml');
+  const raw = await request<unknown>('/api/v1/ops/analytics/ml');
+  return normalizeMlAnalytics(raw);
 }
 
 export async function getAnalyticsReport() {
