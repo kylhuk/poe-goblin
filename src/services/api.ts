@@ -130,9 +130,53 @@ export interface ReportData {
   realized_pnl_chaos: number;
 }
 
+// ========== Gold Diagnostics ==========
+export interface GoldDiagnosticsMart {
+  martName: string;
+  sourceName: string | null;
+  diagnosticState: string;
+  sourceRowCount: number;
+  goldRowCount: number;
+  sourceLatestAt: string | null;
+  goldLatestAt: string | null;
+  goldFreshnessMinutes: number | null;
+  sourceToGoldLagMinutes: number | null;
+  leagueVisibility: string | null;
+  sourceLeagueRows: number | null;
+  goldLeagueRows: number | null;
+}
+
+export interface GoldDiagnosticsSummary {
+  status: string;
+  martCount: number;
+  problemMarts: number;
+  goldEmptyMarts: number;
+  staleMarts: number;
+  missingLeagueMarts: number;
+}
+
+export interface GoldDiagnosticsResponse {
+  league: string;
+  summary: GoldDiagnosticsSummary;
+  marts: GoldDiagnosticsMart[];
+}
+
+// ========== ML Rollout Controls ==========
+export interface RolloutControls {
+  league: string;
+  shadowMode: boolean;
+  cutoverEnabled: boolean;
+  candidateModelVersion: string | null;
+  incumbentModelVersion: string | null;
+  effectiveServingModelVersion: string | null;
+  updatedAt: string | null;
+  lastAction: string | null;
+}
+
 export interface ReportAnalytics {
   status: string;
   report: ReportData;
+  goldDiagnostics?: GoldDiagnosticsResponse | null;
 }
 
 type ApiErrorPayload = {
