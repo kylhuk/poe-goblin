@@ -931,6 +931,189 @@ function ReportsPanel() {
   );
 }
 
+function diagnosticStateColor(state: string): string {
+  if (state === 'ok' || state === 'healthy') return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+  if (state === 'stale') return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+  if (state === 'gold_empty' || state === 'degraded') return 'bg-destructive/20 text-destructive border-destructive/30';
+  if (state === 'league_gap') return 'bg-sky-500/20 text-sky-400 border-sky-500/30';
+  return 'bg-muted text-muted-foreground border-border';
+}
+
+function DiagnosticsPanel() {
+  const [data, setData] = useState<GoldDiagnosticsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    getAnalyticsReport()
+      .then((report) => {
+        setData(report.goldDiagnostics ?? null);
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err instanceof Error ? err.message : 'Failed to load diagnostics');
+        setLoading(false);
+      });
+  }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 10_000); return () => clearInterval(iv); }, [load]);
+
+  if (error) return <RenderState kind="degraded" message={error} />;
+  if (loading) return <RenderState kind="empty" message="Loading diagnostics…" />;
+  if (!data) return <RenderState kind="feature_unavailable" message="Gold diagnostics not available from this endpoint" />;
+
+  const s = data.summary;
+
+  return (
+    <div className="space-y-4">
+      {/* Summary */}
+      <div className="flex items-center gap-3 mb-2">
+        <Badge className={diagnosticStateColor(s.status)}>{humanize(s.status)}</Badge>
+        <span className="text-xs text-muted-foreground">League: <span className="font-mono text-foreground">{data.league}</span></span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+        {([
+          ['Marts', s.martCount],
+          ['Problems', s.problemMarts],
+          ['Gold Empty', s.goldEmptyMarts],
+          ['Stale', s.staleMarts],
+          ['Missing League', s.missingLeagueMarts],
+        ] as const).map(([label, val]) => (
+          <Card key={label} className="card-game">
+            <CardContent className="p-4 text-center">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <p className={`text-lg font-mono ${typeof val === 'number' && val > 0 && label !== 'Marts' ? 'text-amber-400' : 'text-foreground'}`}>{val}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Mart Table */}
+      {data.marts.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Mart Health</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Mart</TableHead>
+                  <TableHead className="text-xs">State</TableHead>
+                  <TableHead className="text-xs text-right">Source Rows</TableHead>
+                  <TableHead className="text-xs text-right">Gold Rows</TableHead>
+                  <TableHead className="text-xs text-right">Freshness (min)</TableHead>
+                  <TableHead className="text-xs text-right">Lag (min)</TableHead>
+                  <TableHead className="text-xs">League</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.marts.map((m) => (
+                  <TableRow key={m.martName}>
+                    <TableCell className="text-xs font-mono">{m.martName}</TableCell>
+                    <TableCell><Badge className={`text-[10px] ${diagnosticStateColor(m.diagnosticState)}`}>{humanize(m.diagnosticState)}</Badge></TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.sourceRowCount.toLocaleString()}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.goldRowCount.toLocaleString()}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.goldFreshnessMinutes != null ? m.goldFreshnessMinutes.toFixed(0) : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.sourceToGoldLagMinutes != null ? m.sourceToGoldLagMinutes.toFixed(0) : '—'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{m.leagueVisibility ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function RolloutCard() {
+  const [data, setData] = useState<RolloutControls | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [updating, setUpdating] = useState(false);
+
+  const load = useCallback(() => {
+    getRolloutControls()
+      .then(setData)
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load rollout'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = useCallback(async (field: 'shadowMode' | 'cutoverEnabled', value: boolean) => {
+    setUpdating(true);
+    try {
+      const updated = await updateRolloutControls({ [field]: value });
+      setData(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update rollout');
+    } finally {
+      setUpdating(false);
+    }
+  }, []);
+
+  if (error) {
+    return (
+      <Card className="card-game">
+        <CardHeader className="pb-2"><CardTitle className="text-sm font-sans">Rollout Controls</CardTitle></CardHeader>
+        <CardContent><RenderState kind="degraded" message={error} /></CardContent>
+      </Card>
+    );
+  }
+  if (!data) return null;
+
+  return (
+    <Card className="card-game">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-sans">Rollout Controls</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 text-xs">
+          <div>
+            <span className="text-muted-foreground">Candidate</span>
+            <p className="font-mono text-foreground">{data.candidateModelVersion ?? 'None'}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Incumbent</span>
+            <p className="font-mono text-foreground">{data.incumbentModelVersion ?? 'None'}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Serving</span>
+            <p className="font-mono text-foreground">{data.effectiveServingModelVersion ?? 'None'}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2">
+            <Switch
+              id="shadow-mode"
+              checked={data.shadowMode}
+              disabled={updating}
+              onCheckedChange={(v) => toggle('shadowMode', v)}
+            />
+            <Label htmlFor="shadow-mode" className="text-xs">Shadow Mode</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="cutover-enabled"
+              checked={data.cutoverEnabled}
+              disabled={updating}
+              onCheckedChange={(v) => toggle('cutoverEnabled', v)}
+            />
+            <Label htmlFor="cutover-enabled" className="text-xs">Cutover</Label>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+          {data.lastAction && <span>Last action: <span className="font-mono text-foreground">{data.lastAction}</span></span>}
+          {data.updatedAt && <span>Updated: <span className="text-foreground">{formatDateTimeShort(data.updatedAt)}</span></span>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
 
 type HistogramBucket = {
   bucketStart: number | string;
