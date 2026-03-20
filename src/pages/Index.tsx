@@ -83,7 +83,12 @@ const Index = () => {
   const { tab, subtab } = useParams<{ tab?: string; subtab?: string }>();
   const navigate = useNavigate();
 
-  const visibleTabs = TABS.filter((t) => t.roles.includes(userRole));
+  const handleSubtabChange = (s: string) => {
+    navigate(`/${tab || "analytics"}/${s}`, { replace: true });
+  };
+
+  const tabs = makeTabs(subtab, handleSubtabChange);
+  const visibleTabs = tabs.filter((t) => t.roles.includes(userRole));
   const defaultTab = DEFAULT_TAB[userRole] || "pricecheck";
 
   // Resolve active tab: use URL param if valid, otherwise default
