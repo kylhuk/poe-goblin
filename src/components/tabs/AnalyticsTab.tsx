@@ -34,6 +34,7 @@ import {
   type BacktestAnalytics, 
   type MlAnalytics, 
   type MlStatus,
+  type MlRouteHotspot,
   type ReportAnalytics,
   type ReportData,
 } from '@/services/api';
@@ -277,13 +278,32 @@ function MlPanel() {
   useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
-  if (!data?.status) return <RenderState kind="empty" message="No ML data available" />;
+  if (!data?.status) {
+    return <RenderState kind="empty" message="No ML data available" />;
+  }
 
   const s = data.status as MlStatus;
   const cmp = s.candidate_vs_incumbent ?? null;
 
   return (
     <div className="space-y-4">
+      {/* Warmup notice */}
+      {s.warmup && (
+        <Card className="card-game border-sky-500/30">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3 text-xs">
+              <Badge className="bg-sky-500/20 text-sky-400 border-sky-500/30">Warmup</Badge>
+              <span className="text-muted-foreground">{s.warmup.message || 'Model warming up'}</span>
+              {s.warmup.runs_needed != null && s.warmup.runs_completed != null && (
+                <span className="font-mono text-foreground ml-auto">
+                  {s.warmup.runs_completed}/{s.warmup.runs_needed} runs
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Status Header */}
       <Card className="card-game">
         <CardHeader className="pb-2">
@@ -340,6 +360,45 @@ function MlPanel() {
         </Card>
       </div>
 
+      {/* Promotion Policy */}
+      {s.promotion_policy && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Promotion Gates</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-xs">
+              {s.promotion_policy.mdape_ceiling != null && (
+                <div>
+                  <span className="text-muted-foreground">MDAPE Ceiling</span>
+                  <p className="font-mono text-foreground">{(s.promotion_policy.mdape_ceiling * 100).toFixed(1)}%</p>
+                </div>
+              )}
+              {s.promotion_policy.coverage_floor != null && (
+                <div>
+                  <span className="text-muted-foreground">Coverage Floor</span>
+                  <p className="font-mono text-foreground">{(s.promotion_policy.coverage_floor * 100).toFixed(1)}%</p>
+                </div>
+              )}
+              {s.promotion_policy.min_rows != null && (
+                <div>
+                  <span className="text-muted-foreground">Min Rows</span>
+                  <p className="font-mono text-foreground">{s.promotion_policy.min_rows.toLocaleString()}</p>
+                </div>
+              )}
+              {Object.entries(s.promotion_policy)
+                .filter(([k]) => !['mdape_ceiling', 'coverage_floor', 'min_rows', 'mdapeCeiling', 'coverageFloor', 'minRows'].includes(k))
+                .map(([k, v]) => (
+                  <div key={k}>
+                    <span className="text-muted-foreground">{humanize(k)}</span>
+                    <p className="font-mono text-foreground">{typeof v === 'number' ? (v < 1 ? (v * 100).toFixed(1) + '%' : v.toLocaleString()) : String(v ?? '—')}</p>
+                  </div>
+                ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Candidate vs Incumbent */}
       {cmp && (
         <Card className="card-game">
@@ -358,24 +417,24 @@ function MlPanel() {
               <TableBody>
                 <TableRow>
                   <TableCell className="text-xs text-muted-foreground">Run ID</TableCell>
-                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.candidate_run_id}</TableCell>
-                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.incumbent_run_id}</TableCell>
+                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.candidate_run_id || '—'}</TableCell>
+                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.incumbent_run_id || '—'}</TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell className="text-xs text-muted-foreground">Avg MDAPE</TableCell>
-                  <TableCell className="text-xs font-mono">{(cmp.candidate_avg_mdape * 100).toFixed(1)}%</TableCell>
-                  <TableCell className="text-xs font-mono">{(cmp.incumbent_avg_mdape * 100).toFixed(1)}%</TableCell>
+                  <TableCell className="text-xs font-mono">{cmp.candidate_avg_mdape != null ? (cmp.candidate_avg_mdape * 100).toFixed(1) + '%' : '—'}</TableCell>
+                  <TableCell className="text-xs font-mono">{cmp.incumbent_avg_mdape != null ? (cmp.incumbent_avg_mdape * 100).toFixed(1) + '%' : '—'}</TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell className="text-xs text-muted-foreground">Interval Coverage</TableCell>
-                  <TableCell className="text-xs font-mono">{(cmp.candidate_avg_interval_coverage * 100).toFixed(1)}%</TableCell>
-                  <TableCell className="text-xs font-mono">{(cmp.incumbent_avg_interval_coverage * 100).toFixed(1)}%</TableCell>
+                  <TableCell className="text-xs font-mono">{cmp.candidate_avg_interval_coverage != null ? (cmp.candidate_avg_interval_coverage * 100).toFixed(1) + '%' : '—'}</TableCell>
+                  <TableCell className="text-xs font-mono">{cmp.incumbent_avg_interval_coverage != null ? (cmp.incumbent_avg_interval_coverage * 100).toFixed(1) + '%' : '—'}</TableCell>
                 </TableRow>
               </TableBody>
             </Table>
             <div className="flex items-center gap-6 px-4 py-3 border-t border-border text-xs">
-              <span className="text-muted-foreground">MDAPE Δ: <span className="font-mono text-foreground">{(cmp.mdape_improvement * 100).toFixed(1)}%</span></span>
-              <span className="text-muted-foreground">Coverage Δ: <span className="font-mono text-foreground">{(cmp.coverage_delta * 100).toFixed(1)}%</span></span>
+              <span className="text-muted-foreground">MDAPE Δ: <span className="font-mono text-foreground">{cmp.mdape_improvement != null ? (cmp.mdape_improvement * 100).toFixed(1) + '%' : '—'}</span></span>
+              <span className="text-muted-foreground">Coverage Δ: <span className="font-mono text-foreground">{cmp.coverage_delta != null ? (cmp.coverage_delta * 100).toFixed(1) + '%' : '—'}</span></span>
               <span className="text-muted-foreground flex items-center gap-1">
                 Floor OK: {cmp.coverage_floor_ok
                   ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
@@ -392,10 +451,35 @@ function MlPanel() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-sans">Route Hotspots</CardTitle>
           </CardHeader>
-          <CardContent>
-            <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all">
-              {JSON.stringify(s.route_hotspots, null, 2)}
-            </pre>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Route</TableHead>
+                  <TableHead className="text-xs">MDAPE</TableHead>
+                  <TableHead className="text-xs">Coverage</TableHead>
+                  <TableHead className="text-xs">Samples</TableHead>
+                  <TableHead className="text-xs">Anomaly</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {s.route_hotspots.map((h: MlRouteHotspot, i: number) => (
+                  <TableRow key={i}>
+                    <TableCell className="text-xs font-mono">{h.route ?? '—'}</TableCell>
+                    <TableCell className="text-xs font-mono">{h.avg_mdape != null ? (h.avg_mdape * 100).toFixed(1) + '%' : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono">{h.avg_interval_coverage != null ? (h.avg_interval_coverage * 100).toFixed(1) + '%' : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono">{h.sample_count?.toLocaleString() ?? '—'}</TableCell>
+                    <TableCell className="text-xs">
+                      {h.anomaly === true
+                        ? <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[10px]">Yes</Badge>
+                        : h.anomaly === false
+                          ? <span className="text-muted-foreground">No</span>
+                          : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       ) : (
