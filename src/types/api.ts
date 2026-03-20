@@ -157,7 +157,7 @@ export interface PriceCheckResponse {
 
 // ========== ML Predict One ==========
 export interface MlPredictOneRequest {
-  clipboard: string;
+  itemText: string;
 }
 
 export interface MlPredictOneResponse {
