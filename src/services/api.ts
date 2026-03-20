@@ -71,6 +71,30 @@ export interface MlCandidateComparison {
   coverage_floor_ok: boolean;
 }
 
+export interface MlPromotionPolicy {
+  mdape_ceiling: number | null;
+  coverage_floor: number | null;
+  min_rows: number | null;
+  [key: string]: unknown;
+}
+
+export interface MlWarmup {
+  status: string;
+  message: string | null;
+  runs_needed: number | null;
+  runs_completed: number | null;
+  [key: string]: unknown;
+}
+
+export interface MlRouteHotspot {
+  route: string | null;
+  avg_mdape: number | null;
+  avg_interval_coverage: number | null;
+  sample_count: number | null;
+  anomaly: boolean | null;
+  [key: string]: unknown;
+}
+
 export interface MlStatus {
   league: string;
   run: string;
@@ -80,8 +104,10 @@ export interface MlStatus {
   active_model_version: string | null;
   latest_avg_mdape: number;
   latest_avg_interval_coverage: number;
-  candidate_vs_incumbent: MlCandidateComparison;
-  route_hotspots: unknown[];
+  candidate_vs_incumbent: MlCandidateComparison | null;
+  route_hotspots: MlRouteHotspot[];
+  promotion_policy: MlPromotionPolicy | null;
+  warmup: MlWarmup | null;
 }
 
 export interface MlAnalytics {
