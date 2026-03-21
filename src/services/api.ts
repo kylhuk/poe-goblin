@@ -459,6 +459,7 @@ function normalizeRolloutControls(raw: unknown): RolloutControls {
     league: optString(o.league) ?? '',
     shadowMode: typeof (o.shadowMode ?? o.shadow_mode) === 'boolean' ? (o.shadowMode ?? o.shadow_mode) as boolean : false,
     cutoverEnabled: typeof (o.cutoverEnabled ?? o.cutover_enabled) === 'boolean' ? (o.cutoverEnabled ?? o.cutover_enabled) as boolean : false,
+    rollbackToIncumbent: typeof (o.rollbackToIncumbent ?? o.rollback_to_incumbent) === 'boolean' ? (o.rollbackToIncumbent ?? o.rollback_to_incumbent) as boolean : false,
     candidateModelVersion: optString(o.candidateModelVersion ?? o.candidate_model_version),
     incumbentModelVersion: optString(o.incumbentModelVersion ?? o.incumbent_model_version),
     effectiveServingModelVersion: optString(o.effectiveServingModelVersion ?? o.effective_serving_model_version),
