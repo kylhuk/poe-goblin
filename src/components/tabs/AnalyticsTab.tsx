@@ -758,6 +758,94 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
         </>
       )}
 
+      {/* Model Metrics (per-route model performance) */}
+      {modelMetrics.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Model Metrics</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Route</TableHead>
+                  <TableHead className="text-xs">Model</TableHead>
+                  <TableHead className="text-xs text-right">Samples</TableHead>
+                  <TableHead className="text-xs text-right">MDAPE</TableHead>
+                  <TableHead className="text-xs text-right">Coverage</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {modelMetrics.map((m, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="text-xs font-mono">{m.route ?? '—'}</TableCell>
+                    <TableCell className="text-xs font-mono">{m.modelVersion ?? '—'}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.sampleCount != null ? formatCompact(m.sampleCount) : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{formatPct(m.avgMdape)}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{formatPct(m.avgIntervalCoverage)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Model History */}
+      {modelHistoryEntries.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Model Version History</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Model</TableHead>
+                  <TableHead className="text-xs">Promoted</TableHead>
+                  <TableHead className="text-xs">Retired</TableHead>
+                  <TableHead className="text-xs text-right">Runs</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {modelHistoryEntries.map((m, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="text-xs font-mono">{m.modelVersion ?? '—'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{m.promotedAt ? formatDateTimeShort(m.promotedAt) : '—'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{m.retiredAt ? formatDateTimeShort(m.retiredAt) : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.runsCount ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Route Families */}
+      {routeFamilies.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Route Families</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {routeFamilies.map((f, i) => (
+              <div key={i} className="text-xs">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium text-foreground">{f.family ?? 'Unknown'}</span>
+                  {f.totalSamples != null && <span className="text-muted-foreground font-mono">{formatCompact(f.totalSamples)} samples</span>}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {f.routes.map((r) => (
+                    <Badge key={r} variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5">{r}</Badge>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       {runs.length > 0 && (
         <Card className="card-game">
           <CardHeader className="pb-2">
