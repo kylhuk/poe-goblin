@@ -703,12 +703,13 @@ def analytics_search_suggestions(
     query: str,
     limit: int = 8,
 ) -> dict[str, Any]:
-    compact_query = query.strip()
+    compact_query = _normalized_query(query)
     if not compact_query:
         return {"query": "", "suggestions": []}
     query_limit = max(1, min(limit, 20))
     label_expr = _search_item_label_sql()
     kind_expr = _search_item_kind_sql()
+    relevance_sql = _search_relevance_sql(label_expr, compact_query)
     rows = _safe_json_rows(
         client,
         " ".join(
@@ -716,13 +717,14 @@ def analytics_search_suggestions(
                 "SELECT",
                 f"{label_expr} AS item_name,",
                 f"{kind_expr} AS item_kind,",
+                f"{relevance_sql} AS relevance_rank,",
                 "count() AS match_count",
                 "FROM poe_trade.ml_price_dataset_v1",
                 "WHERE normalized_price_chaos IS NOT NULL",
                 "AND normalized_price_chaos > 0",
                 f"AND positionCaseInsensitiveUTF8({label_expr}, {_quote_sql_string(compact_query)}) > 0",
-                "GROUP BY item_name, item_kind",
-                "ORDER BY match_count DESC, item_name ASC",
+                "GROUP BY item_name, item_kind, relevance_rank",
+                "ORDER BY relevance_rank ASC, match_count DESC, item_name ASC",
                 f"LIMIT {query_limit} FORMAT JSONEachRow",
             ]
         ),
@@ -747,7 +749,7 @@ def analytics_search_history(
     query_params: Mapping[str, list[str]],
     default_league: str | None = None,
 ) -> dict[str, Any]:
-    compact_query = _first_query_param(query_params, "query")
+    compact_query = _normalized_query(_first_query_param(query_params, "query"))
     league = _first_query_param(query_params, "league") or (default_league or "")
     sort = _normalize_history_sort(_first_query_param(query_params, "sort"))
     order = _normalize_sort_order(_first_query_param(query_params, "order"))
@@ -868,6 +870,7 @@ def analytics_search_history(
     )
 
     label_expr = _search_item_label_sql()
+    relevance_sql = _search_relevance_sql(label_expr, compact_query)
     row_rows = _safe_json_rows(
         client,
         " ".join(
@@ -876,10 +879,11 @@ def analytics_search_history(
                 f"{label_expr} AS item_name,",
                 "league,",
                 "normalized_price_chaos AS listed_price,",
-                "as_of_ts AS added_on",
+                "as_of_ts AS added_on,",
+                f"{relevance_sql} AS relevance_rank",
                 "FROM poe_trade.ml_price_dataset_v1",
                 rows_where,
-                f"ORDER BY {_history_order_sql(sort, order)}",
+                f"ORDER BY {_history_order_sql(sort, order, query_text=compact_query)}",
                 f"LIMIT {query_limit} FORMAT JSONEachRow",
             ]
         ),
@@ -948,99 +952,55 @@ def analytics_pricing_outliers(
     minimum_support = _query_param_int(
         query_params, "min_total", default=20, minimum=1, maximum=5000
     )
-    sort = _normalize_outlier_sort(_first_query_param(query_params, "sort"))
+    max_buy_in = _first_bounded_float_query_param(
+        query_params,
+        ["max_buy_in", "maxBuyIn"],
+        default=100.0,
+        minimum=1.0,
+        maximum=1000.0,
+    )
+    sort = _normalize_outlier_sort(
+        _first_query_param(query_params, "sort") or "expected_profit"
+    )
     order = _normalize_sort_order(
         _first_query_param(query_params, "order"), default="desc"
     )
-    query_text = _first_query_param(query_params, "query")
+    query_text = _normalized_query(_first_query_param(query_params, "query"))
     league_clause = _outlier_league_clause(league)
+    affix_token_league_clause = _outlier_token_league_clause(league)
     item_label_expr = _search_item_label_sql("d")
-    summary_filter = ""
+    item_query_filter = "1"
+    item_or_affix_query_filter = "1"
     if query_text:
         quoted_query = _quote_sql_string(query_text)
-        summary_filter = (
-            "WHERE positionCaseInsensitiveUTF8(item_name, "
-            + quoted_query
-            + ") > 0 OR positionCaseInsensitiveUTF8(affix_analyzed, "
-            + quoted_query
-            + ") > 0"
+        item_query_filter = (
+            f"positionCaseInsensitiveUTF8(item_name, {quoted_query}) > 0"
+        )
+        item_or_affix_query_filter = (
+            f"positionCaseInsensitiveUTF8(item_name, {quoted_query}) > 0 "
+            f"OR positionCaseInsensitiveUTF8(affix_analyzed, {quoted_query}) > 0"
         )
     summary_rows = _safe_json_rows(
         client,
         " ".join(
             [
-                "WITH base AS (",
-                "SELECT",
-                f"{item_label_expr} AS item_name,",
-                "d.base_type AS base_type,",
-                "ifNull(d.rarity, '') AS rarity,",
-                "d.item_id AS item_id,",
-                "d.as_of_ts AS as_of_ts,",
-                "toFloat64(d.normalized_price_chaos) AS listed_price",
-                "FROM poe_trade.ml_price_dataset_v1 AS d",
-                f"WHERE {league_clause}",
-                "AND d.normalized_price_chaos IS NOT NULL",
-                "AND d.normalized_price_chaos > 0",
-                "),",
-                "item_thresholds AS (",
-                "SELECT item_name, base_type, rarity,",
-                "quantileTDigest(0.1)(listed_price) AS p10,",
-                "quantileTDigest(0.5)(listed_price) AS median,",
-                "quantileTDigest(0.9)(listed_price) AS p90,",
-                "count() AS items_total",
-                "FROM base",
-                "GROUP BY item_name, base_type, rarity",
-                f"HAVING items_total >= {minimum_support}",
-                "),",
-                "item_weekly AS (",
-                "SELECT t.item_name, t.base_type, t.rarity, toStartOfWeek(b.as_of_ts) AS week_start,",
-                "countIf(b.listed_price <= t.p10) AS too_cheap_count",
-                "FROM base AS b",
-                "INNER JOIN item_thresholds AS t ON b.item_name = t.item_name AND b.base_type = t.base_type AND b.rarity = t.rarity",
-                "GROUP BY t.item_name, t.base_type, t.rarity, week_start",
-                "),",
-                "item_rows AS (",
-                "SELECT t.item_name AS item_name, '' AS affix_analyzed, t.p10 AS p10, t.median AS median, t.p90 AS p90,",
-                "round(avg(w.too_cheap_count), 4) AS items_per_week, t.items_total AS items_total, 'item' AS analysis_level",
-                "FROM item_thresholds AS t",
-                "LEFT JOIN item_weekly AS w ON t.item_name = w.item_name AND t.base_type = w.base_type AND t.rarity = w.rarity",
-                "GROUP BY t.item_name, t.base_type, t.rarity, t.p10, t.median, t.p90, t.items_total",
-                "),",
-                "affix_base AS (",
-                "SELECT b.item_name, b.base_type, b.rarity, b.as_of_ts, b.listed_price,",
-                "coalesce(nullIf(c.mod_text, ''), nullIf(t.mod_token, '')) AS affix_analyzed",
-                "FROM base AS b",
-                f"INNER JOIN poe_trade.ml_item_mod_tokens_v1 AS t ON assumeNotNull(b.item_id) = t.item_id AND t.league = {_quote_sql_string(league)}",
-                "LEFT JOIN poe_trade.ml_mod_catalog_v1 AS c ON c.mod_token = t.mod_token",
-                "WHERE b.item_id IS NOT NULL",
-                "),",
-                "affix_thresholds AS (",
-                "SELECT item_name, base_type, rarity, affix_analyzed,",
-                "quantileTDigest(0.1)(listed_price) AS p10,",
-                "quantileTDigest(0.5)(listed_price) AS median,",
-                "quantileTDigest(0.9)(listed_price) AS p90,",
-                "count() AS items_total",
-                "FROM affix_base",
-                "WHERE affix_analyzed IS NOT NULL",
-                "GROUP BY item_name, base_type, rarity, affix_analyzed",
-                f"HAVING items_total >= {minimum_support}",
-                "),",
-                "affix_weekly AS (",
-                "SELECT t.item_name, t.base_type, t.rarity, t.affix_analyzed, toStartOfWeek(a.as_of_ts) AS week_start,",
-                "countIf(a.listed_price <= t.p10) AS too_cheap_count",
-                "FROM affix_base AS a",
-                "INNER JOIN affix_thresholds AS t ON a.item_name = t.item_name AND a.base_type = t.base_type AND a.rarity = t.rarity AND a.affix_analyzed = t.affix_analyzed",
-                "GROUP BY t.item_name, t.base_type, t.rarity, t.affix_analyzed, week_start",
-                "),",
-                "affix_rows AS (",
-                "SELECT t.item_name AS item_name, t.affix_analyzed AS affix_analyzed, t.p10 AS p10, t.median AS median, t.p90 AS p90,",
-                "round(avg(w.too_cheap_count), 4) AS items_per_week, t.items_total AS items_total, 'affix' AS analysis_level",
-                "FROM affix_thresholds AS t",
-                "LEFT JOIN affix_weekly AS w ON t.item_name = w.item_name AND t.base_type = w.base_type AND t.rarity = w.rarity AND t.affix_analyzed = w.affix_analyzed",
-                "GROUP BY t.item_name, t.base_type, t.rarity, t.affix_analyzed, t.p10, t.median, t.p90, t.items_total",
-                ")",
-                "SELECT * FROM (SELECT * FROM item_rows UNION ALL SELECT * FROM affix_rows)",
-                summary_filter,
+                "SELECT * FROM (",
+                *_pricing_outlier_ctes(
+                    item_label_expr=item_label_expr,
+                    league_clause=league_clause,
+                    affix_token_league_clause=affix_token_league_clause,
+                    minimum_support=minimum_support,
+                    item_query_filter=item_query_filter,
+                    item_or_affix_query_filter=item_or_affix_query_filter,
+                    summary_mode=True,
+                ),
+                "SELECT item_name, base_type, rarity, affix_analyzed, p10, median, p90, items_per_week, items_total, analysis_level, observed_weeks, cheap_weeks,",
+                "p10 AS entry_price,",
+                "median - p10 AS expected_profit,",
+                "if(p10 > 0, (median - p10) / p10, NULL) AS roi,",
+                "round(coalesce(cheap_weeks / nullIf(toFloat64(observed_weeks), 0), 0), 4) AS underpriced_rate",
+                "FROM table_rows",
+                f") WHERE entry_price <= {max_buy_in}",
                 f"ORDER BY {_outlier_order_sql(sort, order)}",
                 f"LIMIT {limit} FORMAT JSONEachRow",
             ]
@@ -1050,29 +1010,24 @@ def analytics_pricing_outliers(
         client,
         " ".join(
             [
-                "WITH base AS (",
-                "SELECT",
-                f"{item_label_expr} AS item_name,",
-                "d.base_type AS base_type,",
-                "ifNull(d.rarity, '') AS rarity,",
-                "d.as_of_ts AS as_of_ts,",
-                "toFloat64(d.normalized_price_chaos) AS listed_price",
-                "FROM poe_trade.ml_price_dataset_v1 AS d",
-                f"WHERE {league_clause}",
-                "AND d.normalized_price_chaos IS NOT NULL",
-                "AND d.normalized_price_chaos > 0",
+                *_pricing_outlier_ctes(
+                    item_label_expr=item_label_expr,
+                    league_clause=league_clause,
+                    affix_token_league_clause=affix_token_league_clause,
+                    minimum_support=minimum_support,
+                    item_query_filter=item_query_filter,
+                    item_or_affix_query_filter=item_or_affix_query_filter,
+                    summary_mode=False,
+                ),
+                "filtered_item_rows AS (",
+                f"SELECT item_name, min(p10) AS p10, max(items_total) AS items_total FROM table_rows WHERE p10 <= {max_buy_in} GROUP BY item_name",
                 "),",
-                "item_thresholds AS (",
-                "SELECT item_name, base_type, rarity,",
-                "quantileTDigest(0.1)(listed_price) AS p10,",
-                "count() AS items_total",
-                "FROM base",
-                "GROUP BY item_name, base_type, rarity",
-                f"HAVING items_total >= {minimum_support}",
+                "weekly_input AS (",
+                f"SELECT item_name, p10 FROM filtered_item_rows WHERE items_total >= {minimum_support}",
                 ")",
-                "SELECT toStartOfWeek(b.as_of_ts) AS week_start, countIf(b.listed_price <= t.p10) AS too_cheap_count",
+                "SELECT toStartOfWeek(b.as_of_ts) AS week_start, countIf(b.listed_price <= f.p10) AS too_cheap_count",
                 "FROM base AS b",
-                "INNER JOIN item_thresholds AS t ON b.item_name = t.item_name AND b.base_type = t.base_type AND b.rarity = t.rarity",
+                "INNER JOIN weekly_input AS f ON b.item_name = f.item_name",
                 "GROUP BY week_start",
                 "ORDER BY week_start ASC FORMAT JSONEachRow",
             ]
@@ -1080,10 +1035,18 @@ def analytics_pricing_outliers(
     )
     return {
         "query": {
+            "query": query_text,
+            "text": query_text,
             "league": league,
             "sort": sort,
             "order": order,
             "minTotal": minimum_support,
+            "maxBuyIn": int(max_buy_in) if max_buy_in.is_integer() else max_buy_in,
+            "limit": limit,
+            "weeklyAggregation": {
+                "level": "item_name",
+                "scope": "deduped_filtered_rows",
+            },
         },
         "rows": [
             {
@@ -1095,6 +1058,29 @@ def analytics_pricing_outliers(
                 "itemsPerWeek": _coerce_float(row.get("items_per_week")) or 0.0,
                 "itemsTotal": _as_int(row.get("items_total")),
                 "analysisLevel": str(row.get("analysis_level") or "item"),
+                "entryPrice": _coerce_float(row.get("entry_price"))
+                if _coerce_float(row.get("entry_price")) is not None
+                else _coerce_float(row.get("p10")),
+                "expectedProfit": _coerce_float(row.get("expected_profit"))
+                if _coerce_float(row.get("expected_profit")) is not None
+                else (
+                    (_coerce_float(row.get("median")) or 0.0)
+                    - (_coerce_float(row.get("p10")) or 0.0)
+                ),
+                "roi": _coerce_float(row.get("roi"))
+                if _coerce_float(row.get("roi")) is not None
+                else (
+                    (
+                        (_coerce_float(row.get("median")) or 0.0)
+                        - (_coerce_float(row.get("p10")) or 0.0)
+                    )
+                    / (_coerce_float(row.get("p10")) or 1.0)
+                    if (_coerce_float(row.get("p10")) or 0.0) > 0
+                    else None
+                ),
+                "underpricedRate": round(
+                    _coerce_float(row.get("underpriced_rate")) or 0.0, 4
+                ),
             }
             for row in summary_rows
         ],
@@ -1278,6 +1264,44 @@ def _query_param_int(
     return max(minimum, min(maximum, parsed))
 
 
+def _query_param_float_with_bounds(
+    query_params: Mapping[str, list[str]],
+    key: str,
+    *,
+    default: float,
+    minimum: float,
+    maximum: float,
+) -> float:
+    raw = _first_query_param(query_params, key)
+    if not raw:
+        return default
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _first_bounded_float_query_param(
+    query_params: Mapping[str, list[str]],
+    keys: list[str],
+    *,
+    default: float,
+    minimum: float,
+    maximum: float,
+) -> float:
+    for key in keys:
+        raw = _first_query_param(query_params, key)
+        if not raw:
+            continue
+        try:
+            parsed = float(raw)
+        except ValueError:
+            return default
+        return max(minimum, min(maximum, parsed))
+    return default
+
+
 def _query_param_datetime(
     query_params: Mapping[str, list[str]], key: str
 ) -> str | None:
@@ -1288,6 +1312,10 @@ def _query_param_datetime(
     if parsed is None:
         return None
     return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _normalized_query(value: str) -> str:
+    return value.strip()
 
 
 def _search_item_label_sql(alias: str = "") -> str:
@@ -1350,17 +1378,33 @@ def _normalize_sort_order(value: str, *, default: str = "asc") -> str:
 def _normalize_history_sort(value: str) -> str:
     if value in {"item_name", "league", "listed_price", "added_on"}:
         return value
-    return "added_on"
+    return "item_name"
 
 
-def _history_order_sql(sort: str, order: str) -> str:
-    column = {
-        "item_name": "item_name",
-        "league": "league",
-        "listed_price": "listed_price",
-        "added_on": "added_on",
-    }.get(sort, "added_on")
-    return f"{column} {order.upper()}"
+def _search_relevance_sql(label_expr: str, query_text: str) -> str:
+    if not query_text:
+        return "3"
+    quoted_query = _quote_sql_string(query_text)
+    return (
+        "multiIf("
+        f"lowerUTF8({label_expr}) = lowerUTF8({quoted_query}), 0, "
+        f"startsWith(lowerUTF8({label_expr}), lowerUTF8({quoted_query})), 1, "
+        f"positionCaseInsensitiveUTF8({label_expr}, {quoted_query}) > 0, 2, "
+        "3)"
+    )
+
+
+def _history_order_sql(sort: str, order: str, *, query_text: str | None = None) -> str:
+    direction = "ASC" if order == "asc" else "DESC"
+    if sort == "item_name":
+        if query_text:
+            return f"relevance_rank ASC, item_name {direction}, added_on DESC"
+        return f"item_name {direction}, added_on DESC"
+    if sort == "league":
+        return f"league {direction}, added_on DESC"
+    if sort == "listed_price":
+        return f"listed_price {direction}, added_on DESC"
+    return f"added_on {direction}"
 
 
 def _history_price_bucket_size(min_price: float | None, max_price: float | None) -> str:
@@ -1385,6 +1429,11 @@ def _history_time_bucket_seconds(
 
 def _normalize_outlier_sort(value: str) -> str:
     if value in {
+        "expected_profit",
+        "roi",
+        "underpriced_rate",
+        "entry_price",
+        "fair_value",
         "item_name",
         "affix_analyzed",
         "p10",
@@ -1394,20 +1443,51 @@ def _normalize_outlier_sort(value: str) -> str:
         "items_total",
     }:
         return value
-    return "items_total"
+    return "expected_profit"
 
 
 def _outlier_order_sql(sort: str, order: str) -> str:
-    column = {
-        "item_name": "item_name",
-        "affix_analyzed": "affix_analyzed",
-        "p10": "p10",
-        "median": "median",
-        "p90": "p90",
-        "items_per_week": "items_per_week",
-        "items_total": "items_total",
-    }.get(sort, "items_total")
-    return f"{column} {order.upper()}, item_name ASC"
+    stable_suffix = ", analysis_level ASC, base_type ASC, rarity ASC"
+    default_desc_chain = (
+        "expected_profit DESC, roi DESC, underpriced_rate DESC, items_total DESC, "
+        "item_name ASC, affix_analyzed ASC" + stable_suffix
+    )
+    if sort == "expected_profit":
+        direction = "ASC" if order == "asc" else "DESC"
+        return (
+            f"expected_profit {direction}, roi {direction}, underpriced_rate {direction}, "
+            f"items_total {direction}, item_name ASC, affix_analyzed ASC{stable_suffix}"
+        )
+    normalized_sort = "median" if sort == "fair_value" else sort
+    direction = "ASC" if order == "asc" else "DESC"
+    if normalized_sort == "entry_price":
+        return f"entry_price {direction}, {default_desc_chain}"
+    if normalized_sort == "roi":
+        return (
+            f"roi {direction}, expected_profit DESC, underpriced_rate DESC, items_total DESC, "
+            f"item_name ASC, affix_analyzed ASC{stable_suffix}"
+        )
+    if normalized_sort == "underpriced_rate":
+        return (
+            f"underpriced_rate {direction}, expected_profit DESC, roi DESC, items_total DESC, "
+            f"item_name ASC, affix_analyzed ASC{stable_suffix}"
+        )
+    if normalized_sort in {
+        "item_name",
+        "affix_analyzed",
+        "p10",
+        "median",
+        "p90",
+        "items_per_week",
+        "items_total",
+    }:
+        if normalized_sort == "items_total":
+            return (
+                f"items_total {direction}, expected_profit DESC, roi DESC, "
+                f"underpriced_rate DESC, item_name ASC, affix_analyzed ASC{stable_suffix}"
+            )
+        return f"{normalized_sort} {direction}, {default_desc_chain}"
+    return default_desc_chain
 
 
 def _outlier_league_clause(league: str | None) -> str:
@@ -1415,6 +1495,160 @@ def _outlier_league_clause(league: str | None) -> str:
     if not compact_league or compact_league.lower() == "all":
         return "1"
     return f"d.league = {_quote_sql_string(compact_league)}"
+
+
+def _outlier_token_league_clause(league: str | None) -> str:
+    compact_league = (league or "").strip()
+    if not compact_league or compact_league.lower() == "all":
+        return "1"
+    return f"t.league = {_quote_sql_string(compact_league)}"
+
+
+def _pricing_outlier_ctes(
+    *,
+    item_label_expr: str,
+    league_clause: str,
+    affix_token_league_clause: str,
+    minimum_support: int,
+    item_query_filter: str,
+    item_or_affix_query_filter: str,
+    summary_mode: bool,
+) -> list[str]:
+    base_ctes = [
+        "WITH base AS (",
+        "SELECT",
+        f"{item_label_expr} AS item_name,",
+        "d.base_type AS base_type,",
+        "ifNull(d.rarity, '') AS rarity,",
+        "d.item_id AS item_id,",
+        "d.as_of_ts AS as_of_ts,",
+        "toFloat64(d.normalized_price_chaos) AS listed_price",
+        "FROM poe_trade.ml_price_dataset_v1 AS d",
+        f"WHERE {league_clause}",
+        "AND d.normalized_price_chaos IS NOT NULL",
+        "AND d.normalized_price_chaos > 0",
+        "),",
+        "item_thresholds AS (",
+        "SELECT item_name, base_type, rarity,",
+        "quantileTDigest(0.1)(listed_price) AS p10,",
+    ]
+    if summary_mode:
+        base_ctes.extend(
+            [
+                "quantileTDigest(0.5)(listed_price) AS median,",
+                "quantileTDigest(0.9)(listed_price) AS p90,",
+            ]
+        )
+    base_ctes.extend(
+        [
+            "count() AS items_total",
+            "FROM base",
+            "GROUP BY item_name, base_type, rarity",
+            f"HAVING items_total >= {minimum_support}",
+            "),",
+        ]
+    )
+    if summary_mode:
+        base_ctes.extend(
+            [
+                "item_weekly AS (",
+                "SELECT t.item_name, t.base_type, t.rarity, toStartOfWeek(b.as_of_ts) AS week_start,",
+                "count() AS listings_count,",
+                "countIf(b.listed_price <= t.p10) AS too_cheap_count",
+                "FROM base AS b",
+                "INNER JOIN item_thresholds AS t ON b.item_name = t.item_name AND b.base_type = t.base_type AND b.rarity = t.rarity",
+                "GROUP BY t.item_name, t.base_type, t.rarity, week_start",
+                "),",
+                "item_rows AS (",
+                "SELECT t.item_name AS item_name, t.base_type AS base_type, t.rarity AS rarity, '' AS affix_analyzed, t.p10 AS p10, t.median AS median, t.p90 AS p90,",
+                "round(avg(w.listings_count), 4) AS items_per_week, t.items_total AS items_total, uniq(w.week_start) AS observed_weeks, countIf(w.too_cheap_count > 0) AS cheap_weeks, 'item' AS analysis_level",
+                "FROM item_thresholds AS t",
+                "LEFT JOIN item_weekly AS w ON t.item_name = w.item_name AND t.base_type = w.base_type AND t.rarity = w.rarity",
+                "GROUP BY t.item_name, t.base_type, t.rarity, t.p10, t.median, t.p90, t.items_total",
+                "),",
+            ]
+        )
+    else:
+        base_ctes.extend(
+            [
+                "item_rows AS (",
+                "SELECT t.item_name AS item_name, t.p10 AS p10, t.items_total AS items_total",
+                "FROM item_thresholds AS t",
+                "),",
+            ]
+        )
+    base_ctes.extend(
+        [
+            "affix_base AS (",
+            "SELECT b.item_name, b.base_type, b.rarity, b.as_of_ts, b.listed_price,",
+            "coalesce(nullIf(c.mod_text, ''), nullIf(t.mod_token, '')) AS affix_analyzed",
+            "FROM base AS b",
+            f"INNER JOIN poe_trade.ml_item_mod_tokens_v1 AS t ON assumeNotNull(b.item_id) = t.item_id AND {affix_token_league_clause}",
+            "LEFT JOIN poe_trade.ml_mod_catalog_v1 AS c ON c.mod_token = t.mod_token",
+            "WHERE b.item_id IS NOT NULL",
+            "),",
+            "affix_thresholds AS (",
+            "SELECT item_name, base_type, rarity, affix_analyzed,",
+            "quantileTDigest(0.1)(listed_price) AS p10,",
+        ]
+    )
+    if summary_mode:
+        base_ctes.extend(
+            [
+                "quantileTDigest(0.5)(listed_price) AS median,",
+                "quantileTDigest(0.9)(listed_price) AS p90,",
+            ]
+        )
+    base_ctes.extend(
+        [
+            "count() AS items_total",
+            "FROM affix_base",
+            "WHERE affix_analyzed IS NOT NULL",
+            "GROUP BY item_name, base_type, rarity, affix_analyzed",
+            f"HAVING items_total >= {minimum_support}",
+            "),",
+        ]
+    )
+    if summary_mode:
+        base_ctes.extend(
+            [
+                "affix_weekly AS (",
+                "SELECT t.item_name, t.base_type, t.rarity, t.affix_analyzed, toStartOfWeek(a.as_of_ts) AS week_start,",
+                "count() AS listings_count,",
+                "countIf(a.listed_price <= t.p10) AS too_cheap_count",
+                "FROM affix_base AS a",
+                "INNER JOIN affix_thresholds AS t ON a.item_name = t.item_name AND a.base_type = t.base_type AND a.rarity = t.rarity AND a.affix_analyzed = t.affix_analyzed",
+                "GROUP BY t.item_name, t.base_type, t.rarity, t.affix_analyzed, week_start",
+                "),",
+                "affix_rows AS (",
+                "SELECT t.item_name AS item_name, t.base_type AS base_type, t.rarity AS rarity, t.affix_analyzed AS affix_analyzed, t.p10 AS p10, t.median AS median, t.p90 AS p90,",
+                "round(avg(w.listings_count), 4) AS items_per_week, t.items_total AS items_total, uniq(w.week_start) AS observed_weeks, countIf(w.too_cheap_count > 0) AS cheap_weeks, 'affix' AS analysis_level",
+                "FROM affix_thresholds AS t",
+                "LEFT JOIN affix_weekly AS w ON t.item_name = w.item_name AND t.base_type = w.base_type AND t.rarity = w.rarity AND t.affix_analyzed = w.affix_analyzed",
+                "GROUP BY t.item_name, t.base_type, t.rarity, t.affix_analyzed, t.p10, t.median, t.p90, t.items_total",
+                "),",
+                "table_rows AS (",
+                f"SELECT * FROM item_rows WHERE {item_query_filter}",
+                "UNION ALL",
+                f"SELECT * FROM affix_rows WHERE {item_or_affix_query_filter}",
+                ")",
+            ]
+        )
+    else:
+        base_ctes.extend(
+            [
+                "affix_rows AS (",
+                "SELECT t.item_name AS item_name, t.p10 AS p10, t.items_total AS items_total, t.affix_analyzed AS affix_analyzed",
+                "FROM affix_thresholds AS t",
+                "),",
+                "table_rows AS (",
+                f"SELECT item_name, p10, items_total FROM item_rows WHERE {item_query_filter}",
+                "UNION ALL",
+                f"SELECT item_name, p10, items_total FROM affix_rows WHERE {item_or_affix_query_filter}",
+                "),",
+            ]
+        )
+    return base_ctes
 
 
 def _float_sql(value: float) -> str:

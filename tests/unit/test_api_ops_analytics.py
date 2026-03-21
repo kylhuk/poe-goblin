@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Mapping
 
 import pytest
@@ -7,6 +9,9 @@ import pytest
 from poe_trade.api.ops import (
     analytics_backtests,
     analytics_gold_diagnostics,
+    analytics_pricing_outliers,
+    analytics_search_history,
+    analytics_search_suggestions,
     analytics_report,
     analytics_scanner,
     dashboard_payload,
@@ -60,6 +65,147 @@ class _SequentialFixtureClickHouse(ClickHouseClient):
         if self.responses:
             return self.responses.pop(0)
         return ""
+
+
+class _SearchOrderingClickHouse(ClickHouseClient):
+    def __init__(
+        self,
+        *,
+        suggestion_rows: list[dict[str, object]] | None = None,
+        history_rows: list[dict[str, object]] | None = None,
+    ) -> None:
+        super().__init__(endpoint="http://clickhouse")
+        self.suggestion_rows = suggestion_rows or []
+        self.history_rows = history_rows or []
+        self.queries: list[str] = []
+
+    def execute(  # pyright: ignore[reportImplicitOverride]
+        self, query: str, settings: Mapping[str, str] | None = None
+    ) -> str:
+        del settings
+        self.queries.append(query)
+        if "GROUP BY item_name, item_kind, relevance_rank" in query:
+            return self._suggestion_payload(query)
+        if (
+            "normalized_price_chaos AS listed_price," in query
+            and "AS relevance_rank" in query
+        ):
+            return self._history_payload(query)
+        return ""
+
+    def _suggestion_payload(self, query: str) -> str:
+        query_text = self._extract_query_text(query)
+        filtered = [
+            row
+            for row in self.suggestion_rows
+            if query_text.lower() in str(row["item_name"]).lower()
+        ]
+        if "ORDER BY relevance_rank ASC, match_count DESC, item_name ASC" in query:
+            filtered.sort(
+                key=lambda row: (
+                    self._relevance_rank(str(row["item_name"]), query_text),
+                    -int(str(row["match_count"])),
+                    str(row["item_name"]),
+                )
+            )
+        elif "ORDER BY match_count DESC, item_name ASC" in query:
+            filtered.sort(
+                key=lambda row: (-int(str(row["match_count"])), str(row["item_name"]))
+            )
+        return "\n".join(json.dumps(row) for row in filtered)
+
+    def _history_payload(self, query: str) -> str:
+        query_text = self._extract_query_text(query)
+        filtered = self.history_rows
+        if query_text:
+            filtered = [
+                row
+                for row in filtered
+                if query_text.lower() in str(row["item_name"]).lower()
+            ]
+
+        order_key = self._history_sort_key(query, query_text)
+        if order_key is not None:
+            filtered = sorted(filtered, key=order_key)
+        return "\n".join(json.dumps(row) for row in filtered)
+
+    def _history_sort_key(self, query: str, query_text: str):
+        if "ORDER BY relevance_rank ASC, item_name ASC, added_on DESC" in query:
+            return lambda row: (
+                self._relevance_rank(str(row["item_name"]), query_text),
+                str(row["item_name"]),
+                -self._sortable_timestamp(str(row["added_on"])),
+            )
+        if "ORDER BY relevance_rank ASC, item_name DESC, added_on DESC" in query:
+            return lambda row: (
+                self._relevance_rank(str(row["item_name"]), query_text),
+                self._descending_text(str(row["item_name"])),
+                -self._sortable_timestamp(str(row["added_on"])),
+            )
+        if "ORDER BY item_name ASC, added_on DESC" in query:
+            return lambda row: (
+                str(row["item_name"]),
+                -self._sortable_timestamp(str(row["added_on"])),
+            )
+        if "ORDER BY item_name DESC, added_on DESC" in query:
+            return lambda row: (
+                self._descending_text(str(row["item_name"])),
+                -self._sortable_timestamp(str(row["added_on"])),
+            )
+        if "ORDER BY listed_price ASC, added_on DESC" in query:
+            return lambda row: (
+                float(row["listed_price"]),
+                -self._sortable_timestamp(str(row["added_on"])),
+            )
+        if "ORDER BY listed_price DESC, added_on DESC" in query:
+            return lambda row: (
+                -float(row["listed_price"]),
+                -self._sortable_timestamp(str(row["added_on"])),
+            )
+        if "ORDER BY league ASC, added_on DESC" in query:
+            return lambda row: (
+                str(row["league"]),
+                -self._sortable_timestamp(str(row["added_on"])),
+            )
+        if "ORDER BY league DESC, added_on DESC" in query:
+            return lambda row: (
+                self._descending_text(str(row["league"])),
+                -self._sortable_timestamp(str(row["added_on"])),
+            )
+        if "ORDER BY added_on ASC" in query:
+            return lambda row: self._sortable_timestamp(str(row["added_on"]))
+        if "ORDER BY added_on DESC" in query:
+            return lambda row: -self._sortable_timestamp(str(row["added_on"]))
+        return None
+
+    @staticmethod
+    def _extract_query_text(query: str) -> str:
+        match = re.search(r"positionCaseInsensitiveUTF8\(.*?, '([^']*)'\) > 0", query)
+        if not match:
+            return ""
+        return match.group(1).replace("\\'", "'").replace("\\\\", "\\")
+
+    @staticmethod
+    def _relevance_rank(item_name: str, query_text: str) -> int:
+        if not query_text:
+            return 3
+        lowered_name = item_name.lower()
+        lowered_query = query_text.lower()
+        if lowered_name == lowered_query:
+            return 0
+        if lowered_name.startswith(lowered_query):
+            return 1
+        if lowered_query in lowered_name:
+            return 2
+        return 3
+
+    @staticmethod
+    def _sortable_timestamp(value: str) -> int:
+        return int(value.replace("-", "").replace(" ", "").replace(":", ""))
+
+    @staticmethod
+    def _descending_text(value: str) -> tuple[int, ...]:
+        return tuple(-ord(char) for char in value)
 
 
 def test_analytics_scanner_query_does_not_require_status_column() -> None:
@@ -247,6 +393,536 @@ def test_analytics_report_returns_ok_status_when_any_count_is_present() -> None:
     assert result["report"]["backtest_summary_rows"] == 3
     assert result["report"]["gold_currency_ref_hour_rows"] == 7
     assert result["report"]["realized_pnl_chaos"] == 42.5
+
+
+def test_analytics_search_suggestions_orders_exact_before_prefix_and_substring() -> (
+    None
+):
+    client = _SearchOrderingClickHouse(
+        suggestion_rows=[
+            {
+                "item_name": "The Mageblood Map",
+                "item_kind": "base_type",
+                "match_count": 30,
+            },
+            {
+                "item_name": "Mageblood Replica",
+                "item_kind": "unique_name",
+                "match_count": 20,
+            },
+            {"item_name": "Mageblood", "item_kind": "unique_name", "match_count": 5},
+        ]
+    )
+
+    payload = analytics_search_suggestions(client, query="Mageblood")
+
+    assert [row["itemName"] for row in payload["suggestions"]] == [
+        "Mageblood",
+        "Mageblood Replica",
+        "The Mageblood Map",
+    ]
+
+
+def test_analytics_search_suggestions_breaks_same_rank_ties_by_match_count_then_name() -> (
+    None
+):
+    client = _SearchOrderingClickHouse(
+        suggestion_rows=[
+            {
+                "item_name": "Mageblood Reliquary",
+                "item_kind": "unique_name",
+                "match_count": 10,
+            },
+            {
+                "item_name": "Mageblood Reserve",
+                "item_kind": "unique_name",
+                "match_count": 20,
+            },
+            {
+                "item_name": "Mageblood Replica",
+                "item_kind": "unique_name",
+                "match_count": 20,
+            },
+        ]
+    )
+
+    payload = analytics_search_suggestions(client, query="Mageblood R")
+
+    assert [row["itemName"] for row in payload["suggestions"]] == [
+        "Mageblood Replica",
+        "Mageblood Reserve",
+        "Mageblood Reliquary",
+    ]
+
+
+def test_analytics_search_history_returns_nested_query_object_and_name_first_default() -> (
+    None
+):
+    client = _SearchOrderingClickHouse(
+        history_rows=[
+            {
+                "item_name": "The Mageblood Map",
+                "league": "Mirage",
+                "listed_price": 80.0,
+                "added_on": "2026-03-15 10:00:00",
+            },
+            {
+                "item_name": "Mageblood Replica",
+                "league": "Mirage",
+                "listed_price": 90.0,
+                "added_on": "2026-03-15 11:00:00",
+            },
+            {
+                "item_name": "Mageblood",
+                "league": "Mirage",
+                "listed_price": 95.0,
+                "added_on": "2026-03-15 12:00:00",
+            },
+        ]
+    )
+
+    payload = analytics_search_history(
+        client,
+        query_params={"query": ["Mageblood"]},
+        default_league="Mirage",
+    )
+
+    assert payload["query"] == {
+        "text": "Mageblood",
+        "league": "Mirage",
+        "sort": "item_name",
+        "order": "asc",
+    }
+    assert [row["itemName"] for row in payload["rows"]] == [
+        "Mageblood",
+        "Mageblood Replica",
+        "The Mageblood Map",
+    ]
+
+
+def test_analytics_search_history_orders_exact_prefix_then_substring_for_item_name_sort() -> (
+    None
+):
+    client = _SearchOrderingClickHouse(
+        history_rows=[
+            {
+                "item_name": "The Mageblood Map",
+                "league": "Mirage",
+                "listed_price": 80.0,
+                "added_on": "2026-03-15 10:00:00",
+            },
+            {
+                "item_name": "Mageblood Replica",
+                "league": "Mirage",
+                "listed_price": 90.0,
+                "added_on": "2026-03-15 11:00:00",
+            },
+            {
+                "item_name": "Mageblood",
+                "league": "Mirage",
+                "listed_price": 95.0,
+                "added_on": "2026-03-15 12:00:00",
+            },
+        ]
+    )
+
+    payload = analytics_search_history(
+        client,
+        query_params={"query": ["Mageblood"], "sort": ["item_name"], "order": ["asc"]},
+        default_league="Mirage",
+    )
+
+    assert [row["itemName"] for row in payload["rows"][:3]] == [
+        "Mageblood",
+        "Mageblood Replica",
+        "The Mageblood Map",
+    ]
+
+
+def test_analytics_search_history_item_name_desc_still_applies_without_query_text() -> (
+    None
+):
+    client = _SearchOrderingClickHouse(
+        history_rows=[
+            {
+                "item_name": "Mageblood",
+                "league": "Mirage",
+                "listed_price": 95.0,
+                "added_on": "2026-03-15 12:00:00",
+            },
+            {
+                "item_name": "Aegis Aurora",
+                "league": "Mirage",
+                "listed_price": 70.0,
+                "added_on": "2026-03-15 11:00:00",
+            },
+            {
+                "item_name": "The Squire",
+                "league": "Mirage",
+                "listed_price": 120.0,
+                "added_on": "2026-03-15 10:00:00",
+            },
+        ]
+    )
+
+    payload = analytics_search_history(
+        client,
+        query_params={"sort": ["item_name"], "order": ["desc"]},
+        default_league="Mirage",
+    )
+
+    assert [row["itemName"] for row in payload["rows"]] == [
+        "The Squire",
+        "Mageblood",
+        "Aegis Aurora",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("sort", "order", "expected_names"),
+    [
+        ("added_on", "desc", ["Mageblood", "The Mageblood Map", "Mageblood Replica"]),
+        (
+            "listed_price",
+            "asc",
+            ["Mageblood Replica", "The Mageblood Map", "Mageblood"],
+        ),
+        ("league", "asc", ["Mageblood Replica", "The Mageblood Map", "Mageblood"]),
+    ],
+)
+def test_analytics_search_history_keeps_non_name_sorts_primary(
+    sort: str,
+    order: str,
+    expected_names: list[str],
+) -> None:
+    client = _SearchOrderingClickHouse(
+        history_rows=[
+            {
+                "item_name": "The Mageblood Map",
+                "league": "Mirage",
+                "listed_price": 80.0,
+                "added_on": "2026-03-15 11:00:00",
+            },
+            {
+                "item_name": "Mageblood Replica",
+                "league": "Ancestor",
+                "listed_price": 70.0,
+                "added_on": "2026-03-15 10:00:00",
+            },
+            {
+                "item_name": "Mageblood",
+                "league": "Necropolis",
+                "listed_price": 90.0,
+                "added_on": "2026-03-15 12:00:00",
+            },
+        ]
+    )
+
+    payload = analytics_search_history(
+        client,
+        query_params={"query": ["Mageblood"], "sort": [sort], "order": [order]},
+        default_league="Mirage",
+    )
+
+    assert [row["itemName"] for row in payload["rows"]] == expected_names
+
+
+def test_analytics_pricing_outliers_defaults_to_100c_buy_in_and_expected_profit_sort() -> (
+    None
+):
+    client = _SequentialFixtureClickHouse(
+        [
+            '{"item_name":"Mageblood","affix_analyzed":"","p10":90.0,"median":150.0,"p90":220.0,"items_per_week":1.5,"items_total":40,"analysis_level":"item","underpriced_rate":0.4}\n',
+            '{"week_start":"2026-03-10 00:00:00","too_cheap_count":2}\n',
+        ]
+    )
+
+    payload = analytics_pricing_outliers(
+        client, query_params={}, default_league="Mirage"
+    )
+
+    assert payload["query"] == {
+        "query": "",
+        "text": "",
+        "league": "Mirage",
+        "sort": "expected_profit",
+        "order": "desc",
+        "minTotal": 20,
+        "maxBuyIn": 100,
+        "limit": 100,
+        "weeklyAggregation": {
+            "level": "item_name",
+            "scope": "deduped_filtered_rows",
+        },
+    }
+    assert payload["rows"][0]["entryPrice"] == pytest.approx(90.0)
+    assert payload["rows"][0]["expectedProfit"] == pytest.approx(60.0)
+    assert payload["rows"][0]["roi"] == pytest.approx(60.0 / 90.0)
+
+
+def test_analytics_pricing_outliers_keeps_negative_expected_profit_when_median_is_below_entry() -> (
+    None
+):
+    client = _SequentialFixtureClickHouse(
+        [
+            '{"item_name":"Bad Deal","affix_analyzed":"","p10":120.0,"median":100.0,"p90":140.0,"items_per_week":1.0,"items_total":30,"analysis_level":"item","underpriced_rate":0.125}\n',
+            '{"week_start":"2026-03-10 00:00:00","too_cheap_count":1}\n',
+        ]
+    )
+
+    payload = analytics_pricing_outliers(
+        client, query_params={}, default_league="Mirage"
+    )
+
+    assert payload["rows"][0]["expectedProfit"] == pytest.approx(-20.0)
+    assert payload["rows"][0]["roi"] == pytest.approx(-20.0 / 120.0)
+
+
+def test_analytics_pricing_outliers_rounds_underpriced_rate_to_four_decimals() -> None:
+    client = _SequentialFixtureClickHouse(
+        [
+            '{"item_name":"Mageblood","affix_analyzed":"","p10":90.0,"median":150.0,"p90":220.0,"items_per_week":1.5,"items_total":40,"analysis_level":"item","underpriced_rate":0.428571}\n',
+            '{"week_start":"2026-03-10 00:00:00","too_cheap_count":2}\n',
+        ]
+    )
+
+    payload = analytics_pricing_outliers(
+        client, query_params={}, default_league="Mirage"
+    )
+
+    assert payload["rows"][0]["underpricedRate"] == pytest.approx(0.4286)
+
+
+def test_analytics_pricing_outliers_preserves_items_per_week_as_listing_frequency() -> (
+    None
+):
+    client = _SequentialFixtureClickHouse(
+        [
+            '{"item_name":"Mageblood","affix_analyzed":"","p10":90.0,"median":150.0,"p90":220.0,"items_per_week":3.5,"items_total":40,"analysis_level":"item","underpriced_rate":0.25}\n',
+            '{"week_start":"2026-03-10 00:00:00","too_cheap_count":2}\n',
+        ]
+    )
+
+    payload = analytics_pricing_outliers(
+        client, query_params={}, default_league="Mirage"
+    )
+
+    assert payload["rows"][0]["itemsPerWeek"] == pytest.approx(3.5)
+    assert payload["rows"][0]["underpricedRate"] == pytest.approx(0.25)
+
+
+def test_analytics_pricing_outliers_weekly_query_reuses_effective_filters() -> None:
+    client = _RecordingClickHouse()
+
+    analytics_pricing_outliers(
+        client,
+        query_params={
+            "query": ["Mageblood"],
+            "league": ["Mirage"],
+            "min_total": ["25"],
+            "max_buy_in": ["100"],
+            "sort": ["roi"],
+            "limit": ["5"],
+        },
+        default_league="Mirage",
+    )
+
+    weekly_query = next(query for query in client.queries if "weekly_input AS" in query)
+
+    assert any("league = 'Mirage'" in query for query in client.queries)
+    assert any("HAVING items_total >= 25" in query for query in client.queries)
+    assert any("<= 100" in query for query in client.queries)
+    assert any(
+        "positionCaseInsensitiveUTF8(item_name" in query for query in client.queries
+    )
+    assert "countIf(b.listed_price <= f.p10)" in weekly_query
+    assert "min(p10) AS p10" in weekly_query
+    assert "max(items_total) AS items_total" in weekly_query
+    assert "GROUP BY item_name" in weekly_query
+    assert "ORDER BY roi" not in weekly_query
+    assert "LIMIT 5" not in weekly_query
+
+
+def test_analytics_pricing_outliers_weekly_query_dedupes_by_item_name_only() -> None:
+    client = _RecordingClickHouse()
+
+    analytics_pricing_outliers(
+        client,
+        query_params={"query": ["Mageblood"]},
+        default_league="Mirage",
+    )
+
+    weekly_query = next(query for query in client.queries if "weekly_input AS" in query)
+
+    assert (
+        "SELECT DISTINCT item_name, p10, items_total FROM item_rows" not in weekly_query
+    )
+    assert "GROUP BY item_name" in weekly_query
+
+
+def test_analytics_pricing_outliers_affix_only_query_reuses_effective_item_names() -> (
+    None
+):
+    client = _RecordingClickHouse()
+
+    analytics_pricing_outliers(
+        client,
+        query_params={"query": ["Fractured"]},
+        default_league="Mirage",
+    )
+
+    weekly_query = next(query for query in client.queries if "weekly_input AS" in query)
+
+    assert "table_rows AS (" in weekly_query
+    assert (
+        "positionCaseInsensitiveUTF8(affix_analyzed, 'Fractured') > 0" in weekly_query
+    )
+    assert (
+        "SELECT item_name, min(p10) AS p10, max(items_total) AS items_total FROM table_rows"
+        in weekly_query
+    )
+    assert "GROUP BY item_name" in weekly_query
+
+
+def test_analytics_pricing_outliers_clamps_non_numeric_and_out_of_range_buy_in() -> (
+    None
+):
+    default_payload = analytics_pricing_outliers(
+        _RecordingClickHouse(),
+        query_params={"max_buy_in": ["nope"]},
+        default_league="Mirage",
+    )
+    minimum_payload = analytics_pricing_outliers(
+        _RecordingClickHouse(),
+        query_params={"max_buy_in": ["0"]},
+        default_league="Mirage",
+    )
+    maximum_payload = analytics_pricing_outliers(
+        _RecordingClickHouse(),
+        query_params={"max_buy_in": ["5001"]},
+        default_league="Mirage",
+    )
+
+    assert default_payload["query"]["maxBuyIn"] == 100
+    assert minimum_payload["query"]["maxBuyIn"] == 1
+    assert maximum_payload["query"]["maxBuyIn"] == 1000
+
+
+def test_analytics_pricing_outliers_accepts_camel_case_max_buy_in() -> None:
+    client = _RecordingClickHouse()
+
+    payload = analytics_pricing_outliers(
+        client, query_params={"maxBuyIn": ["77"]}, default_league="Mirage"
+    )
+
+    assert payload["query"]["maxBuyIn"] == 77
+
+
+def test_analytics_pricing_outliers_accepts_new_and_legacy_sort_values() -> None:
+    fair_value_client = _SequentialFixtureClickHouse(
+        [
+            '{"item_name":"Mageblood","affix_analyzed":"","p10":90.0,"median":150.0,"p90":220.0,"items_per_week":1.5,"items_total":40,"analysis_level":"item","underpriced_rate":0.4}\n',
+            '{"week_start":"2026-03-10 00:00:00","too_cheap_count":2}\n',
+        ]
+    )
+    fair_value_payload = analytics_pricing_outliers(
+        fair_value_client,
+        query_params={"sort": ["fair_value"]},
+        default_league="Mirage",
+    )
+    assert fair_value_payload["query"]["sort"] == "fair_value"
+
+    client = _SequentialFixtureClickHouse(
+        [
+            '{"item_name":"Mageblood","affix_analyzed":"","p10":90.0,"median":150.0,"p90":220.0,"items_per_week":1.5,"items_total":40,"analysis_level":"item","underpriced_rate":0.4}\n',
+            '{"week_start":"2026-03-10 00:00:00","too_cheap_count":2}\n',
+            '{"item_name":"Mageblood","affix_analyzed":"","p10":90.0,"median":150.0,"p90":220.0,"items_per_week":1.5,"items_total":40,"analysis_level":"item","underpriced_rate":0.4}\n',
+            '{"week_start":"2026-03-10 00:00:00","too_cheap_count":2}\n',
+        ]
+    )
+    median_payload = analytics_pricing_outliers(
+        client, query_params={"sort": ["median"]}, default_league="Mirage"
+    )
+    p10_payload = analytics_pricing_outliers(
+        client, query_params={"sort": ["p10"]}, default_league="Mirage"
+    )
+
+    assert median_payload["query"]["sort"] == "median"
+    assert p10_payload["query"]["sort"] == "p10"
+
+
+@pytest.mark.parametrize(
+    ("sort", "expected_fragment"),
+    [
+        (
+            "roi",
+            "ORDER BY roi DESC, expected_profit DESC, underpriced_rate DESC, items_total DESC, item_name ASC, affix_analyzed ASC, analysis_level ASC, base_type ASC, rarity ASC",
+        ),
+        (
+            "underpriced_rate",
+            "ORDER BY underpriced_rate DESC, expected_profit DESC, roi DESC, items_total DESC, item_name ASC, affix_analyzed ASC, analysis_level ASC, base_type ASC, rarity ASC",
+        ),
+        (
+            "entry_price",
+            "ORDER BY entry_price DESC, expected_profit DESC, roi DESC, underpriced_rate DESC, items_total DESC, item_name ASC, affix_analyzed ASC, analysis_level ASC, base_type ASC, rarity ASC",
+        ),
+        (
+            "items_total",
+            "ORDER BY items_total DESC, expected_profit DESC, roi DESC, underpriced_rate DESC, item_name ASC, affix_analyzed ASC, analysis_level ASC, base_type ASC, rarity ASC",
+        ),
+    ],
+)
+def test_analytics_pricing_outliers_secondary_sorts_append_default_chain(
+    sort: str, expected_fragment: str
+) -> None:
+    client = _RecordingClickHouse()
+
+    analytics_pricing_outliers(
+        client,
+        query_params={"sort": [sort], "order": ["desc"]},
+        default_league="Mirage",
+    )
+
+    assert any(expected_fragment in query for query in client.queries)
+
+
+def test_analytics_pricing_outliers_uses_specified_tie_break_order() -> None:
+    client = _RecordingClickHouse()
+
+    analytics_pricing_outliers(client, query_params={}, default_league="Mirage")
+
+    assert any(
+        "ORDER BY expected_profit DESC, roi DESC, underpriced_rate DESC, items_total DESC, item_name ASC, affix_analyzed ASC, analysis_level ASC, base_type ASC, rarity ASC"
+        in query
+        for query in client.queries
+    )
+
+
+@pytest.mark.parametrize(
+    ("order", "expected_fragment"),
+    [
+        (
+            "desc",
+            "ORDER BY expected_profit DESC, roi DESC, underpriced_rate DESC, items_total DESC, item_name ASC, affix_analyzed ASC, analysis_level ASC, base_type ASC, rarity ASC",
+        ),
+        (
+            "asc",
+            "ORDER BY expected_profit ASC, roi ASC, underpriced_rate ASC, items_total ASC, item_name ASC, affix_analyzed ASC, analysis_level ASC, base_type ASC, rarity ASC",
+        ),
+    ],
+)
+def test_analytics_pricing_outliers_expected_profit_honors_sort_direction(
+    order: str, expected_fragment: str
+) -> None:
+    client = _RecordingClickHouse()
+
+    analytics_pricing_outliers(
+        client,
+        query_params={"sort": ["expected_profit"], "order": [order]},
+        default_league="Mirage",
+    )
+
+    assert any(expected_fragment in query for query in client.queries)
 
 
 def test_scanner_recommendations_payload_exposes_contract_fields() -> None:

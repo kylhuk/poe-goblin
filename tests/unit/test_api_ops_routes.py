@@ -432,7 +432,9 @@ def test_stash_scan_start_route_rejects_invalid_poe_session(
             "poe_session_id": "POESESSID-123",
         },
     )
-    monkeypatch.setattr("poe_trade.stash_scan.fetch_active_scan", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "poe_trade.stash_scan.fetch_active_scan", lambda *_args, **_kwargs: None
+    )
 
     def _raise_invalid(_settings, *, poe_session_id):
         raise api_app_module.AccountResolutionError(
@@ -575,13 +577,18 @@ def test_start_private_stash_scan_deduplicates_pending_run(
 
     monkeypatch.setattr(
         api_app_module,
-        'load_credential_state',
+        "load_credential_state",
         lambda _settings: {
-            'account_name': 'qa-exile',
-            'poe_session_id': 'POESESSID-123',
+            "account_name": "qa-exile",
+            "poe_session_id": "POESESSID-123",
         },
     )
-    monkeypatch.setattr('poe_trade.stash_scan.fetch_active_scan', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        api_app_module, "resolve_account_name", lambda *_args, **_kwargs: "qa-exile"
+    )
+    monkeypatch.setattr(
+        "poe_trade.stash_scan.fetch_active_scan", lambda *_args, **_kwargs: None
+    )
 
     class _DummyPoeClient:
         def __init__(self, *_args, **_kwargs):
@@ -596,37 +603,37 @@ def test_start_private_stash_scan_deduplicates_pending_run(
             return None
 
         def run_private_scan(self, **kwargs):
-            runs.append((kwargs.get('scan_id'), kwargs.get('started_at')))
+            runs.append((kwargs.get("scan_id"), kwargs.get("started_at")))
             started.set()
             release.wait(timeout=5)
-            return {'scanId': kwargs.get('scan_id'), 'status': 'published'}
+            return {"scanId": kwargs.get("scan_id"), "status": "published"}
 
-    monkeypatch.setattr(api_app_module, 'PoeClient', _DummyPoeClient)
-    monkeypatch.setattr(api_app_module, 'StatusReporter', _DummyStatusReporter)
-    monkeypatch.setattr(api_app_module, 'AccountStashHarvester', _DummyHarvester)
+    monkeypatch.setattr(api_app_module, "PoeClient", _DummyPoeClient)
+    monkeypatch.setattr(api_app_module, "StatusReporter", _DummyStatusReporter)
+    monkeypatch.setattr(api_app_module, "AccountStashHarvester", _DummyHarvester)
 
     settings = _settings_with_stash_enabled()
-    clickhouse = ClickHouseClient(endpoint='http://ch')
+    clickhouse = ClickHouseClient(endpoint="http://ch")
     first = api_app_module.start_private_stash_scan(
         settings,
         clickhouse,
-        account_name='qa-exile',
-        league='Mirage',
-        realm='pc',
+        account_name="qa-exile",
+        league="Mirage",
+        realm="pc",
     )
     assert started.wait(timeout=5)
     second = api_app_module.start_private_stash_scan(
         settings,
         clickhouse,
-        account_name='qa-exile',
-        league='Mirage',
-        realm='pc',
+        account_name="qa-exile",
+        league="Mirage",
+        realm="pc",
     )
     release.set()
 
-    assert first['scanId'] == second['scanId']
-    assert second['status'] == 'running'
-    assert second['deduplicated'] is True
+    assert first["scanId"] == second["scanId"]
+    assert second["status"] == "running"
+    assert second["deduplicated"] is True
     assert len(runs) == 1
 
 
