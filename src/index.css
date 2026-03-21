@@ -397,3 +397,74 @@ body::after {
 .gear-spin:hover {
   transform: rotate(90deg);
 }
+
+/* ── PoE Tooltip ──────────────────────────────── */
+
+.poe-tooltip {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+}
+
+.poe-tooltip-header {
+  padding: 6px 12px;
+  text-align: center;
+  border-bottom: 1px solid hsl(35 15% 16%);
+}
+
+.poe-tooltip-header-normal {
+  background: linear-gradient(180deg, hsl(0 0% 25% / 0.8), hsl(0 0% 15% / 0.8));
+  color: hsl(0 0% 80%);
+}
+
+.poe-tooltip-header-magic {
+  background: linear-gradient(180deg, hsl(210 60% 30% / 0.8), hsl(210 60% 18% / 0.8));
+  color: hsl(210 80% 75%);
+}
+
+.poe-tooltip-header-rare {
+  background: linear-gradient(180deg, hsl(45 80% 30% / 0.8), hsl(45 80% 18% / 0.8));
+  color: hsl(45 90% 70%);
+}
+
+.poe-tooltip-header-unique {
+  background: linear-gradient(180deg, hsl(25 70% 30% / 0.8), hsl(25 70% 18% / 0.8));
+  color: hsl(30 80% 65%);
+}
+
+.poe-tooltip-header-gem {
+  background: linear-gradient(180deg, hsl(180 50% 25% / 0.8), hsl(180 50% 15% / 0.8));
+  color: hsl(180 70% 70%);
+}
+
+.poe-tooltip-header-currency {
+  background: linear-gradient(180deg, hsl(38 50% 28% / 0.8), hsl(38 50% 16% / 0.8));
+  color: hsl(38 60% 70%);
+}
+
+.poe-tooltip-header-divination {
+  background: linear-gradient(180deg, hsl(200 40% 30% / 0.8), hsl(200 40% 18% / 0.8));
+  color: hsl(200 50% 72%);
+}
+
+.poe-tooltip-header-relic {
+  background: linear-gradient(180deg, hsl(15 70% 30% / 0.8), hsl(15 70% 18% / 0.8));
+  color: hsl(15 80% 65%);
+}
+
+.poe-tooltip-separator {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, hsl(35 15% 25%), transparent);
+  margin: 4px 0;
+}
+
+/* ── Special Layout (Currency/Fragment/etc) ───── */
+
+.stash-special-layout {
+  position: relative;
+  max-width: 695px;
+  border: 2px solid hsl(var(--gold-dim));
+  border-radius: 2px;
+  background: hsl(25 10% 4%);
+  overflow: hidden;
+}
+

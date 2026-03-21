@@ -294,6 +294,80 @@ export interface PricingOutliersRequest {
 
 // ========== Stash Viewer ==========
 export type PriceEvaluation = 'well_priced' | 'could_be_better' | 'mispriced';
+
+// Raw PoE API item shape
+export interface PoeItemProperty {
+  name: string;
+  values: [string, number][];
+  displayMode: number;
+  type?: number;
+}
+
+export interface PoeItemSocket {
+  group: number;
+  attr: string;
+  sColour: 'R' | 'G' | 'B' | 'W' | 'A' | 'DV';
+}
+
+export interface PoeItemRequirement {
+  name: string;
+  values: [string, number][];
+  displayMode: number;
+  type?: number;
+}
+
+export interface PoeItem {
+  id: string;
+  name: string;
+  typeLine: string;
+  baseType?: string;
+  icon: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  frameType: number;
+  stackSize?: number;
+  maxStackSize?: number;
+  ilvl?: number;
+  identified?: boolean;
+  corrupted?: boolean;
+  duplicated?: boolean;
+  properties?: PoeItemProperty[];
+  requirements?: PoeItemRequirement[];
+  implicitMods?: string[];
+  explicitMods?: string[];
+  craftedMods?: string[];
+  enchantMods?: string[];
+  fracturedMods?: string[];
+  utilityMods?: string[];
+  descrText?: string;
+  flavourText?: string[];
+  sockets?: PoeItemSocket[];
+  listedPrice?: number | null;
+  estimatedPrice?: number | null;
+  estimatedPriceConfidence?: number | null;
+  priceDeltaChaos?: number | null;
+  priceDeltaPercent?: number | null;
+  priceEvaluation?: PriceEvaluation;
+  currency?: string;
+}
+
+export interface SpecialLayoutSlot {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  scale?: number;
+  section?: string;
+  hidden?: boolean;
+}
+
+export interface SpecialLayout {
+  sections?: string[];
+  layout: Record<string, SpecialLayoutSlot>;
+}
+
 export interface StashItem {
   id: string;
   name: string;
@@ -305,7 +379,7 @@ export interface StashItem {
   rarity: 'normal' | 'magic' | 'rare' | 'unique';
   listedPrice: number | null;
   estimatedPrice: number;
-  estimatedPriceConfidence: number; // 0-100
+  estimatedPriceConfidence: number;
   priceDeltaChaos: number;
   priceDeltaPercent: number;
   priceEvaluation: PriceEvaluation;
@@ -313,11 +387,28 @@ export interface StashItem {
   iconUrl?: string;
 }
 
+export type StashTabType =
+  | 'normal' | 'quad' | 'currency' | 'map' | 'fragment'
+  | 'essence' | 'delirium' | 'blight' | 'ultimatum'
+  | 'divination' | 'unique' | 'delve' | 'metamorph';
+
 export interface StashTab {
   id: string;
   name: string;
-  type: 'normal' | 'quad' | 'currency' | 'map';
-  items: StashItem[];
+  type: StashTabType;
+  items: PoeItem[];
+  quadLayout?: boolean;
+  currencyLayout?: SpecialLayout;
+  fragmentLayout?: SpecialLayout;
+  essenceLayout?: SpecialLayout;
+  deliriumLayout?: SpecialLayout;
+  blightLayout?: SpecialLayout;
+  ultimatumLayout?: SpecialLayout;
+  mapLayout?: SpecialLayout;
+  divinationLayout?: SpecialLayout;
+  uniqueLayout?: SpecialLayout;
+  delveLayout?: SpecialLayout;
+  metamorphLayout?: SpecialLayout;
 }
 
 export interface StashStatus {
