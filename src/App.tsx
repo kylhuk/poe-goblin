@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -10,6 +10,12 @@ import NotFound from "./pages/NotFound.tsx";
 import Login from "./pages/Login.tsx";
 
 const queryClient = new QueryClient();
+
+const DEFAULT_TAB: Record<string, string> = {
+  public: "pricecheck",
+  member: "opportunities",
+  admin: "dashboard",
+};
 
 const PendingApproval = () => {
   const { signOut, supabaseUser } = useAuth();
@@ -29,14 +35,27 @@ const PendingApproval = () => {
 };
 
 const AppGate = () => {
-  const { isAuthenticated, isApproved, isLoading } = useAuth();
+  const { isAuthenticated, isApproved, isLoading, userRole } = useAuth();
 
   if (isLoading) {
     return <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">Loading…</div>;
   }
 
+  const defaultTab = DEFAULT_TAB[userRole] || "pricecheck";
+
+  // Public users: show Index with limited tabs (ML Price only)
   if (!isAuthenticated) {
-    return <Login />;
+    return (
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route path="/:tab/:subtab?" element={<Index />} />
+          <Route path="/" element={<Navigate to={`/${defaultTab}`} replace />} />
+          <Route path="*" element={<Navigate to={`/${defaultTab}`} replace />} />
+        </Routes>
+      </BrowserRouter>
+    );
   }
 
   if (!isApproved) {
@@ -46,8 +65,9 @@ const AppGate = () => {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Index />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
+        <Route path="/:tab/:subtab?" element={<Index />} />
+        <Route path="/" element={<Navigate to={`/${defaultTab}`} replace />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>

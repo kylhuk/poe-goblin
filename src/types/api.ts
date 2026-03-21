@@ -149,11 +149,35 @@ export interface PriceCheckResponse {
   saleProbabilityPercent?: number | null;
   priceRecommendationEligible?: boolean;
   fallbackReason?: string;
+  mlPredicted?: boolean;
+  predictionSource?: string;
+  estimateTrust?: string;
+  estimateWarning?: string | null;
+  fairValueP50?: number | null;
+  fastSale24hPrice?: number | null;
+  route?: string;
+  league?: string;
 }
 
 // ========== ML Predict One ==========
 export interface MlPredictOneRequest {
-  clipboard: string;
+  itemText: string;
+}
+
+export interface ShadowComparisonSide {
+  route: string | null;
+  price_p50: number | null;
+  confidence_percent: number | null;
+  interval_p10: number | null;
+  interval_p90: number | null;
+}
+
+export interface ShadowComparison {
+  candidateModelVersion: string | null;
+  incumbentModelVersion: string | null;
+  candidate: ShadowComparisonSide | null;
+  incumbent: ShadowComparisonSide | null;
+  deltaPercent: number | null;
 }
 
 export interface MlPredictOneResponse {
@@ -164,6 +188,15 @@ export interface MlPredictOneResponse {
   saleProbabilityPercent?: number | null;
   fallbackReason?: string;
   priceRecommendationEligible?: boolean;
+  league?: string;
+  route?: string;
+  mlPredicted?: boolean;
+  predictionSource?: string;
+  estimateTrust?: string;
+  estimateWarning?: string | null;
+  servingModelVersion?: string | null;
+  rollout?: string | null;
+  shadowComparison?: ShadowComparison | null;
 }
 
 // ========== Search History Analytics ==========
@@ -261,6 +294,80 @@ export interface PricingOutliersRequest {
 
 // ========== Stash Viewer ==========
 export type PriceEvaluation = 'well_priced' | 'could_be_better' | 'mispriced';
+
+// Raw PoE API item shape
+export interface PoeItemProperty {
+  name: string;
+  values: [string, number][];
+  displayMode: number;
+  type?: number;
+}
+
+export interface PoeItemSocket {
+  group: number;
+  attr: string;
+  sColour: 'R' | 'G' | 'B' | 'W' | 'A' | 'DV';
+}
+
+export interface PoeItemRequirement {
+  name: string;
+  values: [string, number][];
+  displayMode: number;
+  type?: number;
+}
+
+export interface PoeItem {
+  id: string;
+  name: string;
+  typeLine: string;
+  baseType?: string;
+  icon: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  frameType: number;
+  stackSize?: number;
+  maxStackSize?: number;
+  ilvl?: number;
+  identified?: boolean;
+  corrupted?: boolean;
+  duplicated?: boolean;
+  properties?: PoeItemProperty[];
+  requirements?: PoeItemRequirement[];
+  implicitMods?: string[];
+  explicitMods?: string[];
+  craftedMods?: string[];
+  enchantMods?: string[];
+  fracturedMods?: string[];
+  utilityMods?: string[];
+  descrText?: string;
+  flavourText?: string[];
+  sockets?: PoeItemSocket[];
+  listedPrice?: number | null;
+  estimatedPrice?: number | null;
+  estimatedPriceConfidence?: number | null;
+  priceDeltaChaos?: number | null;
+  priceDeltaPercent?: number | null;
+  priceEvaluation?: PriceEvaluation;
+  currency?: string;
+}
+
+export interface SpecialLayoutSlot {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  scale?: number;
+  section?: string;
+  hidden?: boolean;
+}
+
+export interface SpecialLayout {
+  sections?: string[];
+  layout: Record<string, SpecialLayoutSlot>;
+}
+
 export interface StashItem {
   id: string;
   fingerprint?: string;
@@ -273,7 +380,7 @@ export interface StashItem {
   rarity: 'normal' | 'magic' | 'rare' | 'unique';
   listedPrice: number | null;
   estimatedPrice: number;
-  estimatedPriceConfidence: number; // 0-100
+  estimatedPriceConfidence: number;
   priceDeltaChaos: number;
   priceDeltaPercent: number;
   priceEvaluation: PriceEvaluation;
@@ -287,11 +394,28 @@ export interface StashItem {
   fallbackReason?: string;
 }
 
+export type StashTabType =
+  | 'normal' | 'quad' | 'currency' | 'map' | 'fragment'
+  | 'essence' | 'delirium' | 'blight' | 'ultimatum'
+  | 'divination' | 'unique' | 'delve' | 'metamorph';
+
 export interface StashTab {
   id: string;
   name: string;
-  type: 'normal' | 'quad' | 'currency' | 'map';
-  items: StashItem[];
+  type: StashTabType;
+  items: PoeItem[];
+  quadLayout?: boolean;
+  currencyLayout?: SpecialLayout;
+  fragmentLayout?: SpecialLayout;
+  essenceLayout?: SpecialLayout;
+  deliriumLayout?: SpecialLayout;
+  blightLayout?: SpecialLayout;
+  ultimatumLayout?: SpecialLayout;
+  mapLayout?: SpecialLayout;
+  divinationLayout?: SpecialLayout;
+  uniqueLayout?: SpecialLayout;
+  delveLayout?: SpecialLayout;
+  metamorphLayout?: SpecialLayout;
 }
 
 export interface StashStatus {
@@ -436,6 +560,7 @@ export interface DashboardResponse {
 // ========== ML Automation ==========
 export interface MlAutomationStatus {
   league: string;
+  mode?: string | null;
   status?: string | null;
   activeModelVersion: string | null;
   latestRun?: {
@@ -471,8 +596,31 @@ export interface MlAutomationHistoryTrendPoint {
   activeModelVersion: string | null;
 }
 
+export interface MlModelMetric {
+  route: string | null;
+  modelVersion: string | null;
+  sampleCount: number | null;
+  avgMdape: number | null;
+  avgIntervalCoverage: number | null;
+  recordedAt: string | null;
+}
+
+export interface MlModelHistoryEntry {
+  modelVersion: string | null;
+  promotedAt: string | null;
+  retiredAt: string | null;
+  runsCount: number | null;
+}
+
+export interface MlRouteFamily {
+  family: string | null;
+  routes: string[];
+  totalSamples: number | null;
+}
+
 export interface MlAutomationHistory {
   league: string;
+  mode?: string | null;
   history: MlAutomationHistoryRun[];
   summary: {
     activeModelVersion: string | null;
@@ -515,6 +663,9 @@ export interface MlAutomationHistory {
     modelVersion: string | null;
     promotedAt: string | null;
   }>;
+  modelMetrics?: MlModelMetric[];
+  modelHistory?: MlModelHistoryEntry[];
+  routeFamilies?: MlRouteFamily[];
 }
 
 // ========== API Service Interface ==========

@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { logApiError } from './apiErrorLog';
@@ -6,19 +6,43 @@ import { logApiError } from './apiErrorLog';
 const PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID;
 const PROXY_URL = `https://${PROJECT_ID}.supabase.co/functions/v1/api-proxy`;
 
+// Module-level POESESSID so proxyFetch can attach it on every request
+let _poeSessionId: string | null = null;
+export function setPoeSessionId(id: string | null) { _poeSessionId = id; }
+export function getPoeSessionId() { return _poeSessionId; }
+
+// Module-level backend session cookie (poe_session) for stateless proxy forwarding
+let _poeBackendSession: string | null = null;
+export function setPoeBackendSession(id: string | null) { _poeBackendSession = id; }
+export function getPoeBackendSession() { return _poeBackendSession; }
+
 async function proxyFetch(path: string, init?: RequestInit): Promise<Response> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
-  return fetch(PROXY_URL, {
+  const extraHeaders: Record<string, string> = {};
+  if (_poeSessionId) {
+    extraHeaders['x-poe-session'] = _poeSessionId;
+  }
+  if (_poeBackendSession) {
+    extraHeaders['x-poe-backend-session'] = _poeBackendSession;
+  }
+  const response = await fetch(PROXY_URL, {
     ...init,
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       'x-proxy-path': path,
+      ...extraHeaders,
       ...(init?.headers || {}),
     },
   });
+  // Capture backend session cookie from proxy response header
+  const backendSession = response.headers.get('x-poe-backend-session');
+  if (backendSession) {
+    _poeBackendSession = backendSession;
+  }
+  return response;
 }
 
 export interface AuthUser {
@@ -31,11 +55,14 @@ interface SessionPayload {
   expiresAt?: string | null;
 }
 
+export type UserRole = 'public' | 'member' | 'admin';
+
 interface AuthContextValue {
   /* Supabase / Lovable Cloud auth */
   supabaseUser: User | null;
   isAuthenticated: boolean;
   isApproved: boolean;
+  userRole: UserRole;
   signIn: (email: string, password: string) => Promise<string | null>;
   signUp: (email: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
@@ -47,12 +74,14 @@ interface AuthContextValue {
   refreshSession: () => Promise<void | SessionPayload>;
   sessionState: 'connected' | 'disconnected' | 'session_expired';
   isLoading: boolean;
+  sessionPersisted: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue>({
   supabaseUser: null,
   isAuthenticated: false,
   isApproved: false,
+  userRole: 'public',
   signIn: async () => null,
   signUp: async () => null,
   signOut: async () => {},
@@ -63,6 +92,7 @@ const AuthContext = createContext<AuthContextValue>({
   refreshSession: async () => {},
   sessionState: 'disconnected',
   isLoading: true,
+  sessionPersisted: false,
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -90,14 +120,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [supabaseUser, setSupabaseUser] = useState<User | null>(null);
   const [supabaseReady, setSupabaseReady] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
+  const [userRole, setUserRole] = useState<UserRole>('public');
 
-  const checkApproval = useCallback(async (userId: string) => {
-    const { data } = await supabase
+  const checkApprovalAndRole = useCallback(async (userId: string) => {
+    const { data: approval } = await supabase
       .from('approved_users')
       .select('id')
       .eq('user_id', userId)
       .maybeSingle();
-    setIsApproved(!!data);
+    setIsApproved(!!approval);
+
+    if (approval) {
+      const { data: roleRow } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', userId)
+        .maybeSingle();
+      setUserRole((roleRow?.role as UserRole) ?? 'member');
+    } else {
+      setUserRole('public');
+    }
   }, []);
 
   useEffect(() => {
@@ -105,9 +147,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSupabaseUser(session?.user ?? null);
       if (session?.user) {
-        checkApproval(session.user.id);
+        checkApprovalAndRole(session.user.id);
       } else {
         setIsApproved(false);
+        setUserRole('public');
       }
     });
 
@@ -115,14 +158,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSupabaseUser(session?.user ?? null);
       if (session?.user) {
-        checkApproval(session.user.id).then(() => setSupabaseReady(true));
+        checkApprovalAndRole(session.user.id).then(() => setSupabaseReady(true));
       } else {
         setSupabaseReady(true);
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [checkApproval]);
+  }, [checkApprovalAndRole]);
 
   const signIn = useCallback(async (email: string, password: string): Promise<string | null> => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -138,10 +181,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await supabase.auth.signOut();
   }, []);
 
-  /* PoE session auth state (unchanged) */
+  /* PoE session auth state */
   const [user, setUser] = useState<AuthUser | null>(null);
   const [sessionState, setSessionState] = useState<'connected' | 'disconnected' | 'session_expired'>('disconnected');
   const [isLoading, setIsLoading] = useState(true);
+  const [sessionPersisted, setSessionPersisted] = useState(false);
 
   const refreshSession = useCallback(async (): Promise<SessionPayload> => {
     const payload = await fetchSession();
@@ -155,13 +199,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return payload;
   }, []);
 
+  // Save POESESSID to database for persistence
+  const saveSessionToDb = useCallback(async (poeSessionId: string, accountName: string) => {
+    const userId = supabaseUser?.id;
+    if (!userId) return;
+    const { error } = await supabase
+      .from('user_poe_sessions')
+      .upsert({ user_id: userId, encrypted_session: poeSessionId, account_name: accountName }, { onConflict: 'user_id' });
+    if (!error) setSessionPersisted(true);
+  }, [supabaseUser]);
+
+  const deleteSessionFromDb = useCallback(async () => {
+    const userId = supabaseUser?.id;
+    if (!userId) return;
+    await supabase.from('user_poe_sessions').delete().eq('user_id', userId);
+    setSessionPersisted(false);
+  }, [supabaseUser]);
+
+  // Restore saved session on init
+  const restoreSession = useCallback(async () => {
+    const userId = supabaseUser?.id;
+    if (!userId) return;
+    const { data } = await supabase
+      .from('user_poe_sessions')
+      .select('encrypted_session, account_name')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (data?.encrypted_session) {
+      setSessionPersisted(true);
+      // Set in memory so all subsequent proxy requests include it
+      setPoeSessionId(data.encrypted_session);
+      // POST to establish backend session
+      try {
+        const response = await proxyFetch('/api/v1/auth/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ poeSessionId: data.encrypted_session }),
+        });
+        if (!response.ok) {
+          logApiError({ path: '/api/v1/auth/session', statusCode: response.status, errorCode: 'auth_restore', message: `Session restore failed (${response.status})` });
+        }
+      } catch {
+        // Silent fail on restore
+      }
+    }
+  }, [supabaseUser]);
+
   useEffect(() => {
     if (!supabaseReady || !isApproved) {
       setIsLoading(false);
       return;
     }
-    refreshSession().finally(() => setIsLoading(false));
-  }, [refreshSession, supabaseReady, isApproved]);
+    // Restore saved session then refresh
+    restoreSession()
+      .then(() => refreshSession())
+      .finally(() => setIsLoading(false));
+  }, [refreshSession, restoreSession, supabaseReady, isApproved]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -179,7 +272,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshSession]);
 
   const login = useCallback(async (poeSessionId: string): Promise<boolean> => {
+    // Store in memory so proxyFetch attaches it on every request
+    setPoeSessionId(poeSessionId);
     try {
+      // POST to establish backend session
       const response = await proxyFetch('/api/v1/auth/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -190,20 +286,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (err) {
       logApiError({ path: '/api/v1/auth/session', errorCode: 'network_error', message: err instanceof Error ? err.message : 'Network error' });
+      setPoeSessionId(null);
       return false;
     }
+    // Verify session — the x-poe-session header will be sent automatically
     const result = await refreshSession();
-    return result.status === 'connected' && !!result.accountName;
-  }, [refreshSession]);
+    if (result.status === 'connected' && result.accountName) {
+      await saveSessionToDb(poeSessionId, result.accountName);
+      return true;
+    }
+    setPoeSessionId(null);
+    return false;
+  }, [refreshSession, saveSessionToDb]);
 
   const logout = useCallback(() => {
     proxyFetch('/api/v1/auth/logout', {
       method: 'POST',
     }).finally(() => {
+      setPoeSessionId(null);
+      setPoeBackendSession(null);
       setUser(null);
       setSessionState('disconnected');
+      deleteSessionFromDb();
     });
-  }, []);
+  }, [deleteSessionFromDb]);
 
   const isAuthenticated = !!supabaseUser;
   const combinedLoading = !supabaseReady || isLoading;
@@ -213,6 +319,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       supabaseUser,
       isAuthenticated,
       isApproved,
+      userRole,
       signIn,
       signUp,
       signOut: signOutFn,
@@ -222,6 +329,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       refreshSession,
       sessionState,
       isLoading: combinedLoading,
+      sessionPersisted,
     }}>
       {children}
     </AuthContext.Provider>

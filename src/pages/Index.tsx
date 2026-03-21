@@ -1,16 +1,103 @@
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import DashboardTab from '@/components/tabs/DashboardTab';
-import ServicesTab from '@/components/tabs/ServicesTab';
-import AnalyticsTab from '@/components/tabs/AnalyticsTab';
-import PriceCheckTab from '@/components/tabs/PriceCheckTab';
-import StashViewerTab from '@/components/tabs/StashViewerTab';
-import MessagesTab from '@/components/tabs/MessagesTab';
-import OpportunitiesTab from '@/components/tabs/OpportunitiesTab';
-import { LayoutDashboard, Server, BarChart3, Search, Grid3X3, MessageSquare, TrendingUp } from 'lucide-react';
-import UserMenu from '@/components/UserMenu';
-import ApiErrorPanel from '@/components/ApiErrorPanel';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import DashboardTab from "@/components/tabs/DashboardTab";
+import ServicesTab from "@/components/tabs/ServicesTab";
+import AnalyticsTab from "@/components/tabs/AnalyticsTab";
+import PriceCheckTab from "@/components/tabs/PriceCheckTab";
+import StashViewerTab from "@/components/tabs/StashViewerTab";
+import MessagesTab from "@/components/tabs/MessagesTab";
+import OpportunitiesTab from "@/components/tabs/OpportunitiesTab";
+import { LayoutDashboard, Server, BarChart3, Search, Grid3X3, MessageSquare, TrendingUp } from "lucide-react";
+import UserMenu from "@/components/UserMenu";
+import ApiErrorPanel from "@/components/ApiErrorPanel";
+import { useAuth, type UserRole } from "@/services/auth";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
+
+type TabDef = {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+  content: React.ReactNode;
+  roles: UserRole[];
+};
+
+const makeTabs = (subtab?: string, onSubtabChange?: (s: string) => void): TabDef[] => [
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    icon: <LayoutDashboard className="h-3.5 w-3.5" />,
+    content: <DashboardTab />,
+    roles: ["admin"],
+  },
+  {
+    id: "opportunities",
+    label: "Opportunities",
+    icon: <TrendingUp className="h-3.5 w-3.5" />,
+    content: <OpportunitiesTab />,
+    roles: ["member", "admin"],
+  },
+  {
+    id: "services",
+    label: "Services",
+    icon: <Server className="h-3.5 w-3.5" />,
+    content: <ServicesTab />,
+    roles: ["admin"],
+  },
+  {
+    id: "analytics",
+    label: "Analytics",
+    icon: <BarChart3 className="h-3.5 w-3.5" />,
+    content: <AnalyticsTab subtab={subtab} onSubtabChange={onSubtabChange} />,
+    roles: ["member", "admin"],
+  },
+  {
+    id: "pricecheck",
+    label: "ML Price",
+    icon: <Search className="h-3.5 w-3.5" />,
+    content: <PriceCheckTab />,
+    roles: ["public", "member", "admin"],
+  },
+  {
+    id: "stash",
+    label: "Stash Viewer",
+    icon: <Grid3X3 className="h-3.5 w-3.5" />,
+    content: <StashViewerTab />,
+    roles: ["member", "admin"],
+  },
+  {
+    id: "messages",
+    label: "Messages",
+    icon: <MessageSquare className="h-3.5 w-3.5" />,
+    content: <MessagesTab />,
+    roles: ["admin"],
+  },
+];
+
+const DEFAULT_TAB: Record<UserRole, string> = {
+  public: "pricecheck",
+  member: "opportunities",
+  admin: "dashboard",
+};
 
 const Index = () => {
+  const { userRole } = useAuth();
+  const { tab, subtab } = useParams<{ tab?: string; subtab?: string }>();
+  const navigate = useNavigate();
+
+  const handleSubtabChange = (s: string) => {
+    navigate(`/${tab || "analytics"}/${s}`, { replace: true });
+  };
+
+  const tabs = makeTabs(subtab, handleSubtabChange);
+  const visibleTabs = tabs.filter((t) => t.roles.includes(userRole));
+  const defaultTab = DEFAULT_TAB[userRole] || "pricecheck";
+
+  // Resolve active tab: use URL param if valid, otherwise default
+  const activeTab = tab && visibleTabs.some((t) => t.id === tab) ? tab : defaultTab;
+
+  const handleTabChange = (value: string) => {
+    navigate(`/${value}`, { replace: false });
+  };
+
   return (
     <div className="min-h-screen bg-background vignette">
       {/* Header */}
@@ -21,7 +108,7 @@ const Index = () => {
             <h1 className="text-lg font-display tracking-wide gold-shimmer-text">PoE Dashboard</h1>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-muted-foreground font-mono hidden sm:inline">All data delayed · Not real-time</span>
+            <span className="text-xs text-muted-foreground font-mono hidden sm:inline"></span>
             <ApiErrorPanel />
             <UserMenu />
           </div>
@@ -30,38 +117,25 @@ const Index = () => {
 
       {/* Main content */}
       <main className="container px-4 py-4">
-        <Tabs defaultValue="dashboard" className="space-y-4" data-testid="panel-shell-root">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4" data-testid="panel-shell-root">
           <TabsList className="w-full justify-start h-auto flex-wrap gap-1 bg-card border border-border p-1">
-            <TabsTrigger data-testid="tab-dashboard" value="dashboard" className="tab-game gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <LayoutDashboard className="h-3.5 w-3.5" /> Dashboard
-            </TabsTrigger>
-            <TabsTrigger data-testid="tab-opportunities" value="opportunities" className="tab-game gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <TrendingUp className="h-3.5 w-3.5" /> Opportunities
-            </TabsTrigger>
-            <TabsTrigger data-testid="tab-services" value="services" className="tab-game gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Server className="h-3.5 w-3.5" /> Services
-            </TabsTrigger>
-            <TabsTrigger data-testid="tab-analytics" value="analytics" className="tab-game gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <BarChart3 className="h-3.5 w-3.5" /> Analytics
-            </TabsTrigger>
-            <TabsTrigger data-testid="tab-pricecheck" value="pricecheck" className="tab-game gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Search className="h-3.5 w-3.5" /> ML Price
-            </TabsTrigger>
-            <TabsTrigger data-testid="tab-stash" value="stash" className="tab-game gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Grid3X3 className="h-3.5 w-3.5" /> Stash Viewer
-            </TabsTrigger>
-            <TabsTrigger data-testid="tab-messages" value="messages" className="tab-game gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <MessageSquare className="h-3.5 w-3.5" /> Messages
-            </TabsTrigger>
+            {visibleTabs.map((t) => (
+              <TabsTrigger
+                key={t.id}
+                data-testid={`tab-${t.id}`}
+                value={t.id}
+                className="tab-game gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+              >
+                {t.icon} {t.label}
+              </TabsTrigger>
+            ))}
           </TabsList>
 
-          <TabsContent data-testid="panel-dashboard" value="dashboard"><DashboardTab /></TabsContent>
-          <TabsContent data-testid="panel-opportunities" value="opportunities"><OpportunitiesTab /></TabsContent>
-          <TabsContent data-testid="panel-services" value="services"><ServicesTab /></TabsContent>
-          <TabsContent data-testid="panel-analytics" value="analytics"><AnalyticsTab /></TabsContent>
-          <TabsContent data-testid="panel-pricecheck" value="pricecheck"><PriceCheckTab /></TabsContent>
-          <TabsContent data-testid="panel-stash" value="stash"><StashViewerTab /></TabsContent>
-          <TabsContent data-testid="panel-messages" value="messages"><MessagesTab /></TabsContent>
+          {visibleTabs.map((t) => (
+            <TabsContent key={t.id} data-testid={`panel-${t.id}`} value={t.id}>
+              {t.content}
+            </TabsContent>
+          ))}
         </Tabs>
       </main>
     </div>

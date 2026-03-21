@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useState } from 'react';
 import { Slider } from '@/components/ui/slider';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,23 +28,40 @@ import {
   getAnalyticsReport,
   getAnalyticsSearchHistory,
   getAnalyticsSearchSuggestions,
+  getRolloutControls,
+  updateRolloutControls,
   type IngestionRow, 
   type ScannerRow, 
   type AlertRow, 
   type BacktestAnalytics, 
   type MlAnalytics, 
   type MlStatus,
+  type MlRouteHotspot,
   type ReportAnalytics,
   type ReportData,
+  type GoldDiagnosticsResponse,
+  type RolloutControls,
 } from '@/services/api';
 import { api } from '@/services/api';
 import type { MlAutomationStatus, MlAutomationHistory, PricingOutliersResponse, SearchHistoryResponse, SearchSuggestion } from '@/types/api';
 import { RenderState } from '@/components/shared/RenderState';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 
-const AnalyticsTab = forwardRef<HTMLDivElement, Record<string, never>>(function AnalyticsTab(_props, ref) {
+interface AnalyticsTabProps {
+  subtab?: string;
+  onSubtabChange?: (subtab: string) => void;
+}
+
+const AnalyticsTab = forwardRef<HTMLDivElement, AnalyticsTabProps>(function AnalyticsTab({ subtab, onSubtabChange }, ref) {
+  const activeSubtab = subtab || "ingestion";
+  const handleSubtabChange = (value: string) => {
+    if (onSubtabChange) onSubtabChange(value);
+  };
   return (
     <div ref={ref}>
-    <Tabs defaultValue="ingestion" className="space-y-4">
+    <Tabs value={activeSubtab} onValueChange={handleSubtabChange} className="space-y-4">
       <TabsList className="flex-wrap h-auto gap-1 bg-secondary/50 p-1">
         <TabsTrigger data-testid="analytics-tab-ingestion" value="ingestion" className="tab-game text-xs">Ingestion</TabsTrigger>
         <TabsTrigger data-testid="analytics-tab-scanner" value="scanner" className="tab-game text-xs">Scanner</TabsTrigger>
@@ -67,7 +84,7 @@ const AnalyticsTab = forwardRef<HTMLDivElement, Record<string, never>>(function 
       <TabsContent data-testid="analytics-panel-search" value="search"><SearchHistoryPanel /></TabsContent>
       <TabsContent data-testid="analytics-panel-outliers" value="outliers"><PricingOutliersPanel /></TabsContent>
       <TabsContent data-testid="analytics-panel-session" value="session"><RenderState kind="feature_unavailable" message="Session analytics not supported by backend contract" /></TabsContent>
-      <TabsContent data-testid="analytics-panel-diagnostics" value="diagnostics"><RenderState kind="feature_unavailable" message="Diagnostics not supported by backend contract" /></TabsContent>
+      <TabsContent data-testid="analytics-panel-diagnostics" value="diagnostics"><DiagnosticsPanel /></TabsContent>
     </Tabs>
     </div>
   );
@@ -79,11 +96,12 @@ export default AnalyticsTab;
 function IngestionPanel() {
   const [items, setItems] = useState<IngestionRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsIngestion()
       .then(setItems)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ingestion analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ingestion analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (items.length === 0) return <RenderState kind="empty" message="No ingestion data available" />;
@@ -113,11 +131,12 @@ function IngestionPanel() {
 function ScannerPanel() {
   const [items, setItems] = useState<ScannerRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsScanner()
       .then(setItems)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load scanner analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load scanner analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (items.length === 0) return <RenderState kind="empty" message="No scanner data available" />;
@@ -141,11 +160,12 @@ function ScannerPanel() {
 function AlertsPanel() {
   const [items, setItems] = useState<AlertRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsAlerts()
       .then(setItems)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load alerts analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load alerts analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (items.length === 0) return <RenderState kind="empty" message="No alerts data available" />;
@@ -172,11 +192,12 @@ function AlertsPanel() {
 function BacktestsPanel() {
   const [data, setData] = useState<BacktestAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsBacktests()
       .then(setData)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load backtests analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load backtests analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (!data || data.rows.length === 0) return <RenderState kind="empty" message="No backtest data available" />;
@@ -249,7 +270,7 @@ function MlPanel() {
   const [automationHistory, setAutomationHistory] = useState<MlAutomationHistory | null>(null);
   const [automationError, setAutomationError] = useState<string | null>(null);
 
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsMl()
       .then(setData)
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ML analytics'));
@@ -261,15 +282,35 @@ function MlPanel() {
       })
       .catch(err => setAutomationError(err instanceof Error ? err.message : 'Failed to load automation data'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
-  if (!data?.status) return <RenderState kind="empty" message="No ML data available" />;
+  if (!data?.status) {
+    return <RenderState kind="empty" message="No ML data available" />;
+  }
 
   const s = data.status as MlStatus;
   const cmp = s.candidate_vs_incumbent ?? null;
 
   return (
     <div className="space-y-4">
+      {/* Warmup notice */}
+      {s.warmup && (
+        <Card className="card-game border-sky-500/30">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3 text-xs">
+              <Badge className="bg-sky-500/20 text-sky-400 border-sky-500/30">Warmup</Badge>
+              <span className="text-muted-foreground">{s.warmup.message || 'Model warming up'}</span>
+              {s.warmup.runs_needed != null && s.warmup.runs_completed != null && (
+                <span className="font-mono text-foreground ml-auto">
+                  {s.warmup.runs_completed}/{s.warmup.runs_needed} runs
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Status Header */}
       <Card className="card-game">
         <CardHeader className="pb-2">
@@ -326,6 +367,45 @@ function MlPanel() {
         </Card>
       </div>
 
+      {/* Promotion Policy */}
+      {s.promotion_policy && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Promotion Gates</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-xs">
+              {s.promotion_policy.mdape_ceiling != null && (
+                <div>
+                  <span className="text-muted-foreground">MDAPE Ceiling</span>
+                  <p className="font-mono text-foreground">{(s.promotion_policy.mdape_ceiling * 100).toFixed(1)}%</p>
+                </div>
+              )}
+              {s.promotion_policy.coverage_floor != null && (
+                <div>
+                  <span className="text-muted-foreground">Coverage Floor</span>
+                  <p className="font-mono text-foreground">{(s.promotion_policy.coverage_floor * 100).toFixed(1)}%</p>
+                </div>
+              )}
+              {s.promotion_policy.min_rows != null && (
+                <div>
+                  <span className="text-muted-foreground">Min Rows</span>
+                  <p className="font-mono text-foreground">{s.promotion_policy.min_rows.toLocaleString()}</p>
+                </div>
+              )}
+              {Object.entries(s.promotion_policy)
+                .filter(([k]) => !['mdape_ceiling', 'coverage_floor', 'min_rows', 'mdapeCeiling', 'coverageFloor', 'minRows'].includes(k))
+                .map(([k, v]) => (
+                  <div key={k}>
+                    <span className="text-muted-foreground">{humanize(k)}</span>
+                    <p className="font-mono text-foreground">{typeof v === 'number' ? (v < 1 ? (v * 100).toFixed(1) + '%' : v.toLocaleString()) : String(v ?? '—')}</p>
+                  </div>
+                ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Candidate vs Incumbent */}
       {cmp && (
         <Card className="card-game">
@@ -344,24 +424,24 @@ function MlPanel() {
               <TableBody>
                 <TableRow>
                   <TableCell className="text-xs text-muted-foreground">Run ID</TableCell>
-                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.candidate_run_id}</TableCell>
-                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.incumbent_run_id}</TableCell>
+                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.candidate_run_id || '—'}</TableCell>
+                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.incumbent_run_id || '—'}</TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell className="text-xs text-muted-foreground">Avg MDAPE</TableCell>
-                  <TableCell className="text-xs font-mono">{(cmp.candidate_avg_mdape * 100).toFixed(1)}%</TableCell>
-                  <TableCell className="text-xs font-mono">{(cmp.incumbent_avg_mdape * 100).toFixed(1)}%</TableCell>
+                  <TableCell className="text-xs font-mono">{cmp.candidate_avg_mdape != null ? (cmp.candidate_avg_mdape * 100).toFixed(1) + '%' : '—'}</TableCell>
+                  <TableCell className="text-xs font-mono">{cmp.incumbent_avg_mdape != null ? (cmp.incumbent_avg_mdape * 100).toFixed(1) + '%' : '—'}</TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell className="text-xs text-muted-foreground">Interval Coverage</TableCell>
-                  <TableCell className="text-xs font-mono">{(cmp.candidate_avg_interval_coverage * 100).toFixed(1)}%</TableCell>
-                  <TableCell className="text-xs font-mono">{(cmp.incumbent_avg_interval_coverage * 100).toFixed(1)}%</TableCell>
+                  <TableCell className="text-xs font-mono">{cmp.candidate_avg_interval_coverage != null ? (cmp.candidate_avg_interval_coverage * 100).toFixed(1) + '%' : '—'}</TableCell>
+                  <TableCell className="text-xs font-mono">{cmp.incumbent_avg_interval_coverage != null ? (cmp.incumbent_avg_interval_coverage * 100).toFixed(1) + '%' : '—'}</TableCell>
                 </TableRow>
               </TableBody>
             </Table>
             <div className="flex items-center gap-6 px-4 py-3 border-t border-border text-xs">
-              <span className="text-muted-foreground">MDAPE Δ: <span className="font-mono text-foreground">{(cmp.mdape_improvement * 100).toFixed(1)}%</span></span>
-              <span className="text-muted-foreground">Coverage Δ: <span className="font-mono text-foreground">{(cmp.coverage_delta * 100).toFixed(1)}%</span></span>
+              <span className="text-muted-foreground">MDAPE Δ: <span className="font-mono text-foreground">{cmp.mdape_improvement != null ? (cmp.mdape_improvement * 100).toFixed(1) + '%' : '—'}</span></span>
+              <span className="text-muted-foreground">Coverage Δ: <span className="font-mono text-foreground">{cmp.coverage_delta != null ? (cmp.coverage_delta * 100).toFixed(1) + '%' : '—'}</span></span>
               <span className="text-muted-foreground flex items-center gap-1">
                 Floor OK: {cmp.coverage_floor_ok
                   ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
@@ -378,15 +458,75 @@ function MlPanel() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-sans">Route Hotspots</CardTitle>
           </CardHeader>
-          <CardContent>
-            <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all">
-              {JSON.stringify(s.route_hotspots, null, 2)}
-            </pre>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Route</TableHead>
+                  <TableHead className="text-xs">MDAPE</TableHead>
+                  <TableHead className="text-xs">Coverage</TableHead>
+                  <TableHead className="text-xs">Samples</TableHead>
+                  <TableHead className="text-xs">Anomaly</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {s.route_hotspots.map((h: MlRouteHotspot, i: number) => (
+                  <TableRow key={i}>
+                    <TableCell className="text-xs font-mono">{h.route ?? '—'}</TableCell>
+                    <TableCell className="text-xs font-mono">{h.avg_mdape != null ? (h.avg_mdape * 100).toFixed(1) + '%' : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono">{h.avg_interval_coverage != null ? (h.avg_interval_coverage * 100).toFixed(1) + '%' : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono">{h.sample_count?.toLocaleString() ?? '—'}</TableCell>
+                    <TableCell className="text-xs">
+                      {h.anomaly === true
+                        ? <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[10px]">Yes</Badge>
+                        : h.anomaly === false
+                          ? <span className="text-muted-foreground">No</span>
+                          : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       ) : (
         <p className="text-xs text-muted-foreground text-center py-2">No route hotspots</p>
       )}
+
+      {/* Route Decisions */}
+      {(s as MlStatus & { route_decisions: unknown[] }).route_decisions?.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Route Decisions</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Route</TableHead>
+                  <TableHead className="text-xs">Decision</TableHead>
+                  <TableHead className="text-xs">Reason</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {((s as MlStatus & { route_decisions: unknown[] }).route_decisions).map((rd: unknown, i: number) => {
+                  const d = rd as Record<string, unknown>;
+                  return (
+                    <TableRow key={i}>
+                      <TableCell className="text-xs font-mono">{String(d.route ?? d.route_key ?? '—')}</TableCell>
+                      <TableCell className="text-xs"><Badge className={statusColor(String(d.decision ?? d.action ?? ''))}>{humanize(String(d.decision ?? d.action ?? 'unknown'))}</Badge></TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{String(d.reason ?? '—')}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ML Rollout Controls */}
+      <RolloutCard />
 
       {/* ML Automation Section */}
       <MlAutomationPanel status={automationStatus} history={automationHistory} error={automationError} />
@@ -415,6 +555,10 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
   const datasetCoverage = history?.datasetCoverage ?? null;
   const promotions = history?.promotions ?? [];
   const runs = history?.history ?? [];
+  const modelMetrics = history?.modelMetrics ?? [];
+  const modelHistoryEntries = history?.modelHistory ?? [];
+  const routeFamilies = history?.routeFamilies ?? [];
+  const mode = history?.mode ?? status?.mode;
   const mdapeTrendData = qualityTrend
     .filter((point) => point.avgMdape != null)
     .map((point, index) => ({
@@ -440,7 +584,14 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
       {status && (
         <Card className="card-game">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-sans">Automation Status</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-sans">Automation Status</CardTitle>
+              {mode && (
+                <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5">
+                  {mode}
+                </Badge>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 text-xs">
@@ -607,6 +758,94 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
         </>
       )}
 
+      {/* Model Metrics (per-route model performance) */}
+      {modelMetrics.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Model Metrics</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Route</TableHead>
+                  <TableHead className="text-xs">Model</TableHead>
+                  <TableHead className="text-xs text-right">Samples</TableHead>
+                  <TableHead className="text-xs text-right">MDAPE</TableHead>
+                  <TableHead className="text-xs text-right">Coverage</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {modelMetrics.map((m, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="text-xs font-mono">{m.route ?? '—'}</TableCell>
+                    <TableCell className="text-xs font-mono">{m.modelVersion ?? '—'}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.sampleCount != null ? formatCompact(m.sampleCount) : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{formatPct(m.avgMdape)}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{formatPct(m.avgIntervalCoverage)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Model History */}
+      {modelHistoryEntries.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Model Version History</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Model</TableHead>
+                  <TableHead className="text-xs">Promoted</TableHead>
+                  <TableHead className="text-xs">Retired</TableHead>
+                  <TableHead className="text-xs text-right">Runs</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {modelHistoryEntries.map((m, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="text-xs font-mono">{m.modelVersion ?? '—'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{m.promotedAt ? formatDateTimeShort(m.promotedAt) : '—'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{m.retiredAt ? formatDateTimeShort(m.retiredAt) : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.runsCount ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Route Families */}
+      {routeFamilies.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Route Families</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {routeFamilies.map((f, i) => (
+              <div key={i} className="text-xs">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium text-foreground">{f.family ?? 'Unknown'}</span>
+                  {f.totalSamples != null && <span className="text-muted-foreground font-mono">{formatCompact(f.totalSamples)} samples</span>}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {f.routes.map((r) => (
+                    <Badge key={r} variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5">{r}</Badge>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       {runs.length > 0 && (
         <Card className="card-game">
           <CardHeader className="pb-2">
@@ -740,11 +979,12 @@ const GOLD_LABELS: { key: keyof ReportData; label: string }[] = [
 function ReportsPanel() {
   const [data, setData] = useState<ReportAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { 
+  const load = useCallback(() => {
     getAnalyticsReport()
       .then(setData)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load report analytics')); 
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load report analytics'));
   }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
   if (!data || data.status === 'empty') return <RenderState kind="empty" message="No report data available" />;
@@ -821,6 +1061,198 @@ function ReportsPanel() {
     </div>
   );
 }
+
+function diagnosticStateColor(state: string): string {
+  if (state === 'ok' || state === 'healthy') return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+  if (state === 'stale') return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+  if (state === 'gold_empty' || state === 'degraded') return 'bg-destructive/20 text-destructive border-destructive/30';
+  if (state === 'league_gap') return 'bg-sky-500/20 text-sky-400 border-sky-500/30';
+  return 'bg-muted text-muted-foreground border-border';
+}
+
+function DiagnosticsPanel() {
+  const [data, setData] = useState<GoldDiagnosticsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    getAnalyticsReport()
+      .then((report) => {
+        setData(report.goldDiagnostics ?? null);
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err instanceof Error ? err.message : 'Failed to load diagnostics');
+        setLoading(false);
+      });
+  }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 10_000); return () => clearInterval(iv); }, [load]);
+
+  if (error) return <RenderState kind="degraded" message={error} />;
+  if (loading) return <RenderState kind="empty" message="Loading diagnostics…" />;
+  if (!data) return <RenderState kind="feature_unavailable" message="Gold diagnostics not available from this endpoint" />;
+
+  const s = data.summary;
+
+  return (
+    <div className="space-y-4">
+      {/* Summary */}
+      <div className="flex items-center gap-3 mb-2">
+        <Badge className={diagnosticStateColor(s.status)}>{humanize(s.status)}</Badge>
+        <span className="text-xs text-muted-foreground">League: <span className="font-mono text-foreground">{data.league}</span></span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+        {([
+          ['Marts', s.martCount],
+          ['Problems', s.problemMarts],
+          ['Gold Empty', s.goldEmptyMarts],
+          ['Stale', s.staleMarts],
+          ['Missing League', s.missingLeagueMarts],
+        ] as const).map(([label, val]) => (
+          <Card key={label} className="card-game">
+            <CardContent className="p-4 text-center">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <p className={`text-lg font-mono ${typeof val === 'number' && val > 0 && label !== 'Marts' ? 'text-amber-400' : 'text-foreground'}`}>{val}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Mart Table */}
+      {data.marts.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Mart Health</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Mart</TableHead>
+                  <TableHead className="text-xs">State</TableHead>
+                  <TableHead className="text-xs text-right">Source Rows</TableHead>
+                  <TableHead className="text-xs text-right">Gold Rows</TableHead>
+                  <TableHead className="text-xs text-right">Freshness (min)</TableHead>
+                  <TableHead className="text-xs text-right">Lag (min)</TableHead>
+                  <TableHead className="text-xs">League</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.marts.map((m) => (
+                  <TableRow key={m.martName}>
+                    <TableCell className="text-xs font-mono">{m.martName}</TableCell>
+                    <TableCell><Badge className={`text-[10px] ${diagnosticStateColor(m.diagnosticState)}`}>{humanize(m.diagnosticState)}</Badge></TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.sourceRowCount.toLocaleString()}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.goldRowCount.toLocaleString()}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.goldFreshnessMinutes != null ? m.goldFreshnessMinutes.toFixed(0) : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{m.sourceToGoldLagMinutes != null ? m.sourceToGoldLagMinutes.toFixed(0) : '—'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{m.leagueVisibility ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function RolloutCard() {
+  const [data, setData] = useState<RolloutControls | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [updating, setUpdating] = useState(false);
+
+  const load = useCallback(() => {
+    getRolloutControls()
+      .then(setData)
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load rollout'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = useCallback(async (field: 'shadowMode' | 'cutoverEnabled' | 'rollbackToIncumbent', value: boolean) => {
+    setUpdating(true);
+    try {
+      const updated = await updateRolloutControls({ [field]: value });
+      setData(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update rollout');
+    } finally {
+      setUpdating(false);
+    }
+  }, []);
+
+  if (error) {
+    return (
+      <Card className="card-game">
+        <CardHeader className="pb-2"><CardTitle className="text-sm font-sans">Rollout Controls</CardTitle></CardHeader>
+        <CardContent><RenderState kind="degraded" message={error} /></CardContent>
+      </Card>
+    );
+  }
+  if (!data) return null;
+
+  return (
+    <Card className="card-game">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-sans">Rollout Controls</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 text-xs">
+          <div>
+            <span className="text-muted-foreground">Candidate</span>
+            <p className="font-mono text-foreground">{data.candidateModelVersion ?? 'None'}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Incumbent</span>
+            <p className="font-mono text-foreground">{data.incumbentModelVersion ?? 'None'}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Serving</span>
+            <p className="font-mono text-foreground">{data.effectiveServingModelVersion ?? 'None'}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-6 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Switch
+              id="shadow-mode"
+              checked={data.shadowMode}
+              disabled={updating}
+              onCheckedChange={(v) => toggle('shadowMode', v)}
+            />
+            <Label htmlFor="shadow-mode" className="text-xs">Shadow Mode</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="cutover-enabled"
+              checked={data.cutoverEnabled}
+              disabled={updating}
+              onCheckedChange={(v) => toggle('cutoverEnabled', v)}
+            />
+            <Label htmlFor="cutover-enabled" className="text-xs">Cutover</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="rollback-to-incumbent"
+              checked={data.rollbackToIncumbent}
+              disabled={updating}
+              onCheckedChange={(v) => toggle('rollbackToIncumbent', v)}
+            />
+            <Label htmlFor="rollback-to-incumbent" className="text-xs text-destructive">Rollback</Label>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+          {data.lastAction && <span>Last action: <span className="font-mono text-foreground">{data.lastAction}</span></span>}
+          {data.updatedAt && <span>Updated: <span className="text-foreground">{formatDateTimeShort(data.updatedAt)}</span></span>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 
 
 type HistogramBucket = {

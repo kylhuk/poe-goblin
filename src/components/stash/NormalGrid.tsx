@@ -1,0 +1,49 @@
+import React from 'react';
+import type { PoeItem } from '@/types/api';
+import StashItemCell from './StashItemCell';
+
+interface NormalGridProps {
+  items: PoeItem[];
+  gridSize: number; // 12 for normal, 24 for quad
+}
+
+export default function NormalGrid({ items, gridSize }: NormalGridProps) {
+  const isQuad = gridSize === 24;
+
+  return (
+    <div className="stash-frame" data-testid="stash-panel-grid">
+      <div
+        className="stash-grid"
+        style={{
+          gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${gridSize}, minmax(0, 1fr))`,
+        }}
+      >
+        {/* Empty cell bg */}
+        {Array.from({ length: gridSize * gridSize }).map((_, i) => (
+          <div
+            key={`e${i}`}
+            className="stash-empty-cell"
+            style={{
+              gridColumn: (i % gridSize) + 1,
+              gridRow: Math.floor(i / gridSize) + 1,
+            }}
+          />
+        ))}
+        {/* Items */}
+        {items.map(item => (
+          <StashItemCell
+            key={item.id}
+            item={item}
+            isQuad={isQuad}
+            style={{
+              gridColumn: `${item.x + 1} / span ${item.w}`,
+              gridRow: `${item.y + 1} / span ${item.h}`,
+              zIndex: 1,
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}

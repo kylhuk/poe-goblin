@@ -19,50 +19,32 @@ import {
   FileText, Shirt, HardHat, Crown, ChevronDown, Copy, Loader2, History, type LucideIcon,
 } from 'lucide-react';
 import { RenderState } from '@/components/shared/RenderState';
+import NormalGrid from '@/components/stash/NormalGrid';
+import SpecialLayoutGrid from '@/components/stash/SpecialLayoutGrid';
 
-const ITEM_CLASS_ICONS: Record<string, LucideIcon> = {
-  Currency: Coins, Gem: Diamond, Jewel: CircleDot, Flask: FlaskConical,
-  Weapon: Sword, Shield: ShieldHalf, 'Body Armour': Shirt, Helmet: HardHat,
-  Blueprint: FileText, Amulet: Crown, Belt: Crown,
-};
-
-const RARITY_COLOR: Record<string, string> = {
-  normal: 'text-muted-foreground', magic: 'text-info', rare: 'text-exalt', unique: 'text-chaos',
-};
-
-const RARITY_GLOW: Record<string, string> = {
-  normal: '', magic: 'drop-shadow-[0_0_4px_hsl(210,60%,50%,0.4)]',
-  rare: 'drop-shadow-[0_0_4px_hsl(45,80%,60%,0.4)]', unique: 'drop-shadow-[0_0_6px_hsl(35,90%,55%,0.5)]',
-};
-
-const EVAL_BG: Record<PriceEvaluation, string> = {
-  well_priced: 'bg-[hsl(140,60%,15%,0.3)]',
-  could_be_better: 'bg-[hsl(35,80%,15%,0.3)]',
-  mispriced: 'bg-[hsl(0,60%,15%,0.4)]',
-};
-
-const EVAL_LABEL: Record<PriceEvaluation, string> = {
-  well_priced: 'Well Priced', could_be_better: 'Could Be Better', mispriced: 'Mispriced',
-};
-
-function getGridSize(type: StashTab['type']) {
-  return type === 'quad' ? 24 : 12;
-}
-
-function renderEmptyCells(grid: number) {
-  const cells: React.ReactNode[] = [];
-  for (let row = 0; row < grid; row += 1) {
-    for (let col = 0; col < grid; col += 1) {
-      cells.push(
-        <div
-          key={`empty-${row}-${col}`}
-          className="stash-empty-cell"
-          style={{
-            gridColumn: col + 1,
-            gridRow: row + 1,
-          }}
-        />
-      );
+const API_SCHEMA = `{
+  "stashTabs": [
+    {
+      "id": "string",
+      "name": "string",
+      "type": "normal | quad | currency | fragment | ...",
+      "items": [
+        {
+          "id": "string",
+          "name": "string",
+          "typeLine": "string",
+          "icon": "https://web.poecdn.com/...",
+          "x": 0, "y": 0, "w": 1, "h": 1,
+          "frameType": 3,
+          "stackSize": 1,
+          "properties": [...],
+          "explicitMods": [...],
+          "sockets": [{ "group": 0, "sColour": "R" }],
+          "estimatedPrice": 120,
+          "priceEvaluation": "well_priced | could_be_better | mispriced"
+        }
+      ],
+      "currencyLayout": { "sections": [...], "layout": { "0": { "x": 10, "y": 10, "w": 47, "h": 47 } } }
     }
   }
   return cells;
@@ -78,16 +60,20 @@ const API_SCHEMA = `{
   "stashTabs": []
 }`;
 
-const EMPTY_SCAN_STATUS: StashScanStatus = {
-  status: 'idle',
-  activeScanId: null,
-  publishedScanId: null,
-  startedAt: null,
-  updatedAt: null,
-  publishedAt: null,
-  progress: { tabsTotal: 0, tabsProcessed: 0, itemsTotal: 0, itemsProcessed: 0 },
-  error: null,
-};
+function getSpecialLayout(tab: StashTab): SpecialLayout | null {
+  return tab.currencyLayout
+    ?? tab.fragmentLayout
+    ?? tab.essenceLayout
+    ?? tab.deliriumLayout
+    ?? tab.blightLayout
+    ?? tab.ultimatumLayout
+    ?? tab.mapLayout
+    ?? tab.divinationLayout
+    ?? tab.uniqueLayout
+    ?? tab.delveLayout
+    ?? tab.metamorphLayout
+    ?? null;
+}
 
 const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(function StashViewerTab(_props, ref) {
   const [tabs, setTabs] = useState<StashTab[]>([]);
@@ -196,9 +182,16 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
     }
   }, []);
 
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 5_000);
+    return () => clearInterval(iv);
+  }, [load]);
+
   const tab = tabs[activeTab];
-  const grid = tab ? getGridSize(tab.type) : 12;
-  const runningScan = scanBusy || scanStatus.status === 'running' || scanStatus.status === 'publishing';
+  const specialLayout = tab ? getSpecialLayout(tab) : null;
+  const isGrid = tab && !specialLayout;
+  const gridSize = tab?.quadLayout ? 24 : 12;
 
   return (
     <div ref={ref} className="space-y-3" data-testid="panel-stash-root">
@@ -243,41 +236,26 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
         ))}
       </div>
 
+      {/* Status states */}
       {error && <RenderState kind="degraded" message={error} />}
       {!error && status === 'disconnected' && <RenderState kind="disconnected" message="Connect account to view stash" />}
       {!error && status === 'session_expired' && <RenderState kind="session_expired" message="Session expired, login again" />}
       {!error && status === 'feature_unavailable' && <RenderState kind="feature_unavailable" message="Stash feature unavailable" />}
       {!error && tabs.length === 0 && status === 'connected_empty' && <RenderState kind="empty" message="Connected but stash is empty" />}
-      {tab && (
-        <div className="stash-frame" data-testid="stash-panel-grid">
-          <div
-            className="stash-grid"
-            style={{
-              gridTemplateColumns: `repeat(${grid}, minmax(0, 1fr))`,
-              gridTemplateRows: `repeat(${grid}, minmax(0, 1fr))`,
-            }}
-          >
-            {renderEmptyCells(grid)}
-            {tab.items.map(item => (
-              <StashCell
-                key={item.fingerprint || item.id}
-                item={item}
-                gridSize={grid}
-                onOpenHistory={openHistory}
-                style={{
-                  gridColumn: `${item.x + 1} / span ${item.w}`,
-                  gridRow: `${item.y + 1} / span ${item.h}`,
-                  zIndex: 1,
-                }}
-              />
-            ))}
-          </div>
+      {/* Grid / Special layout rendering */}
+      {tab && specialLayout && (
+        <SpecialLayoutGrid items={tab.items} layout={specialLayout} />
+      )}
+      {tab && isGrid && (
+        <NormalGrid items={tab.items} gridSize={gridSize} />
+      )}
 
-          <div className="flex items-center gap-4 mt-2 px-1 text-[10px] text-muted-foreground">
-            <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[hsl(140,60%,15%,0.5)]" /> Well priced</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[hsl(35,80%,15%,0.5)]" /> Could be better</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-[hsl(0,60%,15%,0.6)]" /> Mispriced</span>
-          </div>
+      {/* Legend */}
+      {tab && (
+        <div className="flex items-center gap-4 mt-2 px-1 text-[10px] text-muted-foreground">
+          <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-success/30" /> Well priced</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-warning/30" /> Could be better</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-destructive/30" /> Mispriced</span>
         </div>
       )}
 
@@ -336,82 +314,3 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
 });
 
 StashViewerTab.displayName = 'StashViewerTab';
-export default StashViewerTab;
-
-function StashCell({ item, gridSize, style, onOpenHistory }: { item: StashItem; gridSize: number; style: React.CSSProperties; onOpenHistory: (item: StashItem) => void }) {
-  const isQuad = gridSize === 24;
-  const IconComp = item.itemClass ? ITEM_CLASS_ICONS[item.itemClass] : null;
-  const iconSize = isQuad ? 10 : 18;
-  const cur = item.currency === 'div' ? 'div' : 'c';
-
-  return (
-    <HoverCard openDelay={80} closeDelay={50}>
-      <HoverCardTrigger asChild>
-        <button
-          type="button"
-          data-testid={item.fingerprint ? `stash-item-history-${item.fingerprint}` : undefined}
-          onClick={() => onOpenHistory(item)}
-          className={cn('stash-item-cell group text-left', EVAL_BG[item.priceEvaluation])}
-          style={style}
-        >
-          {IconComp && (
-            <IconComp
-              size={iconSize}
-              className={cn(
-                'transition-all shrink-0',
-                RARITY_COLOR[item.rarity],
-                RARITY_GLOW[item.rarity],
-                'opacity-70 group-hover:opacity-100'
-              )}
-            />
-          )}
-          <span className={cn(
-            'leading-tight text-center truncate w-full px-0.5',
-            RARITY_COLOR[item.rarity],
-            isQuad ? 'text-[5px]' : 'text-[7px]'
-          )}>
-            {item.name}
-          </span>
-          {!isQuad && (
-            <span className="absolute bottom-0.5 left-0.5 text-[6px] font-mono text-gold-bright/50">
-              {item.estimatedPrice}{cur}
-            </span>
-          )}
-        </button>
-      </HoverCardTrigger>
-      <HoverCardContent side="right" className="w-56 p-3 space-y-2 bg-card border-gold-dim/40">
-        <div className="space-y-1">
-          <div className="flex items-center gap-1.5">
-            {IconComp && <IconComp size={14} className={RARITY_COLOR[item.rarity]} />}
-            <p className={cn('font-semibold text-sm', RARITY_COLOR[item.rarity])}>{item.name}</p>
-          </div>
-          {item.itemClass && (
-            <span className="text-[10px] text-muted-foreground">{item.itemClass}</span>
-          )}
-        </div>
-        <div className="space-y-1 text-xs">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Estimated</span>
-            <span className="font-mono text-gold-bright">{item.estimatedPrice} {cur}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Confidence</span>
-            <span className="font-mono">{item.estimatedPriceConfidence}%</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Listed</span>
-            <span className="font-mono">{item.listedPrice != null ? `${item.listedPrice} ${cur}` : 'N/A'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Band</span>
-            <span className="font-mono">{item.interval?.p10 ?? 'n/a'} - {item.interval?.p90 ?? 'n/a'}</span>
-          </div>
-        </div>
-        <div className={cn('flex items-center gap-1.5 pt-1 border-t border-border text-xs text-muted-foreground')}>
-          <span className={cn('w-3 h-2 rounded-sm', EVAL_BG[item.priceEvaluation])} />
-          {EVAL_LABEL[item.priceEvaluation]}
-        </div>
-      </HoverCardContent>
-    </HoverCard>
-  );
-}

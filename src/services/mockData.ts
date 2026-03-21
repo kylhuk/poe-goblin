@@ -1,7 +1,7 @@
 import type {
   Service, FairValueItem, StaleListingOpp, GemState, HeistDrop,
   ShipmentRecommendation, GoldShadowData, SessionRecommendation,
-  GearSwapResult, PriceCheckResponse, StashTab, AppMessage
+  GearSwapResult, PriceCheckResponse, StashTab, AppMessage, PoeItem
 } from '@/types/api';
 
 const ago = (mins: number) => new Date(Date.now() - mins * 60000).toISOString();
@@ -91,33 +91,69 @@ export const mockPriceCheck: PriceCheckResponse = {
   ],
 };
 
+// Helper: PoE frameType → number (0=Normal,1=Magic,2=Rare,3=Unique,4=Gem,5=Currency)
+const poeItem = (overrides: Partial<PoeItem> & { id: string; typeLine: string; icon: string; x: number; y: number; w: number; h: number; frameType: number }): PoeItem => ({
+  name: '',
+  ...overrides,
+});
+
 export const mockStashTabs: StashTab[] = [
   {
     id: 'st1', name: 'Trade 1', type: 'normal',
     items: [
-      { id: 'i1', name: 'Mageblood', x: 0, y: 0, w: 2, h: 1, estimatedPrice: 185, listedPrice: 180, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 92, priceDeltaChaos: 500, priceDeltaPercent: 2.8, rarity: 'unique', itemClass: 'Belt' },
-      { id: 'i2', name: 'Ashes of the Stars', x: 2, y: 0, w: 1, h: 1, estimatedPrice: 12, listedPrice: 15, currency: 'div', priceEvaluation: 'mispriced', estimatedPriceConfidence: 88, priceDeltaChaos: -450, priceDeltaPercent: -20.0, rarity: 'unique', itemClass: 'Amulet' },
-      { id: 'i3', name: 'Bottled Faith', x: 0, y: 1, w: 1, h: 2, estimatedPrice: 5.2, listedPrice: 5, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 90, priceDeltaChaos: 30, priceDeltaPercent: 4.0, rarity: 'unique', itemClass: 'Flask' },
-      { id: 'i4', name: 'Large Cluster Jewel', x: 3, y: 0, w: 1, h: 1, estimatedPrice: 2.5, listedPrice: 1.8, currency: 'div', priceEvaluation: 'could_be_better', estimatedPriceConfidence: 72, priceDeltaChaos: 105, priceDeltaPercent: 38.9, rarity: 'rare', itemClass: 'Jewel' },
-      { id: 'i5', name: 'Watcher\'s Eye', x: 4, y: 0, w: 1, h: 1, estimatedPrice: 35, listedPrice: 30, currency: 'div', priceEvaluation: 'could_be_better', estimatedPriceConfidence: 65, priceDeltaChaos: 750, priceDeltaPercent: 16.7, rarity: 'unique', itemClass: 'Jewel' },
-      { id: 'i6', name: 'Forbidden Flame', x: 1, y: 1, w: 1, h: 1, estimatedPrice: 8, listedPrice: 8.5, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 85, priceDeltaChaos: -75, priceDeltaPercent: -5.9, rarity: 'unique', itemClass: 'Jewel' },
-      { id: 'i7', name: 'Thread of Hope', x: 2, y: 1, w: 1, h: 1, estimatedPrice: 1.0, listedPrice: 0.5, currency: 'div', priceEvaluation: 'mispriced', estimatedPriceConfidence: 82, priceDeltaChaos: 75, priceDeltaPercent: 100.0, rarity: 'unique', itemClass: 'Jewel' },
-      { id: 'i8', name: 'Prism Guardian', x: 5, y: 0, w: 2, h: 3, estimatedPrice: 0.1, listedPrice: 0.08, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 95, priceDeltaChaos: 3, priceDeltaPercent: 25.0, rarity: 'unique', itemClass: 'Shield' },
+      poeItem({ id: 'i1', name: 'Mageblood', typeLine: 'Heavy Belt', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQmVsdHMvTWFnZWJsb29kIiwidyI6MiwiaCI6MSwic2NhbGUiOjF9XQ/24aee6e493/Mageblood.png', x: 0, y: 0, w: 2, h: 1, frameType: 3, estimatedPrice: 185, listedPrice: 180, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 92, priceDeltaChaos: 500, priceDeltaPercent: 2.8 }),
+      poeItem({ id: 'i2', name: 'Ashes of the Stars', typeLine: 'Onyx Amulet', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQW11bGV0cy9Bc2hlc09mVGhlU3RhcnMiLCJ3IjoxLCJoIjoxLCJzY2FsZSI6MX1d/788a738da1/AshesOfTheStars.png', x: 2, y: 0, w: 1, h: 1, frameType: 3, estimatedPrice: 12, listedPrice: 15, currency: 'div', priceEvaluation: 'mispriced', estimatedPriceConfidence: 88, priceDeltaChaos: -450, priceDeltaPercent: -20 }),
+      poeItem({ id: 'i3', name: 'Bottled Faith', typeLine: 'Sulphur Flask', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvRmxhc2tzL0JvdHRsZWRGYWl0aCIsInciOjEsImgiOjIsInNjYWxlIjoxfV0/e258a53daf/BottledFaith.png', x: 0, y: 1, w: 1, h: 2, frameType: 3, estimatedPrice: 5.2, listedPrice: 5, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 90, priceDeltaChaos: 30, priceDeltaPercent: 4 }),
+      poeItem({ id: 'i4', name: '', typeLine: 'Large Cluster Jewel', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvSmV3ZWxzL0NsdXN0ZXJKZXdlbDMiLCJ3IjoxLCJoIjoxLCJzY2FsZSI6MX1d/df2e61a16e/ClusterJewel3.png', x: 3, y: 0, w: 1, h: 1, frameType: 2, estimatedPrice: 2.5, listedPrice: 1.8, currency: 'div', priceEvaluation: 'could_be_better', estimatedPriceConfidence: 72, priceDeltaChaos: 105, priceDeltaPercent: 38.9, explicitMods: ['Added Small Passive Skills grant: 12% increased Fire Damage', '1 Added Passive Skill is Cremator', '1 Added Passive Skill is Smoking Remains'] }),
+      poeItem({ id: 'i5', name: "Watcher's Eye", typeLine: 'Prismatic Jewel', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvSmV3ZWxzL0VsZGVyRXllIiwidyI6MSwiaCI6MSwic2NhbGUiOjF9XQ/57a138bbfb/ElderEye.png', x: 4, y: 0, w: 1, h: 1, frameType: 3, estimatedPrice: 35, listedPrice: 30, currency: 'div', priceEvaluation: 'could_be_better', estimatedPriceConfidence: 65, priceDeltaChaos: 750, priceDeltaPercent: 16.7 }),
+      poeItem({ id: 'i6', name: 'Forbidden Flame', typeLine: 'Cobalt Jewel', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvSmV3ZWxzL0ZpcmVTZWVkIiwidyI6MSwiaCI6MSwic2NhbGUiOjF9XQ/24e278b4fb/FireSeed.png', x: 1, y: 1, w: 1, h: 1, frameType: 3, estimatedPrice: 8, listedPrice: 8.5, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 85, priceDeltaChaos: -75, priceDeltaPercent: -5.9 }),
+      poeItem({ id: 'i7', name: 'Thread of Hope', typeLine: 'Crimson Jewel', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvSmV3ZWxzL1RocmVhZE9mSG9wZSIsInciOjEsImgiOjEsInNjYWxlIjoxfV0/6efee3fb78/ThreadOfHope.png', x: 2, y: 1, w: 1, h: 1, frameType: 3, estimatedPrice: 1.0, listedPrice: 0.5, currency: 'div', priceEvaluation: 'mispriced', estimatedPriceConfidence: 82, priceDeltaChaos: 75, priceDeltaPercent: 100 }),
+      poeItem({ id: 'i8', name: 'Prism Guardian', typeLine: 'Archon Kite Shield', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQXJtb3Vycy9TaGllbGRzL1ByaXNtR3VhcmRpYW4iLCJ3IjoyLCJoIjozLCJzY2FsZSI6MX1d/48a7d70096/PrismGuardian.png', x: 5, y: 0, w: 2, h: 3, frameType: 3, estimatedPrice: 0.1, listedPrice: 0.08, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 95, priceDeltaChaos: 3, priceDeltaPercent: 25, sockets: [{ group: 0, attr: 'S', sColour: 'R' }, { group: 0, attr: 'S', sColour: 'G' }, { group: 0, attr: 'S', sColour: 'B' }] }),
     ],
   },
   {
-    id: 'st2', name: 'Quad Dump', type: 'quad',
+    id: 'st2', name: 'Quad Dump', type: 'quad', quadLayout: true,
     items: [
-      { id: 'q1', name: 'Divine Orb', x: 0, y: 0, w: 1, h: 1, estimatedPrice: 1, listedPrice: 1, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 99, priceDeltaChaos: 0, priceDeltaPercent: 0, rarity: 'normal', itemClass: 'Currency' },
-      { id: 'q2', name: 'Void Battery', x: 3, y: 1, w: 1, h: 3, estimatedPrice: 4.5, listedPrice: 3.8, currency: 'div', priceEvaluation: 'could_be_better', estimatedPriceConfidence: 78, priceDeltaChaos: 105, priceDeltaPercent: 18.4, rarity: 'unique', itemClass: 'Weapon' },
-      { id: 'q3', name: 'Inspired Learning', x: 8, y: 0, w: 1, h: 1, estimatedPrice: 1.2, listedPrice: 2.0, currency: 'div', priceEvaluation: 'mispriced', estimatedPriceConfidence: 80, priceDeltaChaos: -120, priceDeltaPercent: -40.0, rarity: 'unique', itemClass: 'Jewel' },
-      { id: 'q4', name: 'Aegis Aurora', x: 10, y: 5, w: 2, h: 2, estimatedPrice: 6, listedPrice: 5.5, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 88, priceDeltaChaos: 75, priceDeltaPercent: 9.1, rarity: 'unique', itemClass: 'Shield' },
-      { id: 'q5', name: 'Brutal Restraint', x: 0, y: 10, w: 1, h: 1, estimatedPrice: 3.5, listedPrice: null, currency: 'div', priceEvaluation: 'could_be_better', estimatedPriceConfidence: 60, priceDeltaChaos: 0, priceDeltaPercent: 0, rarity: 'unique', itemClass: 'Jewel' },
-      { id: 'q6', name: 'The Squire', x: 15, y: 15, w: 2, h: 3, estimatedPrice: 55, listedPrice: 50, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 91, priceDeltaChaos: 750, priceDeltaPercent: 10.0, rarity: 'unique', itemClass: 'Shield' },
-      { id: 'q7', name: 'Chaos Orb x20', x: 20, y: 0, w: 1, h: 1, estimatedPrice: 0.15, listedPrice: null, currency: 'div', priceEvaluation: 'could_be_better', estimatedPriceConfidence: 99, priceDeltaChaos: 0, priceDeltaPercent: 0, rarity: 'normal', itemClass: 'Currency' },
-      { id: 'q8', name: 'Replica Dreamfeather', x: 5, y: 18, w: 1, h: 3, estimatedPrice: 12, listedPrice: 9, currency: 'div', priceEvaluation: 'could_be_better', estimatedPriceConfidence: 74, priceDeltaChaos: 450, priceDeltaPercent: 33.3, rarity: 'unique', itemClass: 'Weapon' },
-      { id: 'q9', name: 'Enlighten Lvl 4', x: 18, y: 10, w: 1, h: 1, estimatedPrice: 8, listedPrice: 7, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 90, priceDeltaChaos: 150, priceDeltaPercent: 14.3, rarity: 'magic', itemClass: 'Gem' },
-      { id: 'q10', name: 'Rare Astral Plate', x: 12, y: 20, w: 2, h: 2, estimatedPrice: 15, listedPrice: 20, currency: 'div', priceEvaluation: 'mispriced', estimatedPriceConfidence: 70, priceDeltaChaos: -750, priceDeltaPercent: -25.0, rarity: 'rare', itemClass: 'Body Armour' },
+      poeItem({ id: 'q1', name: '', typeLine: 'Divine Orb', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lNb2RWYWx1ZXMiLCJ3IjoxLCJoIjoxLCJzY2FsZSI6MX1d/e1a54ff97d/CurrencyModValues.png', x: 0, y: 0, w: 1, h: 1, frameType: 5, stackSize: 12, estimatedPrice: 1, listedPrice: 1, currency: 'div', priceEvaluation: 'well_priced', estimatedPriceConfidence: 99 }),
+      poeItem({ id: 'q2', name: 'Void Battery', typeLine: 'Prophecy Wand', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvV2VhcG9ucy9PbmVIYW5kV2VhcG9ucy9XYW5kcy9Wb2lkQmF0dGVyeSIsInciOjEsImgiOjMsInNjYWxlIjoxfV0/1a08c0d12d/VoidBattery.png', x: 3, y: 1, w: 1, h: 3, frameType: 3, estimatedPrice: 4.5, listedPrice: 3.8, currency: 'div', priceEvaluation: 'could_be_better', estimatedPriceConfidence: 78, priceDeltaChaos: 105, priceDeltaPercent: 18.4 }),
+      poeItem({ id: 'q3', name: 'Inspired Learning', typeLine: 'Crimson Jewel', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvSmV3ZWxzL0luc3BpcmVkTGVhcm5pbmciLCJ3IjoxLCJoIjoxLCJzY2FsZSI6MX1d/0c24c3b4cd/InspiredLearning.png', x: 8, y: 0, w: 1, h: 1, frameType: 3, estimatedPrice: 1.2, listedPrice: 2.0, currency: 'div', priceEvaluation: 'mispriced', estimatedPriceConfidence: 80, priceDeltaChaos: -120, priceDeltaPercent: -40 }),
+      poeItem({ id: 'q4', name: '', typeLine: 'Chaos Orb', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lSZXJvbGxSYXJlIiwidyI6MSwiaCI6MSwic2NhbGUiOjF9XQ/d119a0d734/CurrencyRerollRare.png', x: 20, y: 0, w: 1, h: 1, frameType: 5, stackSize: 20, estimatedPrice: 0.15, currency: 'div', priceEvaluation: 'could_be_better', estimatedPriceConfidence: 99 }),
+      poeItem({ id: 'q5', name: '', typeLine: 'Exalted Orb', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lBZGRNb2RUb1JhcmUiLCJ3IjoxLCJoIjoxLCJzY2FsZSI6MX1d/da6e194a62/CurrencyAddModToRare.png', x: 21, y: 0, w: 1, h: 1, frameType: 5, stackSize: 5 }),
+    ],
+  },
+  {
+    id: 'st3', name: 'Currency', type: 'currency',
+    currencyLayout: {
+      sections: ['General', 'Influence', 'League'],
+      layout: {
+        '0': { x: 10, y: 10, w: 47, h: 47, scale: 1, section: 'General' },
+        '1': { x: 62, y: 10, w: 47, h: 47, scale: 1, section: 'General' },
+        '2': { x: 114, y: 10, w: 47, h: 47, scale: 1, section: 'General' },
+        '3': { x: 166, y: 10, w: 47, h: 47, scale: 1, section: 'General' },
+        '4': { x: 218, y: 10, w: 47, h: 47, scale: 1, section: 'General' },
+        '5': { x: 270, y: 10, w: 47, h: 47, scale: 1, section: 'General' },
+        '6': { x: 10, y: 62, w: 47, h: 47, scale: 1, section: 'General' },
+        '7': { x: 62, y: 62, w: 47, h: 47, scale: 1, section: 'General' },
+        '8': { x: 114, y: 62, w: 47, h: 47, scale: 1, section: 'General' },
+        '9': { x: 166, y: 62, w: 47, h: 47, scale: 1, section: 'General' },
+        '10': { x: 218, y: 62, w: 47, h: 47, scale: 1, section: 'General' },
+        '11': { x: 270, y: 62, w: 47, h: 47, scale: 1, section: 'General' },
+        '12': { x: 10, y: 114, w: 47, h: 47, scale: 1, section: 'General' },
+        '13': { x: 62, y: 114, w: 47, h: 47, scale: 1, section: 'General' },
+        '14': { x: 114, y: 114, w: 47, h: 47, scale: 1, section: 'General' },
+        '15': { x: 166, y: 114, w: 47, h: 47, scale: 1, section: 'General' },
+      },
+    },
+    items: [
+      poeItem({ id: 'c0', name: '', typeLine: 'Chaos Orb', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lSZXJvbGxSYXJlIiwidyI6MSwiaCI6MSwic2NhbGUiOjF9XQ/d119a0d734/CurrencyRerollRare.png', x: 0, y: 0, w: 1, h: 1, frameType: 5, stackSize: 347 }),
+      poeItem({ id: 'c1', name: '', typeLine: 'Divine Orb', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lNb2RWYWx1ZXMiLCJ3IjoxLCJoIjoxLCJzY2FsZSI6MX1d/e1a54ff97d/CurrencyModValues.png', x: 1, y: 0, w: 1, h: 1, frameType: 5, stackSize: 23 }),
+      poeItem({ id: 'c2', name: '', typeLine: 'Exalted Orb', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lBZGRNb2RUb1JhcmUiLCJ3IjoxLCJoIjoxLCJzY2FsZSI6MX1d/da6e194a62/CurrencyAddModToRare.png', x: 2, y: 0, w: 1, h: 1, frameType: 5, stackSize: 14 }),
+      poeItem({ id: 'c3', name: '', typeLine: 'Orb of Alchemy', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lVcGdyYWRlVG9SYXJlIiwidyI6MSwiaCI6MSwic2NhbGUiOjF9XQ/5a1e8acb5f/CurrencyUpgradeToRare.png', x: 3, y: 0, w: 1, h: 1, frameType: 5, stackSize: 189 }),
+      poeItem({ id: 'c4', name: '', typeLine: 'Orb of Alteration', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lSZXJvbGxNYWdpYyIsInciOjEsImgiOjEsInNjYWxlIjoxfV0/d6e1e43e70/CurrencyRerollMagic.png', x: 4, y: 0, w: 1, h: 1, frameType: 5, stackSize: 523 }),
+      poeItem({ id: 'c5', name: '', typeLine: 'Vaal Orb', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lWYWFsIiwidyI6MSwiaCI6MSwic2NhbGUiOjF9XQ/e811fecbce/CurrencyVaal.png', x: 5, y: 0, w: 1, h: 1, frameType: 5, stackSize: 42 }),
+      poeItem({ id: 'c6', name: '', typeLine: 'Orb of Fusing', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lSZXJvbGxTb2NrZXRMaW5rcyIsInciOjEsImgiOjEsInNjYWxlIjoxfV0/7b1246d8d1/CurrencyRerollSocketLinks.png', x: 6, y: 0, w: 1, h: 1, frameType: 5, stackSize: 245 }),
+      poeItem({ id: 'c7', name: '', typeLine: 'Jeweller\'s Orb', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lSZXJvbGxTb2NrZXROdW1iZXJzIiwidyI6MSwiaCI6MSwic2NhbGUiOjF9XQ/1c3ceb1295/CurrencyRerollSocketNumbers.png', x: 7, y: 0, w: 1, h: 1, frameType: 5, stackSize: 312 }),
+      poeItem({ id: 'c8', name: '', typeLine: 'Chromatic Orb', icon: 'https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvQ3VycmVuY3kvQ3VycmVuY3lSZXJvbGxTb2NrZXRDb2xvdXJzIiwidyI6MSwiaCI6MSwic2NhbGUiOjF9XQ/33ff594afc/CurrencyRerollSocketColours.png', x: 8, y: 0, w: 1, h: 1, frameType: 5, stackSize: 1024 }),
     ],
   },
 ];
