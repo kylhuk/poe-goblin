@@ -107,6 +107,7 @@ def evaluate_run(
                 "quantileTDigest(0.5)(abs(pred.fair_value_p50 - targets.target_price_chaos) / greatest(targets.target_price_chaos, 0.01)) AS fair_value_mdape,",
                 "avg(abs(pred.fair_value_p50 - targets.target_price_chaos) / greatest(targets.target_price_chaos, 0.01)) AS fair_value_wape,",
                 "avg(if(targets.target_fast_sale_24h_price IS NULL OR targets.target_fast_sale_24h_price <= 0, 0.0, if(pred.fast_sale_24h_price <= targets.target_fast_sale_24h_price, 1.0, 0.0))) AS fast_sale_24h_hit_rate,",
+                "avg(if(targets.target_fast_sale_24h_price IS NULL OR targets.target_fast_sale_24h_price <= 0, 0.0, abs(pred.fast_sale_24h_price - targets.target_fast_sale_24h_price) / greatest(targets.target_fast_sale_24h_price, 0.01))) AS fast_sale_24h_mdape,",
                 "avg(abs(ifNull(pred.sale_probability_24h, 0.5) - ifNull(targets.target_sale_probability_24h, 0.5))) AS sale_probability_calibration_error,",
                 "avg(abs(ifNull(pred.confidence, 0.5) - if(abs(pred.fair_value_p50 - targets.target_price_chaos) / greatest(targets.target_price_chaos, 0.01) <= 0.2, 1.0, 0.0))) AS confidence_calibration_error",
                 f"FROM {PREDICTIONS_TABLE} AS pred",
@@ -177,6 +178,13 @@ def evaluate_run(
         )
         for row in route_rows
     ) / max(total_sample, 1)
+    global_fast_sale_mdape = sum(
+        (
+            float(row.get("fast_sale_24h_mdape") or 0.0)
+            * int(row.get("sample_count") or 0)
+        )
+        for row in rows
+    ) / max(total_sample, 1)
     global_conf_calibration = sum(
         (
             float(row.get("confidence_calibration_error") or 0.0)
@@ -220,4 +228,11 @@ def evaluate_run(
         "league": league,
         "route_rows": route_rows,
         "summary": eval_row,
+        "metrics": {
+            "global_fair_value_mdape": global_mdape,
+            "global_fast_sale_24h_hit_rate": global_fast_sale,
+            "global_fast_sale_24h_mdape": global_fast_sale_mdape,
+            "global_sale_probability_calibration_error": global_sale_calibration,
+            "global_confidence_calibration_error": global_conf_calibration,
+        },
     }

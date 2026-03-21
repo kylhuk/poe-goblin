@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import joblib
+
 from poe_trade.ml.v3 import train
 
 
@@ -64,3 +66,7 @@ def test_train_route_v3_writes_bundle_for_small_dataset(tmp_path) -> None:
     assert result["status"] == "trained"
     assert result["row_count"] == 3
     assert result["model_bundle_path"].endswith("bundle.joblib")
+    bundle = joblib.load(result["model_bundle_path"])
+    assert bundle["models"]["fast_sale_24h"] is not None
+    assert bundle["models"]["p10"] is not None
+    assert bundle["models"]["p90"] is not None

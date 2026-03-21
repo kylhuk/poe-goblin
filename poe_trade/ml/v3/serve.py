@@ -81,6 +81,16 @@ def _median_fallback(
     return max(0.1, p50), max(0, support)
 
 
+def _confidence_from_support_and_interval(
+    *, support: int, p10: float, p50: float, p90: float
+) -> float:
+    support_score = min(max(support, 0), 4000) / 4000.0
+    width_ratio = (max(p90, p10) - min(p90, p10)) / max(p50, 0.1)
+    tightness_score = max(0.0, 1.0 - min(width_ratio, 1.5) / 1.5)
+    confidence = 0.15 + (0.5 * support_score) + (0.35 * tightness_score)
+    return max(0.05, min(0.99, confidence))
+
+
 def predict_one_v3(
     client: ClickHouseClient,
     *,
@@ -125,9 +135,18 @@ def predict_one_v3(
         else:
             sale_prob = float(sale_model.predict_proba(X)[0][1])
         support = int((bundle.get("metadata") or {}).get("row_count") or 0)
-        confidence = max(0.05, min(0.99, 0.2 + min(support, 5000) / 7000.0))
+        confidence = _confidence_from_support_and_interval(
+            support=support,
+            p10=p10,
+            p50=p50,
+            p90=p90,
+        )
         multiplier = float(bundle.get("fallback_fast_sale_multiplier") or 0.9)
-        fast_sale = max(0.1, p50 * multiplier)
+        fast_sale_model = models.get("fast_sale_24h")
+        if fast_sale_model is None:
+            fast_sale = max(0.1, p50 * multiplier)
+        else:
+            fast_sale = max(0.1, float(fast_sale_model.predict(X)[0]))
         source = "v3_model"
 
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -136,6 +155,8 @@ def predict_one_v3(
         "low" if confidence >= 0.7 else ("medium" if confidence >= 0.45 else "high")
     )
     fallback_reason = "" if source == "v3_model" else "v3_no_bundle"
+    if source != "v3_model":
+        confidence = max(0.05, confidence - 0.1)
     return {
         "prediction_id": prediction_id,
         "prediction_as_of_ts": now,

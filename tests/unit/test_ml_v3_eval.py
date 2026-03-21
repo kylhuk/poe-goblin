@@ -41,6 +41,7 @@ def test_evaluate_run_records_route_and_summary_rows(monkeypatch) -> None:
                 "fair_value_mdape": 0.25,
                 "fair_value_wape": 0.3,
                 "fast_sale_24h_hit_rate": 0.6,
+                "fast_sale_24h_mdape": 0.18,
                 "sale_probability_calibration_error": 0.1,
                 "confidence_calibration_error": 0.12,
             }
@@ -60,5 +61,6 @@ def test_evaluate_run_records_route_and_summary_rows(monkeypatch) -> None:
 
     assert payload["summary"]["run_id"] == "run-123"
     assert payload["summary"]["gate_passed"] == 1
+    assert payload["metrics"]["global_fast_sale_24h_mdape"] == 0.18
     assert inserted[0][0] == v3_eval.ROUTE_EVAL_TABLE
     assert inserted[1][0] == v3_eval.EVAL_RUNS_TABLE

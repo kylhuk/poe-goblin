@@ -161,8 +161,6 @@ def train_route_v3(
     vectorizer = DictVectorizer(sparse=True)
     X = vectorizer.fit_transform(feature_rows)
     y_p50 = np.array([float(row.get("target_price_chaos") or 0.0) for row in rows])
-    y_p10 = np.array([max(0.1, value * 0.85) for value in y_p50])
-    y_p90 = np.array([max(0.1, value * 1.15) for value in y_p50])
 
     model_p10 = GradientBoostingRegressor(
         loss="quantile",
@@ -187,9 +185,9 @@ def train_route_v3(
         max_depth=3,
         random_state=42,
     )
-    model_p10.fit(X, y_p10)
+    model_p10.fit(X, y_p50)
     model_p50.fit(X, y_p50)
-    model_p90.fit(X, y_p90)
+    model_p90.fit(X, y_p50)
 
     sale_targets = np.array(
         [float(row.get("target_sale_probability_24h") or 0.0) >= 0.5 for row in rows],
@@ -214,6 +212,19 @@ def train_route_v3(
                 1.0,
             )
         )
+    effective_fast_sale = np.where(
+        fast_sale_targets > 0,
+        fast_sale_targets,
+        np.maximum(0.1, y_p50 * fallback_multiplier),
+    )
+    model_fast_sale = GradientBoostingRegressor(
+        loss="absolute_error",
+        n_estimators=120,
+        learning_rate=0.05,
+        max_depth=3,
+        random_state=42,
+    )
+    model_fast_sale.fit(X, effective_fast_sale)
 
     bundle = {
         "vectorizer": vectorizer,
@@ -221,6 +232,7 @@ def train_route_v3(
             "p10": model_p10,
             "p50": model_p50,
             "p90": model_p90,
+            "fast_sale_24h": model_fast_sale,
             "sale_probability": sale_model,
         },
         "fallback_fast_sale_multiplier": fallback_multiplier,
