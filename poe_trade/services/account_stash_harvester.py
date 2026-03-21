@@ -3,6 +3,10 @@ from __future__ import annotations
 import argparse
 import logging
 from collections.abc import Sequence
+from functools import partial
+
+from poe_trade.api.ml import fetch_predict_one
+from poe_trade.stash_scan import serialize_stash_item_to_clipboard
 
 from poe_trade.api.auth_session import load_credential_state
 from poe_trade.config import settings as config_settings
@@ -23,11 +27,26 @@ def _configure_logging() -> None:
     )
 
 
+def _price_item(
+    item: dict[str, object], *, clickhouse: ClickHouseClient, league: str
+) -> dict[str, object]:
+    return fetch_predict_one(
+        clickhouse,
+        league=league,
+        request_payload={"itemText": serialize_stash_item_to_clipboard(item)},
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog=SERVICE_NAME, description="Run private account stash harvester"
     )
     parser.add_argument("--once", action="store_true", help="Run one harvest and exit")
+    parser.add_argument(
+        "--scan-once",
+        action="store_true",
+        help="Run one private stash pricing scan and exit",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Skip ClickHouse writes")
     parser.add_argument("--realm", help="Realm override")
     parser.add_argument("--league", help="League override")
@@ -73,6 +92,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         account_name=account_name,
         request_headers={"Cookie": f"POESESSID={poe_session_id}"},
     )
+    if args.scan_once:
+        harvester.run_private_scan(
+            realm=args.realm or cfg.account_stash_realm,
+            league=args.league or cfg.account_stash_league,
+            price_item=partial(
+                _price_item,
+                clickhouse=clickhouse,
+                league=args.league or cfg.account_stash_league,
+            ),
+        )
+        return 0
     harvester.run(
         realm=args.realm or cfg.account_stash_realm,
         league=args.league or cfg.account_stash_league,

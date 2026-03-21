@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import uuid
+from datetime import datetime, timezone
 from io import BufferedIOBase
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections.abc import Mapping
@@ -23,6 +26,7 @@ from .auth_session import (
     create_session,
     exchange_oauth_code,
     get_session,
+    load_credential_state,
     resolve_account_name,
     save_credential_state,
     validate_state,
@@ -39,6 +43,10 @@ from .ml import (
     update_rollout_controls,
 )
 from poe_trade.ml import workflows
+from poe_trade.ingestion.account_stash_harvester import AccountStashHarvester
+from poe_trade.ingestion.poe_client import PoeClient
+from poe_trade.ingestion.rate_limit import RateLimitPolicy
+from poe_trade.ingestion.status import StatusReporter
 from .ops import (
     OpsBackendUnavailable,
     ack_alert_payload,
@@ -61,7 +69,13 @@ from .ops import (
 )
 from .responses import ApiError, Response, json_error, json_response
 from .routes import Router
-from .stash import StashBackendUnavailable, fetch_stash_tabs, stash_status_payload
+from .stash import (
+    StashBackendUnavailable,
+    fetch_stash_item_history,
+    fetch_stash_tabs,
+    stash_scan_status_payload,
+    stash_status_payload,
+)
 from .service_control import (
     ServiceActionForbiddenError,
     ServiceActionInvalidError,
@@ -70,6 +84,124 @@ from .service_control import (
     execute_service_action,
     list_snapshots,
 )
+
+
+_STASH_SCAN_START_LOCK = threading.Lock()
+_PENDING_STASH_SCANS: dict[tuple[str, str, str], dict[str, object]] = {}
+
+
+def _scan_price_item_factory(
+    clickhouse_client: ClickHouseClient, *, league: str
+):
+    def _price_item(item: dict[str, object]) -> dict[str, object]:
+        from poe_trade.stash_scan import serialize_stash_item_to_clipboard
+
+        return fetch_predict_one(
+            clickhouse_client,
+            league=league,
+            request_payload={"itemText": serialize_stash_item_to_clipboard(item)},
+        )
+
+    return _price_item
+
+
+def start_private_stash_scan(
+    settings: Settings,
+    clickhouse_client: ClickHouseClient,
+    *,
+    account_name: str,
+    league: str,
+    realm: str,
+) -> dict[str, object]:
+    from poe_trade.stash_scan import fetch_active_scan
+
+    with _STASH_SCAN_START_LOCK:
+        scope = (account_name, league, realm)
+        pending = _PENDING_STASH_SCANS.get(scope)
+        if pending is not None:
+            return {
+                **pending,
+                "deduplicated": True,
+            }
+        existing = fetch_active_scan(
+            clickhouse_client,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+        )
+        if existing and existing.get("isActive"):
+            return {
+                "scanId": str(existing.get("scanId") or ""),
+                "status": "running",
+                "startedAt": existing.get("startedAt"),
+                "accountName": account_name,
+                "league": league,
+                "realm": realm,
+                "deduplicated": True,
+            }
+
+        credential_state = load_credential_state(settings)
+        poe_session_id = str(credential_state.get("poe_session_id") or "").strip()
+        credential_account = str(credential_state.get("account_name") or "").strip()
+        if not poe_session_id or credential_account != account_name:
+            raise ApiError(
+                status=401,
+                code="auth_required",
+                message="session required",
+            )
+
+        policy = RateLimitPolicy(
+            settings.rate_limit_max_retries,
+            settings.rate_limit_backoff_base,
+            settings.rate_limit_backoff_max,
+            settings.rate_limit_jitter,
+        )
+        poe_client = PoeClient(
+            settings.poe_api_base_url,
+            policy,
+            settings.poe_user_agent,
+            settings.poe_request_timeout,
+        )
+        reporter = StatusReporter(clickhouse_client, "account_stash_harvester")
+        harvester = AccountStashHarvester(
+            poe_client,
+            clickhouse_client,
+            reporter,
+            service_name="account_stash_harvester",
+            account_name=account_name,
+            request_headers={"Cookie": f"POESESSID={poe_session_id}"},
+        )
+
+        scan_id = uuid.uuid4().hex
+        started_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+        result_holder: dict[str, object] = {
+            "scanId": scan_id,
+            "status": "running",
+            "startedAt": started_at,
+            "accountName": account_name,
+            "league": league,
+            "realm": realm,
+        }
+        _PENDING_STASH_SCANS[scope] = dict(result_holder)
+
+        def _runner() -> None:
+            try:
+                result = harvester.run_private_scan(
+                    realm=realm,
+                    league=league,
+                    price_item=_scan_price_item_factory(clickhouse_client, league=league),
+                    scan_id=scan_id,
+                    started_at=started_at,
+                )
+                result_holder.update(result)
+            finally:
+                with _STASH_SCAN_START_LOCK:
+                    _PENDING_STASH_SCANS.pop(scope, None)
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+        return result_holder
 
 
 class ApiApp:
@@ -145,6 +277,21 @@ class ApiApp:
             "/api/v1/stash/status",
             ("GET", "OPTIONS"),
             self._stash_status,
+        )
+        self.router.add(
+            "/api/v1/stash/scan",
+            ("POST", "OPTIONS"),
+            self._stash_scan_start,
+        )
+        self.router.add(
+            "/api/v1/stash/scan/status",
+            ("GET", "OPTIONS"),
+            self._stash_scan_status,
+        )
+        self.router.add(
+            "/api/v1/stash/items/{fingerprint}/history",
+            ("GET", "OPTIONS"),
+            self._stash_item_history,
         )
         self.router.add("/api/v1/auth/login", ("GET", "OPTIONS"), self._auth_login)
         self.router.add(
@@ -781,6 +928,122 @@ class ApiApp:
                 message="backend unavailable",
             ) from None
         return json_response(payload)
+
+    def _stash_scan_start(self, context: Mapping[str, object]) -> Response:
+        if not self.settings.enable_account_stash:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="stash feature is unavailable; set POE_ENABLE_ACCOUNT_STASH=true",
+            )
+        account_name, league, realm = self._stash_account_scope(context)
+        result = start_private_stash_scan(
+            self.settings,
+            self.client,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+        )
+        return json_response(result, status=202)
+
+    def _stash_scan_status(self, context: Mapping[str, object]) -> Response:
+        account_name, league, realm = self._stash_account_scope(context)
+        try:
+            payload = stash_scan_status_payload(
+                self.client,
+                account_name=account_name,
+                league=league,
+                realm=realm,
+            )
+        except StashBackendUnavailable:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        return json_response(payload)
+
+    def _stash_item_history(self, context: Mapping[str, object]) -> Response:
+        account_name, league, realm = self._stash_account_scope(context)
+        fingerprint = str(context.get("fingerprint") or "")
+        if not fingerprint:
+            raise ApiError(
+                status=400,
+                code="invalid_input",
+                message="fingerprint is required",
+            )
+        params = _query_params_from_context(context)
+        limit_raw = _first_query_param(params, "limit", default="20")
+        try:
+            limit = int(limit_raw)
+        except ValueError as exc:
+            raise ApiError(
+                status=400,
+                code="invalid_input",
+                message="limit must be an integer",
+            ) from exc
+        try:
+            payload = fetch_stash_item_history(
+                self.client,
+                account_name=account_name,
+                league=league,
+                realm=realm,
+                fingerprint=fingerprint,
+                limit=max(limit, 1),
+            )
+        except StashBackendUnavailable:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        return json_response(payload)
+
+    def _stash_account_scope(
+        self, context: Mapping[str, object]
+    ) -> tuple[str, str, str]:
+        params = _query_params_from_context(context)
+        league = _first_query_param(
+            params,
+            "league",
+            default=(self.settings.account_stash_league or ""),
+        )
+        realm = _first_query_param(
+            params,
+            "realm",
+            default=(self.settings.account_stash_realm or "pc"),
+        )
+        if not league:
+            raise ApiError(
+                status=400,
+                code="invalid_input",
+                message="league is required",
+            )
+        session_cookie = _session_cookie_from_headers(
+            _headers_from_context(context),
+            cookie_name=self.settings.auth_cookie_name,
+        )
+        session = get_session(self.settings, session_id=session_cookie)
+        if session is None or str(session.get("status") or "") == "disconnected":
+            raise ApiError(
+                status=401,
+                code="auth_required",
+                message="session required",
+            )
+        if str(session.get("status") or "") == "session_expired":
+            raise ApiError(
+                status=401,
+                code="session_expired",
+                message="session expired",
+            )
+        account_name = str(session.get("account_name") or "")
+        if not account_name:
+            raise ApiError(
+                status=401,
+                code="auth_required",
+                message="session required",
+            )
+        return account_name, league, realm
 
     def _auth_login(self, _context: Mapping[str, object]) -> Response:
         tx = begin_login(self.settings)

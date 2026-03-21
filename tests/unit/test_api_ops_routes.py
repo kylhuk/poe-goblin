@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 from io import BytesIO
+from threading import Event
 from unittest import mock
 
 import pytest
 
 from poe_trade.api.app import ApiApp
+import poe_trade.api.app as api_app_module
 from poe_trade.api.ml import BackendUnavailable
 from poe_trade.api.responses import ApiError
 from poe_trade.api.service_control import ServiceControlError, ServiceSnapshot
@@ -360,6 +362,222 @@ def test_stash_route_rejects_expired_session_when_enabled(
         )
     assert exc.value.status == 401
     assert exc.value.code == "session_expired"
+
+
+def test_stash_scan_start_route_returns_async_scan_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.get_session",
+        lambda _settings, *, session_id: (
+            {
+                "session_id": session_id,
+                "status": "connected",
+                "account_name": "qa-exile",
+                "expires_at": "2099-01-01T00:00:00Z",
+            }
+            if session_id
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        "poe_trade.api.app.start_private_stash_scan",
+        lambda settings, clickhouse, *, account_name, league, realm: {
+            "scanId": "scan-2",
+            "status": "running",
+            "startedAt": "2026-03-21T12:01:00Z",
+            "accountName": account_name,
+            "league": league,
+            "realm": realm,
+        },
+    )
+    app = ApiApp(
+        _settings_with_stash_enabled(),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+
+    response = app.handle(
+        method="POST",
+        raw_path="/api/v1/stash/scan?league=Mirage&realm=pc",
+        headers={**_auth_headers(), "Cookie": "poe_session=test-session"},
+        body_reader=BytesIO(b""),
+    )
+
+    body = json.loads(response.body.decode("utf-8"))
+    assert response.status == 202
+    assert body["scanId"] == "scan-2"
+    assert body["accountName"] == "qa-exile"
+
+
+def test_stash_scan_status_route_returns_progress_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.get_session",
+        lambda _settings, *, session_id: (
+            {
+                "session_id": session_id,
+                "status": "connected",
+                "account_name": "qa-exile",
+                "expires_at": "2099-01-01T00:00:00Z",
+            }
+            if session_id
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        "poe_trade.api.app.stash_scan_status_payload",
+        lambda _client, *, account_name, league, realm: {
+            "status": "running",
+            "activeScanId": "scan-2",
+            "publishedScanId": "scan-1",
+            "startedAt": "2026-03-21T12:01:00Z",
+            "updatedAt": "2026-03-21T12:02:00Z",
+            "publishedAt": None,
+            "progress": {
+                "tabsTotal": 8,
+                "tabsProcessed": 3,
+                "itemsTotal": 120,
+                "itemsProcessed": 44,
+            },
+            "error": None,
+        },
+    )
+    app = ApiApp(
+        _settings_with_stash_enabled(),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+
+    response = app.handle(
+        method="GET",
+        raw_path="/api/v1/stash/scan/status?league=Mirage&realm=pc",
+        headers={**_auth_headers(), "Cookie": "poe_session=test-session"},
+        body_reader=BytesIO(b""),
+    )
+
+    body = json.loads(response.body.decode("utf-8"))
+    assert response.status == 200
+    assert body["activeScanId"] == "scan-2"
+    assert body["progress"]["tabsProcessed"] == 3
+
+
+def test_stash_item_history_route_returns_popup_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.get_session",
+        lambda _settings, *, session_id: (
+            {
+                "session_id": session_id,
+                "status": "connected",
+                "account_name": "qa-exile",
+                "expires_at": "2099-01-01T00:00:00Z",
+            }
+            if session_id
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        "poe_trade.api.app.fetch_stash_item_history",
+        lambda _client, *, account_name, league, realm, fingerprint, limit=20: {
+            "fingerprint": fingerprint,
+            "item": {
+                "name": "Grim Bane",
+                "itemClass": "Helmet",
+                "rarity": "rare",
+                "iconUrl": "https://web.poecdn.com/item.png",
+            },
+            "history": [
+                {
+                    "scanId": "scan-2",
+                    "pricedAt": "2026-03-21T12:00:00Z",
+                    "predictedValue": 45.0,
+                    "confidence": 82.0,
+                    "interval": {"p10": 39.0, "p90": 51.0},
+                }
+            ],
+        },
+    )
+    app = ApiApp(
+        _settings_with_stash_enabled(),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+
+    response = app.handle(
+        method="GET",
+        raw_path="/api/v1/stash/items/sig%3Aitem-1/history?league=Mirage&realm=pc",
+        headers={**_auth_headers(), "Cookie": "poe_session=test-session"},
+        body_reader=BytesIO(b""),
+    )
+
+    body = json.loads(response.body.decode("utf-8"))
+    assert response.status == 200
+    assert body["item"]["name"] == "Grim Bane"
+    assert body["history"][0]["interval"] == {"p10": 39.0, "p90": 51.0}
+
+
+def test_start_private_stash_scan_deduplicates_pending_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = Event()
+    release = Event()
+    runs: list[tuple[str | None, str | None]] = []
+
+    monkeypatch.setattr(
+        api_app_module,
+        'load_credential_state',
+        lambda _settings: {
+            'account_name': 'qa-exile',
+            'poe_session_id': 'POESESSID-123',
+        },
+    )
+    monkeypatch.setattr('poe_trade.stash_scan.fetch_active_scan', lambda *_args, **_kwargs: None)
+
+    class _DummyPoeClient:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+    class _DummyStatusReporter:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+    class _DummyHarvester:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+        def run_private_scan(self, **kwargs):
+            runs.append((kwargs.get('scan_id'), kwargs.get('started_at')))
+            started.set()
+            release.wait(timeout=5)
+            return {'scanId': kwargs.get('scan_id'), 'status': 'published'}
+
+    monkeypatch.setattr(api_app_module, 'PoeClient', _DummyPoeClient)
+    monkeypatch.setattr(api_app_module, 'StatusReporter', _DummyStatusReporter)
+    monkeypatch.setattr(api_app_module, 'AccountStashHarvester', _DummyHarvester)
+
+    settings = _settings_with_stash_enabled()
+    clickhouse = ClickHouseClient(endpoint='http://ch')
+    first = api_app_module.start_private_stash_scan(
+        settings,
+        clickhouse,
+        account_name='qa-exile',
+        league='Mirage',
+        realm='pc',
+    )
+    assert started.wait(timeout=5)
+    second = api_app_module.start_private_stash_scan(
+        settings,
+        clickhouse,
+        account_name='qa-exile',
+        league='Mirage',
+        realm='pc',
+    )
+    release.set()
+
+    assert first['scanId'] == second['scanId']
+    assert second['status'] == 'running'
+    assert second['deduplicated'] is True
+    assert len(runs) == 1
 
 
 def test_scanner_summary_route_shape(monkeypatch: pytest.MonkeyPatch) -> None:

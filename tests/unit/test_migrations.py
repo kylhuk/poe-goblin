@@ -399,3 +399,31 @@ def test_v3_cleanup_migration_drops_legacy_derived_tables_not_raw() -> None:
     assert "DROP TABLE IF EXISTS poe_trade.silver_ps_items_raw" in sql
     assert "DROP TABLE IF EXISTS poe_trade.raw_public_stash_pages" not in sql
     assert "DROP TABLE IF EXISTS poe_trade.raw_account_stash_snapshot" not in sql
+
+
+def test_private_stash_scan_migration_is_present() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0056_private_stash_scan_storage.sql"
+    )
+
+    assert migration.exists()
+
+
+def test_private_stash_scan_migration_creates_run_tab_item_and_pointer_tables() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0056_private_stash_scan_storage.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_scan_runs" in sql
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_scan_tabs" in sql
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_item_valuations" in sql
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_active_scans" in sql
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_published_scans" in sql

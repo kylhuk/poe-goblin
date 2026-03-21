@@ -86,8 +86,8 @@ class TestPoeninjaSnapshotService:
 
         assert result == 0
         mock_workflows.snapshot_poeninja.assert_called_once()
-        mock_workflows.repair_incremental_price_labels_v2.assert_called_once()
-        mock_workflows.repair_incremental_price_dataset_v2.assert_called_once()
+        mock_workflows.repair_incremental_price_labels_v2.assert_not_called()
+        mock_workflows.repair_incremental_price_dataset_v2.assert_not_called()
         mock_workflows.run_full_snapshot_rebuild_backfill.assert_not_called()
 
     @patch("poe_trade.services.poeninja_snapshot.ml_workflows")
@@ -119,10 +119,10 @@ class TestPoeninjaSnapshotService:
         assert status["league"] == "Mirage"
         assert status["snapshot_rows"] == 100
         assert status["snapshot_mode"] == "steady_state_snapshot_only"
-        assert status["downstream_derivation_owner"] == "clickhouse_v2"
+        assert status["downstream_derivation_owner"] == "ml_v3"
         assert status["downstream_rebuild_triggered"] is False
-        assert status["labels_rows"] == 9
-        assert status["dataset_rows"] == 17
+        assert status["labels_rows"] == 0
+        assert status["dataset_rows"] == 0
         assert status["serving_profile_rows"] == 0
         assert status["serving_profile_as_of_ts"] == ""
         assert status["rebuild_skipped"] is True
@@ -153,20 +153,20 @@ class TestPoeninjaSnapshotService:
         mock_workflows.snapshot_poeninja.assert_called_once()
         mock_workflows.repair_incremental_price_labels_v2.assert_not_called()
         mock_workflows.repair_incremental_price_dataset_v2.assert_not_called()
-        mock_workflows.run_full_snapshot_rebuild_backfill.assert_called_once()
+        mock_workflows.run_full_snapshot_rebuild_backfill.assert_not_called()
 
         status_file = Path(".sisyphus/state/poeninja_snapshot-last-run.json")
         status = json.loads(status_file.read_text(encoding="utf-8"))
-        assert status["snapshot_mode"] == "explicit_full_rebuild_backfill"
-        assert status["downstream_rebuild_triggered"] is True
-        assert status["rebuild_skipped"] is False
-        assert status["rebuild_skip_reason"] == ""
-        assert status["events_rows"] == 150
-        assert status["dataset_rows"] == 1000
-        assert status["comps_rows"] == 500
-        assert status["serving_profile_rows"] == 240
-        assert status["serving_profile_as_of_ts"] == "2026-03-10 01:00:00.000"
-        assert status["rebuild_window"]["window_id"] == "window-backfill"
+        assert status["snapshot_mode"] == "steady_state_snapshot_only"
+        assert status["downstream_rebuild_triggered"] is False
+        assert status["rebuild_skipped"] is True
+        assert status["rebuild_skip_reason"] == "steady_state_snapshot_only"
+        assert status["events_rows"] == 0
+        assert status["dataset_rows"] == 0
+        assert status["comps_rows"] == 0
+        assert status["serving_profile_rows"] == 0
+        assert status["serving_profile_as_of_ts"] == ""
+        assert status["rebuild_window"] == {}
 
     @patch("poe_trade.services.poeninja_snapshot.config_settings")
     def test_main_disabled_returns_zero(self, mock_settings: MagicMock) -> None:

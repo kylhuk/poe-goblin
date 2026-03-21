@@ -23,6 +23,7 @@ def test_ml_trainer_persists_rollout_controls_in_status(monkeypatch) -> None:
         ml_automation_min_mdape_improvement=0.005,
     )
     monkeypatch.setattr(ml_trainer.config_settings, "get_settings", lambda: cfg)
+    monkeypatch.setenv("POE_ML_V3_TRAINER_ENABLED", "0")
     monkeypatch.setattr(
         ml_trainer.ClickHouseClient,
         "from_env",

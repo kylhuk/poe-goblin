@@ -118,6 +118,14 @@ Current non-goals:
 - Run Vite: `npm run dev` (binds to `http://127.0.0.1:5173`)
 - Vite proxies `/api` and `/healthz` to `http://127.0.0.1:8080` by default.
 
+## Private stash scan API
+- The frontend settings popover stores `POESESSID` server-side through `POST /api/v1/auth/session`; the cookie is never echoed back to the browser after bootstrap.
+- `POST /api/v1/stash/scan?league=Mirage&realm=pc` starts one async private stash scan for the connected account and returns the new or deduplicated `scanId`.
+- `GET /api/v1/stash/scan/status?league=Mirage&realm=pc` reports the active run status, timestamps, and tab/item progress counters.
+- `GET /api/v1/stash/tabs?league=Mirage&realm=pc` always returns the last published stash snapshot only, including upstream tab order, `scanId`, `publishedAt`, item interval bands, and per-item history fingerprints.
+- `GET /api/v1/stash/items/<fingerprint>/history?league=Mirage&realm=pc` returns popup-ready estimate history with `p10`/`p90`, confidence, and fallback metadata.
+- `POESESSID=<set in your shell> .venv/bin/python scripts/private_stash_scan_smoke.py --league Mirage --realm pc` performs one direct private stash metadata read without printing the cookie.
+
 ## Disposable QA profile
 - `cp .env.qa.example .env.qa` once (or let `make qa-up` create it).
 - `make qa-up` starts disposable QA infra (`docker-compose.yml` + `docker-compose.qa.yml`).

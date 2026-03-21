@@ -59,7 +59,10 @@ class QueryRouter:
                     "rows_processed": 1800,
                 },
             ]
-        if "FROM poe_trade.ml_eval_runs" in query and "GROUP BY run_id" in query:
+        if (
+            "FROM poe_trade.ml_eval_runs" in query
+            or "FROM poe_trade.ml_v3_eval_runs" in query
+        ) and "GROUP BY run_id" in query:
             return [
                 {
                     "run_id": "eval-2",
@@ -74,7 +77,10 @@ class QueryRouter:
                     "recorded_at": "2026-03-14 06:00:00",
                 },
             ]
-        if "FROM poe_trade.ml_promotion_audit_v1" in query:
+        if (
+            "FROM poe_trade.ml_promotion_audit_v1" in query
+            or "FROM poe_trade.ml_v3_promotion_audit" in query
+        ):
             return [
                 {
                     "candidate_run_id": "eval-2",
@@ -89,7 +95,10 @@ class QueryRouter:
                     "candidate_model_version": "mirage-1",
                 },
             ]
-        if "FROM poe_trade.ml_model_registry_v1" in query:
+        if (
+            "FROM poe_trade.ml_model_registry_v1" in query
+            or "FROM poe_trade.ml_v3_model_registry" in query
+        ):
             return [
                 {
                     "model_version": "mirage-2",
@@ -101,7 +110,7 @@ class QueryRouter:
                 },
             ]
         if (
-            "FROM poe_trade.ml_route_eval_v1" in query
+            ("FROM poe_trade.ml_route_eval_v1" in query or "FROM poe_trade.ml_v3_route_eval" in query)
             and "GROUP BY route, family, support_bucket" in query
         ):
             return [
@@ -124,7 +133,10 @@ class QueryRouter:
                     "recorded_at": "2026-03-15 12:00:00",
                 },
             ]
-        if "FROM poe_trade.ml_route_eval_v1" in query and "GROUP BY route" in query:
+        if (
+            "FROM poe_trade.ml_route_eval_v1" in query
+            or "FROM poe_trade.ml_v3_route_eval" in query
+        ) and "GROUP BY route" in query:
             return [
                 {
                     "route": "structured_boosted",
@@ -144,7 +156,7 @@ class QueryRouter:
                 },
             ]
         if (
-            "FROM poe_trade.ml_route_eval_v1" in query
+            ("FROM poe_trade.ml_route_eval_v1" in query or "FROM poe_trade.ml_v3_route_eval" in query)
             and "GROUP BY run_id, route" in query
         ):
             return [
@@ -181,7 +193,10 @@ class QueryRouter:
                     "recorded_at": "2026-03-14 06:00:00",
                 },
             ]
-        if "FROM poe_trade.ml_price_dataset_v2" in query and "GROUP BY route" in query:
+        if (
+            "FROM poe_trade.ml_price_dataset_v2" in query
+            or "FROM poe_trade.ml_v3_training_examples" in query
+        ) and "GROUP BY route" in query:
             return [
                 {"route": "fungible_reference", "rows": 400},
                 {"route": "structured_boosted", "rows": 1200},
