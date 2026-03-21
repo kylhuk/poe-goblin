@@ -7,7 +7,7 @@ function getCorsHeaders(req: Request): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version, x-proxy-path",
+      "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version, x-proxy-path, x-poe-session",
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
     "Access-Control-Allow-Credentials": "true",
   };
@@ -89,10 +89,16 @@ Deno.serve(async (req) => {
     forwardHeaders["Authorization"] = `Bearer ${apiKey}`;
   }
 
-  // Forward cookies from original request
-  const cookie = req.headers.get("cookie");
-  if (cookie) {
-    forwardHeaders["Cookie"] = cookie;
+  // Forward POESESSID from custom header as a cookie to the backend
+  const poeSession = req.headers.get("x-poe-session");
+  const existingCookie = req.headers.get("cookie") || "";
+  if (poeSession) {
+    const combined = existingCookie
+      ? `${existingCookie}; POESESSID=${poeSession}`
+      : `POESESSID=${poeSession}`;
+    forwardHeaders["Cookie"] = combined;
+  } else if (existingCookie) {
+    forwardHeaders["Cookie"] = existingCookie;
   }
 
   try {
