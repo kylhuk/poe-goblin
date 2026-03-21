@@ -665,15 +665,18 @@ function normalizeMlAutomationStatus(payload: unknown): import('@/types/api').Ml
   };
 }
 
-function normalizeMlAutomationHistory(payload: unknown): MlAutomationHistory {
+function normalizeMlAutomationHistory(payload: unknown): import('@/types/api').MlAutomationHistory {
   const source = asObject(payload);
   const historyRows = Array.isArray(source.history) ? source.history : [];
   const summary = asObject(source.summary);
-  const qualityTrend = Array.isArray(source.qualityTrend) ? source.qualityTrend : [];
-  const trainingCadence = Array.isArray(source.trainingCadence) ? source.trainingCadence : [];
-  const routeMetrics = Array.isArray(source.routeMetrics) ? source.routeMetrics : [];
-  const datasetCoverage = asObject(source.datasetCoverage);
+  const qualityTrend = Array.isArray(source.qualityTrend ?? source.quality_trend) ? (source.qualityTrend ?? source.quality_trend) as unknown[] : [];
+  const trainingCadence = Array.isArray(source.trainingCadence ?? source.training_cadence) ? (source.trainingCadence ?? source.training_cadence) as unknown[] : [];
+  const routeMetrics = Array.isArray(source.routeMetrics ?? source.route_metrics) ? (source.routeMetrics ?? source.route_metrics) as unknown[] : [];
+  const datasetCoverage = asObject(source.datasetCoverage ?? source.dataset_coverage);
   const promotions = Array.isArray(source.promotions) ? source.promotions : [];
+  const rawModelMetrics = Array.isArray(source.modelMetrics ?? source.model_metrics) ? (source.modelMetrics ?? source.model_metrics) as unknown[] : [];
+  const rawModelHistory = Array.isArray(source.modelHistory ?? source.model_history) ? (source.modelHistory ?? source.model_history) as unknown[] : [];
+  const rawRouteFamilies = Array.isArray(source.routeFamilies ?? source.route_families) ? (source.routeFamilies ?? source.route_families) as unknown[] : [];
   return {
     league: optString(source.league) ?? 'Mirage',
     history: historyRows.map((entry) => {
