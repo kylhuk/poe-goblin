@@ -495,12 +495,33 @@ function normalizeMlPredictOneResponse(payload: unknown): MlPredictOneResponse {
   let shadowComparison: import('@/types/api').ShadowComparison | null = null;
   if (rawShadow && typeof rawShadow === 'object') {
     const sc = rawShadow as Record<string, unknown>;
+    const candidateRaw = asObject(sc.candidate);
+    const incumbentRaw = asObject(sc.incumbent);
+    const candidateSide = Object.keys(candidateRaw).length > 0 ? {
+      route: optString(candidateRaw.route),
+      price_p50: optNumber(candidateRaw.price_p50),
+      confidence_percent: optNumber(candidateRaw.confidence_percent),
+      interval_p10: optNumber(candidateRaw.interval_p10),
+      interval_p90: optNumber(candidateRaw.interval_p90),
+    } : null;
+    const incumbentSide = Object.keys(incumbentRaw).length > 0 ? {
+      route: optString(incumbentRaw.route),
+      price_p50: optNumber(incumbentRaw.price_p50),
+      confidence_percent: optNumber(incumbentRaw.confidence_percent),
+      interval_p10: optNumber(incumbentRaw.interval_p10),
+      interval_p90: optNumber(incumbentRaw.interval_p90),
+    } : null;
+    // Compute delta if both sides have p50
+    let deltaPercent = optNumber(sc.deltaPercent ?? sc.delta_percent);
+    if (deltaPercent == null && candidateSide?.price_p50 != null && incumbentSide?.price_p50 != null && incumbentSide.price_p50 !== 0) {
+      deltaPercent = ((candidateSide.price_p50 - incumbentSide.price_p50) / incumbentSide.price_p50) * 100;
+    }
     shadowComparison = {
-      candidatePrediction: optNumber(sc.candidatePrediction ?? sc.candidate_prediction),
-      incumbentPrediction: optNumber(sc.incumbentPrediction ?? sc.incumbent_prediction),
       candidateModelVersion: optString(sc.candidateModelVersion ?? sc.candidate_model_version),
       incumbentModelVersion: optString(sc.incumbentModelVersion ?? sc.incumbent_model_version),
-      deltaPercent: optNumber(sc.deltaPercent ?? sc.delta_percent),
+      candidate: candidateSide,
+      incumbent: incumbentSide,
+      deltaPercent,
     };
   }
 
