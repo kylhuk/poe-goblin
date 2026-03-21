@@ -73,6 +73,7 @@ const UserMenu = () => {
       {connected && (
         <span className="text-xs font-mono text-foreground" data-testid="auth-connected">
           {user.accountName}
+          {sessionPersisted && <span className="text-[10px] text-muted-foreground ml-1" title="Session saved to your account">💾</span>}
         </span>
       )}
       <Popover open={open} onOpenChange={setOpen}>

@@ -296,6 +296,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       refreshSession,
       sessionState,
       isLoading: combinedLoading,
+      sessionPersisted,
     }}>
       {children}
     </AuthContext.Provider>
