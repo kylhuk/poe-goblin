@@ -160,6 +160,14 @@ export interface MlPredictOneRequest {
   itemText: string;
 }
 
+export interface ShadowComparison {
+  candidatePrediction: number | null;
+  incumbentPrediction: number | null;
+  candidateModelVersion: string | null;
+  incumbentModelVersion: string | null;
+  deltaPercent: number | null;
+}
+
 export interface MlPredictOneResponse {
   predictedValue: number;
   currency: string;
@@ -174,6 +182,9 @@ export interface MlPredictOneResponse {
   predictionSource?: string;
   estimateTrust?: string;
   estimateWarning?: string | null;
+  servingModelVersion?: string | null;
+  rollout?: string | null;
+  shadowComparison?: ShadowComparison | null;
 }
 
 // ========== Search History Analytics ==========

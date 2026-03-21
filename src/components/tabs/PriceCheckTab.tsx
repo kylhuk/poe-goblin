@@ -6,18 +6,48 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { ConfidenceBadge } from '@/components/shared/StatusIndicators';
 import { api } from '@/services/api';
-import type { PriceCheckResponse } from '@/types/api';
-import { Brain, AlertTriangle, ServerCrash, ShieldAlert, Info } from 'lucide-react';
+import type { PriceCheckResponse, MlPredictOneResponse, ShadowComparison } from '@/types/api';
+import { Brain, AlertTriangle, ServerCrash, ShieldAlert, Info, GitCompare } from 'lucide-react';
 import { RenderState } from '@/components/shared/RenderState';
 import { useMouseGlow } from '@/hooks/useMouseGlow';
 
-function isLowTrustEstimate(r: PriceCheckResponse): boolean {
+/** Merged result combining price-check comparables with predict-one trust metadata */
+interface MergedPriceResult extends PriceCheckResponse {
+  servingModelVersion?: string | null;
+  rollout?: string | null;
+  shadowComparison?: ShadowComparison | null;
+  route?: string;
+  league?: string;
+}
+
+function isLowTrustEstimate(r: MergedPriceResult): boolean {
   return r.mlPredicted === false || r.estimateTrust === 'low' || !!r.fallbackReason;
+}
+
+function mergePriceAndTrust(
+  price: PriceCheckResponse,
+  trust: MlPredictOneResponse | null,
+): MergedPriceResult {
+  if (!trust) return price;
+  return {
+    ...price,
+    // Trust fields from predict-one override the (usually undefined) price-check ones
+    mlPredicted: trust.mlPredicted ?? price.mlPredicted,
+    predictionSource: trust.predictionSource ?? price.predictionSource,
+    estimateTrust: trust.estimateTrust ?? price.estimateTrust,
+    estimateWarning: trust.estimateWarning ?? price.estimateWarning,
+    // New predict-one-only fields
+    servingModelVersion: trust.servingModelVersion,
+    rollout: trust.rollout,
+    shadowComparison: trust.shadowComparison,
+    route: trust.route,
+    league: trust.league,
+  };
 }
 
 const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function PriceCheckTab(_props, ref) {
   const [text, setText] = useState('');
-  const [result, setResult] = useState<PriceCheckResponse | null>(null);
+  const [result, setResult] = useState<MergedPriceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -34,8 +64,16 @@ const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function
     setError(null);
     setErrorCode(null);
     try {
-      const nextResult = await api.priceCheck({ itemText: text });
-      setResult(nextResult);
+      // Dual-call: price-check for comparables, predict-one for trust + shadow metadata
+      const [priceData, trustData] = await Promise.allSettled([
+        api.priceCheck({ itemText: text }),
+        api.mlPredictOne({ itemText: text }),
+      ]);
+
+      if (priceData.status === 'rejected') throw priceData.reason;
+
+      const trust = trustData.status === 'fulfilled' ? trustData.value : null;
+      setResult(mergePriceAndTrust(priceData.value, trust));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Price prediction failed';
       const code = msg.split(':')[0] ?? '';
@@ -50,164 +88,253 @@ const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function
 
   return (
     <div ref={ref} className="max-w-4xl mx-auto space-y-6" data-testid="panel-pricecheck-root">
-      <div className="space-y-3">
-        <h2 className="text-lg font-semibold font-sans text-foreground">ML Price Check</h2>
-        <p className="text-xs text-muted-foreground">
-          Paste PoE clipboard text. The backend runs the trained price model and returns recent market comparables from the synchronized dataset.
-        </p>
-
-        <Textarea
-          data-testid="pricecheck-input"
-          value={text}
-          onChange={e => setText(e.target.value)}
-          placeholder={`Rarity: Rare
-Grim Bane
-Hubris Circlet
---------
-Quality: +20%
-+2 to Level of Socketed Minion Gems
-+93 to maximum Life
-...`}
-          className="min-h-[160px] font-mono text-xs focus:shadow-[0_0_12px_-3px_hsl(38,55%,42%,0.3)] transition-shadow"
-        />
-        <Button data-testid="pricecheck-submit" onClick={check} disabled={loading} className="gap-2 w-full sm:w-auto btn-game">
-          <Brain className="h-4 w-4" />
-          {loading ? 'Checking...' : 'Check Price'}
-        </Button>
-
-        {error && errorCode === 'backend_unavailable' && (
-          <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3">
-            <ServerCrash className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-destructive">Model not available</p>
-              <p className="text-xs text-muted-foreground mt-0.5">The prediction backend is currently unavailable. Try again later.</p>
-            </div>
-          </div>
-        )}
-        {error && errorCode === 'league_not_allowed' && (
-          <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3">
-            <ShieldAlert className="h-4 w-4 text-warning mt-0.5 shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-warning">League not supported</p>
-              <p className="text-xs text-muted-foreground mt-0.5">This league is not currently enabled for price checking.</p>
-            </div>
-          </div>
-        )}
-        {error && errorCode !== 'backend_unavailable' && errorCode !== 'league_not_allowed' && (
-          <RenderState kind="invalid_input" message={error} />
-        )}
-      </div>
+      <PriceCheckInput
+        text={text}
+        onTextChange={setText}
+        onSubmit={check}
+        loading={loading}
+        error={error}
+        errorCode={errorCode}
+      />
 
       {result && (
-        <Card className={`card-game animate-scale-fade-in ${lowTrust ? 'border-warning/40' : 'glow-gold'}`} onMouseMove={mouseGlow}>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-3">
-              <CardTitle className="text-sm font-sans">ML Prediction</CardTitle>
-              <div className="flex items-center gap-2">
-                {result.predictionSource && (
-                  <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5">
-                    {result.predictionSource}
-                  </Badge>
-                )}
-                <ConfidenceBadge value={result.confidence} />
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Low-trust warning banner */}
-            {lowTrust && (
-              <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3">
-                <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-warning">Low confidence estimate</p>
-                  {result.estimateWarning && (
-                    <p className="text-xs text-muted-foreground mt-0.5">{result.estimateWarning}</p>
-                  )}
-                  {result.fallbackReason && (
-                    <p className="text-xs text-muted-foreground mt-0.5">Reason: {result.fallbackReason}</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Not eligible notice */}
-            {result.priceRecommendationEligible === false && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Info className="h-3.5 w-3.5 shrink-0" />
-                Not eligible for price recommendation
-              </div>
-            )}
-
-            {/* Prediction value */}
-            <div className="text-center py-4">
-              <p className={`text-3xl font-mono font-semibold ${lowTrust ? 'text-muted-foreground' : 'gold-shimmer-text'}`}>
-                {result.predictedValue} <span className="text-lg text-muted-foreground">{result.currency}</span>
-              </p>
-              {result.interval && (
-                <p className="text-xs text-muted-foreground mt-1 font-mono">
-                  p10 {result.interval.p10 ?? 'n/a'} – p90 {result.interval.p90 ?? 'n/a'}
-                </p>
-              )}
-              {typeof result.saleProbabilityPercent === 'number' && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Sale Probability: {result.saleProbabilityPercent}%
-                </p>
-              )}
-            </div>
-
-            {/* Comparables */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent Comparables</h3>
-                <span className="text-xs text-muted-foreground">{result.comparables.length} rows</span>
-              </div>
-
-              {result.comparables.length > 0 ? (
-                <div className="rounded-md border border-border overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="text-xs">Item Name</TableHead>
-                        <TableHead className="text-xs">Price</TableHead>
-                        <TableHead className="text-xs">Currency</TableHead>
-                        <TableHead className="text-xs">League</TableHead>
-                        <TableHead className="text-xs">Added On</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {result.comparables.map((row, index) => (
-                        <TableRow key={`${row.name}-${row.price}-${index}`}>
-                          <TableCell className="text-xs font-medium text-foreground">{row.name}</TableCell>
-                          <TableCell className="text-xs font-mono">{row.price}</TableCell>
-                          <TableCell className="text-xs font-mono">{row.currency}</TableCell>
-                          <TableCell className="text-xs">{row.league ?? '—'}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{formatComparableDate(row.addedOn)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  No recent comparables were found for this parsed base type in the selected league.
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        <PriceResultCard result={result} lowTrust={lowTrust} onMouseMove={mouseGlow} />
       )}
     </div>
   );
 });
 
+/* ─── Sub-components ─── */
+
+function PriceCheckInput({
+  text, onTextChange, onSubmit, loading, error, errorCode,
+}: {
+  text: string;
+  onTextChange: (v: string) => void;
+  onSubmit: () => void;
+  loading: boolean;
+  error: string | null;
+  errorCode: string | null;
+}) {
+  return (
+    <div className="space-y-3">
+      <h2 className="text-lg font-semibold font-sans text-foreground">ML Price Check</h2>
+      <p className="text-xs text-muted-foreground">
+        Paste PoE clipboard text. The backend runs the trained price model and returns recent market comparables from the synchronized dataset.
+      </p>
+
+      <Textarea
+        data-testid="pricecheck-input"
+        value={text}
+        onChange={e => onTextChange(e.target.value)}
+        placeholder={`Rarity: Rare\nGrim Bane\nHubris Circlet\n--------\nQuality: +20%\n+2 to Level of Socketed Minion Gems\n+93 to maximum Life\n...`}
+        className="min-h-[160px] font-mono text-xs focus:shadow-[0_0_12px_-3px_hsl(38,55%,42%,0.3)] transition-shadow"
+      />
+      <Button data-testid="pricecheck-submit" onClick={onSubmit} disabled={loading} className="gap-2 w-full sm:w-auto btn-game">
+        <Brain className="h-4 w-4" />
+        {loading ? 'Checking...' : 'Check Price'}
+      </Button>
+
+      {error && errorCode === 'backend_unavailable' && (
+        <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3">
+          <ServerCrash className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-destructive">Model not available</p>
+            <p className="text-xs text-muted-foreground mt-0.5">The prediction backend is currently unavailable. Try again later.</p>
+          </div>
+        </div>
+      )}
+      {error && errorCode === 'league_not_allowed' && (
+        <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3">
+          <ShieldAlert className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-warning">League not supported</p>
+            <p className="text-xs text-muted-foreground mt-0.5">This league is not currently enabled for price checking.</p>
+          </div>
+        </div>
+      )}
+      {error && errorCode !== 'backend_unavailable' && errorCode !== 'league_not_allowed' && (
+        <RenderState kind="invalid_input" message={error} />
+      )}
+    </div>
+  );
+}
+
+function PriceResultCard({
+  result, lowTrust, onMouseMove,
+}: {
+  result: MergedPriceResult;
+  lowTrust: boolean;
+  onMouseMove: React.MouseEventHandler;
+}) {
+  return (
+    <Card className={`card-game animate-scale-fade-in ${lowTrust ? 'border-warning/40' : 'glow-gold'}`} onMouseMove={onMouseMove}>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-sm font-sans">ML Prediction</CardTitle>
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {result.servingModelVersion && (
+              <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5">
+                model {result.servingModelVersion}
+              </Badge>
+            )}
+            {result.rollout && (
+              <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5 border-accent/40 text-accent-foreground">
+                {result.rollout}
+              </Badge>
+            )}
+            {result.predictionSource && (
+              <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5">
+                {result.predictionSource}
+              </Badge>
+            )}
+            <ConfidenceBadge value={result.confidence} />
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* Low-trust warning banner */}
+        {lowTrust && (
+          <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3">
+            <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-warning">Low confidence estimate</p>
+              {result.estimateWarning && (
+                <p className="text-xs text-muted-foreground mt-0.5">{result.estimateWarning}</p>
+              )}
+              {result.fallbackReason && (
+                <p className="text-xs text-muted-foreground mt-0.5">Reason: {result.fallbackReason}</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Not eligible notice */}
+        {result.priceRecommendationEligible === false && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Info className="h-3.5 w-3.5 shrink-0" />
+            Not eligible for price recommendation
+          </div>
+        )}
+
+        {/* Prediction value */}
+        <div className="text-center py-4">
+          <p className={`text-3xl font-mono font-semibold ${lowTrust ? 'text-muted-foreground' : 'gold-shimmer-text'}`}>
+            {result.predictedValue} <span className="text-lg text-muted-foreground">{result.currency}</span>
+          </p>
+          {result.interval && (
+            <p className="text-xs text-muted-foreground mt-1 font-mono">
+              p10 {result.interval.p10 ?? 'n/a'} – p90 {result.interval.p90 ?? 'n/a'}
+            </p>
+          )}
+          {typeof result.saleProbabilityPercent === 'number' && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Sale Probability: {result.saleProbabilityPercent}%
+            </p>
+          )}
+          {(result.route || result.league) && (
+            <p className="text-xs text-muted-foreground mt-1">
+              {result.route && <span>Route: {result.route}</span>}
+              {result.route && result.league && <span> · </span>}
+              {result.league && <span>League: {result.league}</span>}
+            </p>
+          )}
+        </div>
+
+        {/* Shadow comparison card */}
+        {result.shadowComparison && <ShadowComparisonCard shadow={result.shadowComparison} />}
+
+        {/* Comparables */}
+        <ComparablesTable comparables={result.comparables} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function ShadowComparisonCard({ shadow }: { shadow: ShadowComparison }) {
+  const hasBoth = shadow.candidatePrediction != null && shadow.incumbentPrediction != null;
+  if (!hasBoth) return null;
+
+  const delta = shadow.deltaPercent;
+  const improved = delta != null && delta < 0;
+
+  return (
+    <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        <GitCompare className="h-3.5 w-3.5 shrink-0" />
+        Shadow Comparison (Candidate vs Incumbent)
+      </div>
+      <div className="grid grid-cols-2 gap-4 text-center">
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Candidate</p>
+          <p className="text-sm font-mono font-semibold text-foreground">{shadow.candidatePrediction}</p>
+          {shadow.candidateModelVersion && (
+            <p className="text-[10px] text-muted-foreground font-mono">{shadow.candidateModelVersion}</p>
+          )}
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Incumbent</p>
+          <p className="text-sm font-mono font-semibold text-foreground">{shadow.incumbentPrediction}</p>
+          {shadow.incumbentModelVersion && (
+            <p className="text-[10px] text-muted-foreground font-mono">{shadow.incumbentModelVersion}</p>
+          )}
+        </div>
+      </div>
+      {delta != null && (
+        <p className={`text-xs text-center font-mono ${improved ? 'text-green-500' : 'text-warning'}`}>
+          Δ {delta > 0 ? '+' : ''}{delta.toFixed(1)}%
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ComparablesTable({ comparables }: { comparables: MergedPriceResult['comparables'] }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent Comparables</h3>
+        <span className="text-xs text-muted-foreground">{comparables.length} rows</span>
+      </div>
+
+      {comparables.length > 0 ? (
+        <div className="rounded-md border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-xs">Item Name</TableHead>
+                <TableHead className="text-xs">Price</TableHead>
+                <TableHead className="text-xs">Currency</TableHead>
+                <TableHead className="text-xs">League</TableHead>
+                <TableHead className="text-xs">Added On</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {comparables.map((row, index) => (
+                <TableRow key={`${row.name}-${row.price}-${index}`}>
+                  <TableCell className="text-xs font-medium text-foreground">{row.name}</TableCell>
+                  <TableCell className="text-xs font-mono">{row.price}</TableCell>
+                  <TableCell className="text-xs font-mono">{row.currency}</TableCell>
+                  <TableCell className="text-xs">{row.league ?? '—'}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{formatComparableDate(row.addedOn)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          No recent comparables were found for this parsed base type in the selected league.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function formatComparableDate(value: string | null | undefined): string {
-  if (!value) {
-    return '—';
-  }
+  if (!value) return '—';
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
+  if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString();
 }
 

@@ -482,6 +482,19 @@ function normalizeMlPredictOneResponse(payload: unknown): MlPredictOneResponse {
   const p90 = typeof intervalSource.p90 === 'number'
     ? intervalSource.p90
     : (typeof source.price_p90 === 'number' ? source.price_p90 : null);
+  const rawShadow = source.shadowComparison ?? source.shadow_comparison;
+  let shadowComparison: import('@/types/api').ShadowComparison | null = null;
+  if (rawShadow && typeof rawShadow === 'object') {
+    const sc = rawShadow as Record<string, unknown>;
+    shadowComparison = {
+      candidatePrediction: optNumber(sc.candidatePrediction ?? sc.candidate_prediction),
+      incumbentPrediction: optNumber(sc.incumbentPrediction ?? sc.incumbent_prediction),
+      candidateModelVersion: optString(sc.candidateModelVersion ?? sc.candidate_model_version),
+      incumbentModelVersion: optString(sc.incumbentModelVersion ?? sc.incumbent_model_version),
+      deltaPercent: optNumber(sc.deltaPercent ?? sc.delta_percent),
+    };
+  }
+
   return {
     predictedValue: typeof source.predictedValue === 'number'
       ? source.predictedValue
@@ -502,6 +515,9 @@ function normalizeMlPredictOneResponse(payload: unknown): MlPredictOneResponse {
       : (typeof source.fallback_reason === 'string' ? source.fallback_reason : ''),
     league: optString(source.league) ?? undefined,
     route: optString(source.route) ?? undefined,
+    servingModelVersion: optString(source.servingModelVersion ?? source.serving_model_version) ?? null,
+    rollout: optString(source.rollout) ?? null,
+    shadowComparison,
     ...normalizeTrustFields(source),
   };
 }
