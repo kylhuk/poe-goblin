@@ -97,14 +97,3 @@ CREATE TABLE IF NOT EXISTS poe_trade.account_stash_published_scans (
 PARTITION BY league
 ORDER BY (account_name, realm, league)
 SETTINGS index_granularity = 8192;
-
-GRANT SELECT, INSERT ON poe_trade.account_stash_scan_runs TO poe_api_reader;
-GRANT SELECT, INSERT ON poe_trade.account_stash_scan_tabs TO poe_api_reader;
-GRANT SELECT, INSERT ON poe_trade.account_stash_item_valuations TO poe_api_reader;
-GRANT SELECT, INSERT ON poe_trade.account_stash_active_scans TO poe_api_reader;
-GRANT SELECT, INSERT ON poe_trade.account_stash_published_scans TO poe_api_reader;
-GRANT INSERT ON poe_trade.account_stash_scan_runs TO poe_ingest_writer;
-GRANT INSERT ON poe_trade.account_stash_scan_tabs TO poe_ingest_writer;
-GRANT INSERT ON poe_trade.account_stash_item_valuations TO poe_ingest_writer;
-GRANT INSERT ON poe_trade.account_stash_active_scans TO poe_ingest_writer;
-GRANT INSERT ON poe_trade.account_stash_published_scans TO poe_ingest_writer;

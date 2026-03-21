@@ -427,3 +427,16 @@ def test_private_stash_scan_migration_creates_run_tab_item_and_pointer_tables() 
     assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_item_valuations" in sql
     assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_active_scans" in sql
     assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_published_scans" in sql
+
+
+def test_private_stash_scan_migration_relies_on_existing_poe_rw_role_grants() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0056_private_stash_scan_storage.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "GRANT " not in sql
