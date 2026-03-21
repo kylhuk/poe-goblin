@@ -14,6 +14,7 @@ export function getPoeSessionId() { return _poeSessionId; }
 // Module-level backend session cookie (poe_session) for stateless proxy forwarding
 let _poeBackendSession: string | null = null;
 export function setPoeBackendSession(id: string | null) { _poeBackendSession = id; }
+export function getPoeBackendSession() { return _poeBackendSession; }
 
 async function proxyFetch(path: string, init?: RequestInit): Promise<Response> {
   const { data: { session } } = await supabase.auth.getSession();
