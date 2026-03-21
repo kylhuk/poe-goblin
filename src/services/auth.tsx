@@ -213,7 +213,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .maybeSingle();
     if (data?.encrypted_session) {
       setSessionPersisted(true);
-      // Try to login with stored session
+      // Set in memory so all subsequent proxy requests include it
+      setPoeSessionId(data.encrypted_session);
+      // POST to establish backend session
       try {
         const response = await proxyFetch('/api/v1/auth/session', {
           method: 'POST',
