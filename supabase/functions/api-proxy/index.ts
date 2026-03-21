@@ -89,10 +89,16 @@ Deno.serve(async (req) => {
     forwardHeaders["Authorization"] = `Bearer ${apiKey}`;
   }
 
-  // Forward cookies from original request
-  const cookie = req.headers.get("cookie");
-  if (cookie) {
-    forwardHeaders["Cookie"] = cookie;
+  // Forward POESESSID from custom header as a cookie to the backend
+  const poeSession = req.headers.get("x-poe-session");
+  const existingCookie = req.headers.get("cookie") || "";
+  if (poeSession) {
+    const combined = existingCookie
+      ? `${existingCookie}; POESESSID=${poeSession}`
+      : `POESESSID=${poeSession}`;
+    forwardHeaders["Cookie"] = combined;
+  } else if (existingCookie) {
+    forwardHeaders["Cookie"] = existingCookie;
   }
 
   try {

@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { logApiError } from './apiErrorLog';
@@ -6,9 +6,18 @@ import { logApiError } from './apiErrorLog';
 const PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID;
 const PROXY_URL = `https://${PROJECT_ID}.supabase.co/functions/v1/api-proxy`;
 
+// Module-level POESESSID so proxyFetch can attach it on every request
+let _poeSessionId: string | null = null;
+export function setPoeSessionId(id: string | null) { _poeSessionId = id; }
+export function getPoeSessionId() { return _poeSessionId; }
+
 async function proxyFetch(path: string, init?: RequestInit): Promise<Response> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
+  const extraHeaders: Record<string, string> = {};
+  if (_poeSessionId) {
+    extraHeaders['x-poe-session'] = _poeSessionId;
+  }
   return fetch(PROXY_URL, {
     ...init,
     credentials: 'include',
@@ -16,6 +25,7 @@ async function proxyFetch(path: string, init?: RequestInit): Promise<Response> {
       'Content-Type': 'application/json',
       ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       'x-proxy-path': path,
+      ...extraHeaders,
       ...(init?.headers || {}),
     },
   });
