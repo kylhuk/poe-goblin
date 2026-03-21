@@ -679,6 +679,7 @@ function normalizeMlAutomationHistory(payload: unknown): import('@/types/api').M
   const rawRouteFamilies = Array.isArray(source.routeFamilies ?? source.route_families) ? (source.routeFamilies ?? source.route_families) as unknown[] : [];
   return {
     league: optString(source.league) ?? 'Mirage',
+    mode: optString(source.mode),
     history: historyRows.map((entry) => {
       const row = asObject(entry);
       return {
