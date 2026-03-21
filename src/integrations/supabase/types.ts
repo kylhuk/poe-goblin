@@ -143,6 +143,30 @@ export type Database = {
         }
         Relationships: []
       }
+      user_poe_sessions: {
+        Row: {
+          account_name: string | null
+          encrypted_session: string
+          id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_name?: string | null
+          encrypted_session: string
+          id?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_name?: string | null
+          encrypted_session?: string
+          id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           id: string
