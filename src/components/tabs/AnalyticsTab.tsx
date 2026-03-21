@@ -968,6 +968,27 @@ function formatMiniDate(value: string): string {
   return `${parsed.getMonth() + 1}/${parsed.getDate()}`;
 }
 
+const OUTLIERS_DEFAULTS = {
+  sort: 'expected_profit',
+  order: 'desc' as const,
+  minTotal: 25,
+  maxBuyIn: 100,
+  limit: 100,
+};
+
+const OUTLIER_SORT_OPTIONS = [
+  { value: 'expected_profit', label: 'Expected Profit' },
+  { value: 'roi', label: 'ROI' },
+  { value: 'underpriced_rate', label: 'Underpriced Rate' },
+  { value: 'items_total', label: 'Items Total' },
+  { value: 'item_name', label: 'Item name' },
+] as const;
+
+const OUTLIER_ORDER_OPTIONS = [
+  { value: 'desc', label: 'Descending' },
+  { value: 'asc', label: 'Ascending' },
+] as const;
+
 const GOLD_LABELS: { key: keyof ReportData; label: string }[] = [
   { key: 'gold_currency_ref_hour_rows', label: 'Currency Ref' },
   { key: 'gold_listing_ref_hour_rows', label: 'Listing Ref' },
@@ -1261,6 +1282,11 @@ type HistogramBucket = {
   count: number;
 };
 
+const SEARCH_HISTORY_DEFAULTS = {
+  sort: 'item_name',
+  order: 'asc' as const,
+};
+
 function SearchHistoryPanel() {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
@@ -1268,8 +1294,8 @@ function SearchHistoryPanel() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [league, setLeague] = useState('');
-  const [sort, setSort] = useState('added_on');
-  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
+  const [sort, setSort] = useState(SEARCH_HISTORY_DEFAULTS.sort);
+  const [order, setOrder] = useState<'asc' | 'desc'>(SEARCH_HISTORY_DEFAULTS.order);
   const [priceMin, setPriceMin] = useState<number | undefined>();
   const [priceMax, setPriceMax] = useState<number | undefined>();
   const [committedPriceMin, setCommittedPriceMin] = useState<number | undefined>();
@@ -1310,9 +1336,12 @@ function SearchHistoryPanel() {
     if (normalizedQuery.length < 2) {
       setData(null);
       setError(null);
+      setLoading(false);
       return;
     }
     let cancelled = false;
+    setData(null);
+    setError(null);
     setLoading(true);
     const timer = window.setTimeout(() => {
       getAnalyticsSearchHistory({
@@ -1334,6 +1363,7 @@ function SearchHistoryPanel() {
         })
         .catch(err => {
           if (!cancelled) {
+            setData(null);
             setError(err instanceof Error ? err.message : 'Failed to load search history');
           }
         })
@@ -1375,8 +1405,8 @@ function SearchHistoryPanel() {
     setTimeTo(undefined);
     setCommittedTimeFrom(undefined);
     setCommittedTimeTo(undefined);
-    setSort('added_on');
-    setOrder('desc');
+    setSort(SEARCH_HISTORY_DEFAULTS.sort);
+    setOrder(SEARCH_HISTORY_DEFAULTS.order);
   };
 
   return (
@@ -1415,7 +1445,7 @@ function SearchHistoryPanel() {
                 onChange={event => setLeague(event.target.value)}
                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
               >
-                <option value="">All leagues</option>
+                <option value="">Default league</option>
                 {(data?.filters.leagueOptions ?? []).map(option => (
                   <option key={option} value={option}>{option}</option>
                 ))}
@@ -1428,10 +1458,11 @@ function SearchHistoryPanel() {
           </div>
 
           {suggestions.length > 0 && (
-            <div className="flex flex-wrap gap-2">
+            <div data-testid="search-history-suggestions" className="flex flex-wrap gap-2">
               {suggestions.map(suggestion => (
                 <button
                   key={`${suggestion.itemKind}-${suggestion.itemName}`}
+                  data-testid="search-history-suggestion"
                   type="button"
                   title={`${suggestion.itemKind} · ${suggestion.matchCount} matches`}
                   className="rounded-full border border-border px-3 py-1 text-xs text-foreground hover:bg-secondary"
@@ -1443,9 +1474,10 @@ function SearchHistoryPanel() {
             </div>
           )}
 
-          <p className="text-xs text-muted-foreground">
-            Every filter change is sent back to the backend as SQL parameters so ClickHouse does the heavy work and the frontend only renders the returned rows and histograms.
-          </p>
+            <div className="space-y-1 text-xs text-muted-foreground">
+              <p>Exact item matches first, then close name matches, so the default view starts with the cleanest historical comps.</p>
+              <p>Relevance-first suggestions come directly from the API payload, and leaving league blank uses the backend default league.</p>
+            </div>
         </CardContent>
       </Card>
 
@@ -1455,7 +1487,14 @@ function SearchHistoryPanel() {
         <RenderState kind="empty" message="Type at least two characters to search the historical listings index." />
       )}
 
-      {data && (
+      {data && data.rows.length === 0 && (
+        <RenderState
+          kind="empty"
+          message="No matching historical listings found for this search. Try a broader item name or reset the filters."
+        />
+      )}
+
+      {data && data.rows.length > 0 && (
         <>
           <div className="grid gap-4 xl:grid-cols-2">
             <Card className="card-game">
@@ -1574,23 +1613,29 @@ function SearchHistoryPanel() {
 function PricingOutliersPanel() {
   const [query, setQuery] = useState('');
   const [league, setLeague] = useState('');
-  const [sort, setSort] = useState('items_total');
-  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
-  const [minTotal, setMinTotal] = useState(25);
+  const [sort, setSort] = useState(OUTLIERS_DEFAULTS.sort);
+  const [order, setOrder] = useState<'asc' | 'desc'>(OUTLIERS_DEFAULTS.order);
+  const [minTotal, setMinTotal] = useState(OUTLIERS_DEFAULTS.minTotal);
+  const [maxBuyIn, setMaxBuyIn] = useState(OUTLIERS_DEFAULTS.maxBuyIn);
   const [data, setData] = useState<PricingOutliersResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      getAnalyticsPricingOutliers({
-        query: query.trim() || undefined,
-        league: league.trim() || undefined,
-        sort,
-        order,
-        minTotal,
-        limit: 100,
-      })
+      if (!cancelled) {
+        setError(null);
+        setData(null);
+      }
+        getAnalyticsPricingOutliers({
+          query: query.trim() || undefined,
+          league: league.trim() || undefined,
+          sort,
+          order,
+          minTotal,
+          maxBuyIn,
+          limit: OUTLIERS_DEFAULTS.limit,
+        })
         .then(payload => {
           if (!cancelled) {
             setData(payload);
@@ -1599,6 +1644,7 @@ function PricingOutliersPanel() {
         })
         .catch(err => {
           if (!cancelled) {
+            setData(null);
             setError(err instanceof Error ? err.message : 'Failed to load pricing outliers');
           }
         });
@@ -1607,16 +1653,20 @@ function PricingOutliersPanel() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, league, sort, order, minTotal]);
+  }, [query, league, sort, order, minTotal, maxBuyIn]);
+
+  const hasMissingOpportunityMetrics = Boolean(
+    data?.rows.some(row => row.entryPrice == null || row.expectedProfit == null || row.roi == null || row.underpricedRate == null)
+  );
 
   return (
     <div className="space-y-4">
       <Card className="card-game">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-sans">Too Cheap Analysis</CardTitle>
+          <CardTitle className="text-sm font-sans">Low-Investment Flip Opportunities</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_180px_180px_180px] items-end">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_160px_160px_180px_180px_180px] items-end">
             <label className="text-xs text-muted-foreground space-y-1">
               <span>Item filter</span>
               <input
@@ -1642,12 +1692,9 @@ function PricingOutliersPanel() {
                 onChange={event => setSort(event.target.value)}
                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
               >
-                <option value="items_total">Items total</option>
-                <option value="items_per_week">Items / week</option>
-                <option value="p10">10 percentile</option>
-                <option value="median">Median</option>
-                <option value="p90">90 percentile</option>
-                <option value="item_name">Item name</option>
+                {OUTLIER_SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </label>
             <label className="text-xs text-muted-foreground space-y-1">
@@ -1660,78 +1707,113 @@ function PricingOutliersPanel() {
                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
               />
             </label>
+            <label className="text-xs text-muted-foreground space-y-1">
+              <span>Order</span>
+              <select
+                value={order}
+                onChange={event => setOrder(event.target.value as 'asc' | 'desc')}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+              >
+                {OUTLIER_ORDER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-muted-foreground space-y-1">
+              <span>Max buy-in (chaos)</span>
+              <input
+                type="number"
+                min={1}
+                value={maxBuyIn}
+                onChange={event => setMaxBuyIn(Math.max(1, Number(event.target.value) || 1))}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </label>
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Rows below the 10 percentile are treated as too cheap. The backend calculates per-item and per-affix percentiles so the frontend only renders the returned summary tables and weekly counts.
+            Focus on sub-100 chaos entries with the strongest expected resale edge. Fair value comes from the backend median, while profit and ROI show how much room remains above the suggested buy-in.
           </p>
         </CardContent>
       </Card>
 
       {error && <RenderState kind="degraded" message={error} />}
-      {!error && !data && <RenderState kind="loading" message="Loading too-cheap pricing analysis…" />}
+      {!error && !data && <RenderState kind="loading" message="Loading low-investment opportunities…" />}
+      {!error && hasMissingOpportunityMetrics && (
+        <RenderState kind="degraded" message="Missing opportunity metrics from analytics backend." />
+      )}
 
-      {data && (
+      {data && !hasMissingOpportunityMetrics && (
         <>
           <Card className="card-game">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-sans">Too Cheap per Week</CardTitle>
+              <CardTitle className="text-sm font-sans">Low-Investment Activity</CardTitle>
             </CardHeader>
             <CardContent>
-              <MiniHistogram
-                dataTestId="pricing-outliers-weekly-chart"
-                title="Items per week below the 10 percentile"
-                buckets={data.weekly.map(entry => ({
-                  bucketStart: entry.weekStart,
-                  bucketEnd: entry.weekStart,
-                  count: entry.tooCheapCount,
-                }))}
-                formatLabel={value => formatShortDate(String(value))}
-              />
+              {data.weekly.length > 0 ? (
+                <MiniHistogram
+                  dataTestId="pricing-outliers-weekly-chart"
+                  title="Too-cheap item-name matches per week"
+                  buckets={data.weekly.map(entry => ({
+                    bucketStart: entry.weekStart,
+                    bucketEnd: entry.weekStart,
+                    count: entry.tooCheapCount,
+                  }))}
+                  formatLabel={value => formatShortDate(String(value))}
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground">Weekly trend is available for item-name matches only.</p>
+              )}
             </CardContent>
           </Card>
 
-          <Card className="card-game" data-testid="pricing-outliers-results">
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between gap-3">
-                <CardTitle className="text-sm font-sans">Outlier Results</CardTitle>
-                <span className="text-xs text-muted-foreground">{data.rows.length} rows · {order.toUpperCase()}</span>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs"><button type="button" onClick={() => { if (sort === 'item_name') setOrder(o => o === 'asc' ? 'desc' : 'asc'); else { setSort('item_name'); setOrder('asc'); } }}>Item Name{sort === 'item_name' ? ` ${sortArrow(order)}` : ''}</button></TableHead>
-                    <TableHead className="text-xs">Affix Analyzed</TableHead>
-                    <TableHead className="text-xs"><button type="button" onClick={() => { if (sort === 'p10') setOrder(o => o === 'asc' ? 'desc' : 'asc'); else { setSort('p10'); setOrder('asc'); } }}>p10{sort === 'p10' ? ` ${sortArrow(order)}` : ''}</button></TableHead>
-                    <TableHead className="text-xs"><button type="button" onClick={() => { if (sort === 'median') setOrder(o => o === 'asc' ? 'desc' : 'asc'); else { setSort('median'); setOrder('asc'); } }}>Median{sort === 'median' ? ` ${sortArrow(order)}` : ''}</button></TableHead>
-                    <TableHead className="text-xs"><button type="button" onClick={() => { if (sort === 'p90') setOrder(o => o === 'asc' ? 'desc' : 'asc'); else { setSort('p90'); setOrder('asc'); } }}>p90{sort === 'p90' ? ` ${sortArrow(order)}` : ''}</button></TableHead>
-                    <TableHead className="text-xs"><button type="button" onClick={() => { if (sort === 'items_per_week') setOrder(o => o === 'asc' ? 'desc' : 'asc'); else { setSort('items_per_week'); setOrder('desc'); } }}>Items/wk{sort === 'items_per_week' ? ` ${sortArrow(order)}` : ''}</button></TableHead>
-                    <TableHead className="text-xs"><button type="button" onClick={() => { if (sort === 'items_total') setOrder(o => o === 'asc' ? 'desc' : 'asc'); else { setSort('items_total'); setOrder('desc'); } }}>Items total{sort === 'items_total' ? ` ${sortArrow(order)}` : ''}</button></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.rows.map((row, index) => (
-                    <TableRow key={`${row.itemName}-${row.affixAnalyzed ?? 'base'}-${index}`}>
-                      <TableCell className="text-xs font-medium text-foreground">{row.itemName}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        <div className="flex items-center gap-2">
-                          <span>{row.affixAnalyzed ?? 'All item rolls'}</span>
-                          <Badge variant="outline" className="text-[10px] uppercase tracking-wide">{row.analysisLevel}</Badge>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs font-mono">{row.p10.toFixed(2)}</TableCell>
-                      <TableCell className="text-xs font-mono">{row.median.toFixed(2)}</TableCell>
-                      <TableCell className="text-xs font-mono">{row.p90.toFixed(2)}</TableCell>
-                      <TableCell className="text-xs font-mono">{row.itemsPerWeek.toFixed(2)}</TableCell>
-                      <TableCell className="text-xs font-mono">{row.itemsTotal}</TableCell>
+          {data.rows.length === 0 ? (
+            <RenderState kind="empty" message="No cheap opportunities found under the current cap." />
+          ) : (
+            <Card className="card-game" data-testid="pricing-outliers-results">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="text-sm font-sans">Opportunity Results</CardTitle>
+                  <span className="text-xs text-muted-foreground">{data.rows.length} rows · {order.toUpperCase()}</span>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">Buy-In</TableHead>
+                      <TableHead className="text-xs">Fair Value</TableHead>
+                      <TableHead className="text-xs">Expected Profit</TableHead>
+                      <TableHead className="text-xs">ROI</TableHead>
+                      <TableHead className="text-xs">Underpriced Rate</TableHead>
+                      <TableHead className="text-xs">Sample Size</TableHead>
+                      <TableHead className="text-xs">Item Name</TableHead>
+                      <TableHead className="text-xs">Affix Analyzed</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {data.rows.map((row, index) => (
+                      <TableRow key={`${row.itemName}-${row.affixAnalyzed ?? 'base'}-${index}`}>
+                        <TableCell className="text-xs font-mono">{row.entryPrice?.toFixed(2) ?? '—'}</TableCell>
+                        <TableCell className="text-xs font-mono">{row.median.toFixed(2)}</TableCell>
+                        <TableCell className="text-xs font-mono">{row.expectedProfit?.toFixed(2) ?? '—'}</TableCell>
+                        <TableCell className="text-xs font-mono">{formatPct(row.roi)}</TableCell>
+                        <TableCell className="text-xs font-mono">{formatPct(row.underpricedRate)}</TableCell>
+                        <TableCell className="text-xs font-mono">{row.itemsTotal}</TableCell>
+                        <TableCell className="text-xs font-medium text-foreground">{row.itemName}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          <div className="flex items-center gap-2">
+                            <span>{row.affixAnalyzed ?? 'All item rolls'}</span>
+                            <Badge variant="outline" className="text-[10px] uppercase tracking-wide">{row.analysisLevel}</Badge>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
     </div>

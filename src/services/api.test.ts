@@ -12,7 +12,11 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
-import { api } from './api';
+import {
+  api,
+  getAnalyticsPricingOutliers,
+  getAnalyticsSearchHistory,
+} from './api';
 import type { ScannerRecommendation } from '@/types/api';
 
 const sampleRecommendation: ScannerRecommendation = {
@@ -39,6 +43,7 @@ const createResponse = (payload: unknown) =>
   Promise.resolve({
     ok: true,
     status: 200,
+    headers: { get: () => null },
     json: async () => payload,
   } as Response);
 
@@ -93,6 +98,7 @@ describe('api.getScannerRecommendations', () => {
       Promise.resolve({
         ok: false,
         status: 400,
+        headers: { get: () => null },
         json: async () => ({
           error: {
             code: 'invalid_input',
@@ -105,5 +111,164 @@ describe('api.getScannerRecommendations', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(api.getScannerRecommendations()).rejects.toThrow(/invalid_input/);
+  });
+});
+
+describe('analytics api helpers', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  test('normalizes nested search-history query payloads', async () => {
+    vi.stubEnv('VITE_SUPABASE_PROJECT_ID', 'project-id');
+    getSessionMock.mockResolvedValue({ data: { session: { access_token: 'token-123' } } });
+    const fetchMock = vi.fn(() => createResponse({
+      query: { text: 'Mageblood', league: 'Mirage', sort: 'item_name', order: 'asc' },
+      filters: {
+        leagueOptions: ['Mirage'],
+        price: { min: 1, max: 100 },
+        datetime: { min: null, max: null },
+      },
+      histograms: { price: [], datetime: [] },
+      rows: [],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getAnalyticsSearchHistory({ query: 'Mageblood' });
+
+    expect(result.query).toEqual({ text: 'Mageblood', league: 'Mirage', sort: 'item_name', order: 'asc' });
+  });
+
+  test('serializes analytics pricing outliers max_buy_in and normalizes nested query payload', async () => {
+    vi.stubEnv('VITE_SUPABASE_PROJECT_ID', 'project-id');
+    getSessionMock.mockResolvedValue({ data: { session: { access_token: 'token-123' } } });
+    const fetchMock = vi.fn(() => createResponse({
+      query: {
+        query: 'Mageblood',
+        league: 'Mirage',
+        sort: 'expected_profit',
+        order: 'desc',
+        minTotal: 20,
+        maxBuyIn: 100,
+        limit: 100,
+      },
+      rows: [{
+        itemName: 'Mageblood',
+        affixAnalyzed: '',
+        p10: 90,
+        median: 150,
+        p90: 220,
+        itemsPerWeek: 1.5,
+        itemsTotal: 40,
+        analysisLevel: 'item',
+        entryPrice: 90,
+        expectedProfit: 60,
+        roi: 0.6667,
+        underpricedRate: 0.4,
+      }],
+      weekly: [],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getAnalyticsPricingOutliers({ query: 'Mageblood', maxBuyIn: 100 });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const proxiedUrl = new URL(`https://example.com${(init.headers as Record<string, string>)['x-proxy-path']}`);
+    expect(proxiedUrl.searchParams.get('max_buy_in')).toBe('100');
+    expect(result.query.maxBuyIn).toBe(100);
+    expect(result.rows[0].expectedProfit).toBe(60);
+  });
+
+  test('normalizes older pricing outlier payloads without derived fields', async () => {
+    vi.stubEnv('VITE_SUPABASE_PROJECT_ID', 'project-id');
+    getSessionMock.mockResolvedValue({ data: { session: { access_token: 'token-123' } } });
+    const fetchMock = vi.fn(() => createResponse({
+      query: {
+        query: 'Mageblood',
+        league: 'Mirage',
+        sort: 'median',
+        order: 'desc',
+        minTotal: 20,
+        maxBuyIn: 100,
+        limit: 100,
+      },
+      rows: [{
+        itemName: 'Mageblood',
+        affixAnalyzed: '',
+        p10: 90,
+        median: 150,
+        p90: 220,
+        itemsPerWeek: 1.5,
+        itemsTotal: 40,
+        analysisLevel: 'item',
+      }],
+      weekly: [],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getAnalyticsPricingOutliers({ query: 'Mageblood' });
+
+    expect(result.rows[0].entryPrice).toBeNull();
+    expect(result.rows[0].expectedProfit).toBeNull();
+    expect(result.rows[0].roi).toBeNull();
+    expect(result.rows[0].underpricedRate).toBeNull();
+  });
+
+  test('does not invent omitted nested pricing outlier query fields', async () => {
+    vi.stubEnv('VITE_SUPABASE_PROJECT_ID', 'project-id');
+    getSessionMock.mockResolvedValue({ data: { session: { access_token: 'token-123' } } });
+    const fetchMock = vi.fn(() => createResponse({
+      query: {
+        league: 'Mirage',
+        sort: 'expected_profit',
+        order: 'desc',
+        minTotal: 20,
+      },
+      rows: [],
+      weekly: [],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getAnalyticsPricingOutliers();
+
+    expect(result.query).toEqual({
+      league: 'Mirage',
+      sort: 'expected_profit',
+      order: 'desc',
+      minTotal: 20,
+    });
+    expect(result.query.query).toBeUndefined();
+    expect(result.query.maxBuyIn).toBeUndefined();
+    expect(result.query.limit).toBeUndefined();
+  });
+
+  test('falls back to top-level pricing outlier query metadata when nested fields are absent', async () => {
+    vi.stubEnv('VITE_SUPABASE_PROJECT_ID', 'project-id');
+    getSessionMock.mockResolvedValue({ data: { session: { access_token: 'token-123' } } });
+    const fetchMock = vi.fn(() => createResponse({
+      query: {
+        league: 'Mirage',
+        sort: 'expected_profit',
+        order: 'desc',
+        minTotal: 20,
+      },
+      maxBuyIn: 75,
+      limit: 50,
+      rows: [],
+      weekly: [],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getAnalyticsPricingOutliers();
+
+    expect(result.query).toEqual({
+      league: 'Mirage',
+      sort: 'expected_profit',
+      order: 'desc',
+      minTotal: 20,
+      maxBuyIn: 75,
+      limit: 50,
+    });
   });
 });

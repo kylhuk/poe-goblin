@@ -13,6 +13,8 @@ import type {
   MlPredictOneResponse,
   PriceCheckRequest,
   PriceCheckResponse,
+  PricingOutliersQuery,
+  PricingOutliersQueryPayload,
   PricingOutliersRequest,
   PricingOutliersResponse,
   ScannerRecommendationsRequest,
@@ -614,6 +616,146 @@ function buildQueryString(params: Record<string, string | number | undefined>): 
   return '?' + entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
 }
 
+function normalizePriceRange(source: Record<string, unknown>): { min: number; max: number } {
+  return {
+    min: optNumber(source.min) ?? 0,
+    max: optNumber(source.max) ?? 0,
+  };
+}
+
+function normalizeDatetimeRange(source: Record<string, unknown>): { min: string | null; max: string | null } {
+  return {
+    min: optString(source.min),
+    max: optString(source.max),
+  };
+}
+
+function normalizePriceBuckets(payload: unknown): SearchHistoryResponse['histograms']['price'] {
+  const buckets = Array.isArray(payload) ? payload : [];
+  return buckets.map((entry) => {
+    const bucket = asObject(entry);
+    return {
+      bucketStart: optNumber(bucket.bucketStart ?? bucket.bucket_start) ?? 0,
+      bucketEnd: optNumber(bucket.bucketEnd ?? bucket.bucket_end) ?? 0,
+      count: optNumber(bucket.count) ?? 0,
+    };
+  });
+}
+
+function normalizeDatetimeBuckets(payload: unknown): SearchHistoryResponse['histograms']['datetime'] {
+  const buckets = Array.isArray(payload) ? payload : [];
+  return buckets.map((entry) => {
+    const bucket = asObject(entry);
+    return {
+      bucketStart: optString(bucket.bucketStart ?? bucket.bucket_start) ?? '',
+      bucketEnd: optString(bucket.bucketEnd ?? bucket.bucket_end) ?? '',
+      count: optNumber(bucket.count) ?? 0,
+    };
+  });
+}
+
+function normalizeSearchHistoryRows(payload: unknown): SearchHistoryResponse['rows'] {
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows.map((entry) => {
+    const row = asObject(entry);
+    return {
+      itemName: optString(row.itemName ?? row.item_name) ?? '',
+      league: optString(row.league) ?? '',
+      listedPrice: optNumber(row.listedPrice ?? row.listed_price) ?? 0,
+      currency: optString(row.currency) ?? 'chaos',
+      addedOn: optString(row.addedOn ?? row.added_on) ?? '',
+    };
+  });
+}
+
+function normalizePricingOutlierRows(payload: unknown): PricingOutliersResponse['rows'] {
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows.map((entry) => {
+    const row = asObject(entry);
+    return {
+      itemName: optString(row.itemName ?? row.item_name) ?? '',
+      affixAnalyzed: optString(row.affixAnalyzed ?? row.affix_analyzed),
+      p10: optNumber(row.p10) ?? 0,
+      median: optNumber(row.median) ?? 0,
+      p90: optNumber(row.p90) ?? 0,
+      itemsPerWeek: optNumber(row.itemsPerWeek ?? row.items_per_week) ?? 0,
+      itemsTotal: optNumber(row.itemsTotal ?? row.items_total) ?? 0,
+      analysisLevel: optString(row.analysisLevel ?? row.analysis_level) ?? 'item',
+      entryPrice: optNumber(row.entryPrice ?? row.entry_price),
+      expectedProfit: optNumber(row.expectedProfit ?? row.expected_profit),
+      roi: optNumber(row.roi),
+      underpricedRate: optNumber(row.underpricedRate ?? row.underpriced_rate),
+    };
+  });
+}
+
+function normalizePricingOutlierWeeks(payload: unknown): PricingOutliersResponse['weekly'] {
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows.map((entry) => {
+    const row = asObject(entry);
+    return {
+      weekStart: optString(row.weekStart ?? row.week_start) ?? '',
+      tooCheapCount: optNumber(row.tooCheapCount ?? row.too_cheap_count) ?? 0,
+    };
+  });
+}
+
+function normalizeSearchHistoryResponse(payload: unknown): SearchHistoryResponse {
+  const source = asObject(payload);
+  const query = asObject(source.query);
+  const filters = asObject(source.filters);
+  const histograms = asObject(source.histograms);
+  return {
+    query: {
+      text: optString(query.text ?? source.query) ?? '',
+      league: optString(query.league ?? source.league) ?? '',
+      sort: optString(query.sort ?? source.sort) ?? 'item_name',
+      order: optString(query.order ?? source.order) === 'asc' ? 'asc' : 'desc',
+    },
+    filters: {
+      leagueOptions: Array.isArray(filters.leagueOptions ?? filters.league_options)
+        ? (filters.leagueOptions ?? filters.league_options).filter((value): value is string => typeof value === 'string')
+        : [],
+      price: normalizePriceRange(asObject(filters.price)),
+      datetime: normalizeDatetimeRange(asObject(filters.datetime)),
+    },
+    histograms: {
+      price: normalizePriceBuckets(histograms.price),
+      datetime: normalizeDatetimeBuckets(histograms.datetime),
+    },
+    rows: normalizeSearchHistoryRows(source.rows),
+  };
+}
+
+function normalizePricingOutliersResponse(payload: unknown): PricingOutliersResponse {
+  const source = asObject(payload);
+  const query = asObject(source.query) as PricingOutliersQueryPayload;
+  const topLevelMaxBuyIn = optNumber(source.maxBuyIn ?? source.max_buy_in);
+  const topLevelLimit = optNumber(source.limit);
+  const normalizedQuery = {
+    ...(optString(query.query) ? { query: optString(query.query) } : {}),
+    ...(optString(query.league ?? source.league) ? { league: optString(query.league ?? source.league) } : {}),
+    ...(optString(query.sort ?? source.sort) ? { sort: optString(query.sort ?? source.sort) } : {}),
+    ...((query.order ?? source.order) === 'asc' || (query.order ?? source.order) === 'desc'
+      ? { order: (query.order ?? source.order) as 'asc' | 'desc' }
+      : {}),
+    ...(optNumber(query.minTotal ?? query.min_total ?? source.minTotal ?? source.min_total) != null
+      ? { minTotal: optNumber(query.minTotal ?? query.min_total ?? source.minTotal ?? source.min_total) as number }
+      : {}),
+    ...((optNumber(query.maxBuyIn ?? query.max_buy_in) ?? topLevelMaxBuyIn) != null
+      ? { maxBuyIn: (optNumber(query.maxBuyIn ?? query.max_buy_in) ?? topLevelMaxBuyIn) as number }
+      : {}),
+    ...((optNumber(query.limit) ?? topLevelLimit) != null
+      ? { limit: (optNumber(query.limit) ?? topLevelLimit) as number }
+      : {}),
+  } satisfies PricingOutliersQuery;
+  return {
+    query: normalizedQuery,
+    rows: normalizePricingOutlierRows(source.rows),
+    weekly: normalizePricingOutlierWeeks(source.weekly),
+  };
+}
+
 export async function getAnalyticsSearchSuggestions(query: string) {
   const queryString = buildQueryString({ query });
   return request<SearchSuggestionsResponse>(`/api/v1/ops/analytics/search-suggestions${queryString}`);
@@ -631,7 +773,9 @@ export async function getAnalyticsSearchHistory(params: SearchHistoryRequest) {
     time_to: params.timeTo,
     limit: params.limit,
   });
-  return request<SearchHistoryResponse>(`/api/v1/ops/analytics/search-history${queryString}`);
+  return normalizeSearchHistoryResponse(
+    await request<unknown>(`/api/v1/ops/analytics/search-history${queryString}`)
+  );
 }
 
 export async function getAnalyticsPricingOutliers(params: PricingOutliersRequest = {}) {
@@ -641,9 +785,12 @@ export async function getAnalyticsPricingOutliers(params: PricingOutliersRequest
     sort: params.sort,
     order: params.order,
     min_total: params.minTotal,
+    max_buy_in: params.maxBuyIn,
     limit: params.limit,
   });
-  return request<PricingOutliersResponse>(`/api/v1/ops/analytics/pricing-outliers${queryString}`);
+  return normalizePricingOutliersResponse(
+    await request<unknown>(`/api/v1/ops/analytics/pricing-outliers${queryString}`)
+  );
 }
 
 

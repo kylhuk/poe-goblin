@@ -232,10 +232,12 @@ export interface SearchHistoryRow {
 }
 
 export interface SearchHistoryResponse {
-  query: string;
-  league: string | null;
-  sort: string;
-  order: 'asc' | 'desc';
+  query: {
+    text: string;
+    league: string;
+    sort: string;
+    order: 'asc' | 'desc';
+  };
   filters: {
     leagueOptions: string[];
     price: { min: number; max: number };
@@ -270,6 +272,10 @@ export interface PricingOutlierRow {
   itemsPerWeek: number;
   itemsTotal: number;
   analysisLevel: string;
+  entryPrice: number | null;
+  expectedProfit: number | null;
+  roi: number | null;
+  underpricedRate: number | null;
 }
 
 export interface PricingOutlierWeek {
@@ -277,8 +283,23 @@ export interface PricingOutlierWeek {
   tooCheapCount: number;
 }
 
+export interface PricingOutliersQuery {
+  query?: string;
+  league?: string;
+  sort?: string;
+  order?: 'asc' | 'desc';
+  minTotal?: number;
+  maxBuyIn?: number;
+  limit?: number;
+}
+
+export interface PricingOutliersQueryPayload extends PricingOutliersQuery {
+  min_total?: number;
+  max_buy_in?: number;
+}
+
 export interface PricingOutliersResponse {
-  league: string | null;
+  query: PricingOutliersQuery;
   rows: PricingOutlierRow[];
   weekly: PricingOutlierWeek[];
 }
@@ -289,6 +310,7 @@ export interface PricingOutliersRequest {
   sort?: string;
   order?: 'asc' | 'desc';
   minTotal?: number;
+  maxBuyIn?: number;
   limit?: number;
 }
 

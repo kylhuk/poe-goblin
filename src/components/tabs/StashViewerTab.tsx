@@ -11,6 +11,7 @@ import type {
   StashStatus,
   StashTab,
   PriceEvaluation,
+  SpecialLayout,
 } from '@/types/api';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -23,34 +24,6 @@ import NormalGrid from '@/components/stash/NormalGrid';
 import SpecialLayoutGrid from '@/components/stash/SpecialLayoutGrid';
 
 const API_SCHEMA = `{
-  "stashTabs": [
-    {
-      "id": "string",
-      "name": "string",
-      "type": "normal | quad | currency | fragment | ...",
-      "items": [
-        {
-          "id": "string",
-          "name": "string",
-          "typeLine": "string",
-          "icon": "https://web.poecdn.com/...",
-          "x": 0, "y": 0, "w": 1, "h": 1,
-          "frameType": 3,
-          "stackSize": 1,
-          "properties": [...],
-          "explicitMods": [...],
-          "sockets": [{ "group": 0, "sColour": "R" }],
-          "estimatedPrice": 120,
-          "priceEvaluation": "well_priced | could_be_better | mispriced"
-        }
-      ],
-      "currencyLayout": { "sections": [...], "layout": { "0": { "x": 10, "y": 10, "w": 47, "h": 47 } } }
-    }
-  }
-  return cells;
-}
-
-const API_SCHEMA = `{
   "scanId": "string | null",
   "publishedAt": "ISO-8601 | null",
   "isStale": false,
@@ -59,6 +32,21 @@ const API_SCHEMA = `{
   },
   "stashTabs": []
 }`;
+
+const EMPTY_SCAN_STATUS: StashScanStatus = {
+  status: 'idle',
+  activeScanId: null,
+  startedAt: null,
+  updatedAt: null,
+  publishedAt: null,
+  error: null,
+  progress: {
+    tabsProcessed: 0,
+    tabsTotal: 0,
+    itemsProcessed: 0,
+    itemsTotal: 0,
+  },
+};
 
 function getSpecialLayout(tab: StashTab): SpecialLayout | null {
   return tab.currencyLayout
@@ -183,15 +171,20 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
   }, []);
 
   useEffect(() => {
-    load();
-    const iv = setInterval(load, 5_000);
+    const iv = window.setInterval(() => {
+      loadPublished().catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Stash feature unavailable');
+        setStatus('degraded');
+      });
+    }, 5_000);
     return () => clearInterval(iv);
-  }, [load]);
+  }, [loadPublished]);
 
   const tab = tabs[activeTab];
   const specialLayout = tab ? getSpecialLayout(tab) : null;
   const isGrid = tab && !specialLayout;
   const gridSize = tab?.quadLayout ? 24 : 12;
+  const runningScan = scanBusy || scanStatus.status === 'running' || scanStatus.status === 'publishing';
 
   return (
     <div ref={ref} className="space-y-3" data-testid="panel-stash-root">
@@ -314,3 +307,5 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
 });
 
 StashViewerTab.displayName = 'StashViewerTab';
+
+export default StashViewerTab;
