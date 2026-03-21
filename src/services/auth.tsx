@@ -260,8 +260,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return false;
     }
     const result = await refreshSession();
-    return result.status === 'connected' && !!result.accountName;
-  }, [refreshSession]);
+    if (result.status === 'connected' && result.accountName) {
+      // Persist to database for signed-in users
+      await saveSessionToDb(poeSessionId, result.accountName);
+      return true;
+    }
+    return false;
+  }, [refreshSession, saveSessionToDb]);
 
   const logout = useCallback(() => {
     proxyFetch('/api/v1/auth/logout', {
@@ -269,8 +274,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }).finally(() => {
       setUser(null);
       setSessionState('disconnected');
+      deleteSessionFromDb();
     });
-  }, []);
+  }, [deleteSessionFromDb]);
 
   const isAuthenticated = !!supabaseUser;
   const combinedLoading = !supabaseReady || isLoading;
