@@ -470,9 +470,9 @@ export async function getRolloutControls(): Promise<RolloutControls> {
 export async function updateRolloutControls(updates: { shadowMode?: boolean; cutoverEnabled?: boolean; rollbackToIncumbent?: boolean }): Promise<RolloutControls> {
   const league = await primaryLeague();
   const body: Record<string, unknown> = {};
-  if (updates.shadowMode !== undefined) body.shadow_mode = updates.shadowMode;
-  if (updates.cutoverEnabled !== undefined) body.cutover_enabled = updates.cutoverEnabled;
-  if (updates.rollbackToIncumbent !== undefined) body.rollback_to_incumbent = updates.rollbackToIncumbent;
+  if (updates.shadowMode !== undefined) body.shadowMode = updates.shadowMode;
+  if (updates.cutoverEnabled !== undefined) body.cutoverEnabled = updates.cutoverEnabled;
+  if (updates.rollbackToIncumbent !== undefined) body.rollbackToIncumbent = updates.rollbackToIncumbent;
   const raw = await request<Record<string, unknown>>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/rollout`, {
     method: 'POST',
     body: JSON.stringify(body),
