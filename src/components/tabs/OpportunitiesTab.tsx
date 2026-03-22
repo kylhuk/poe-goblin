@@ -146,11 +146,11 @@ const OpportunitiesTab = forwardRef<HTMLDivElement, Record<string, never>>(funct
   };
 
   const clearFilters = () => {
-    setSort('expected_profit_chaos');
+    setSort('expected_profit_per_operation_chaos');
     setMinConfidence(0);
     setStrategyId('');
     setLimit(50);
-    fetchInitial('expected_profit_chaos');
+    fetchInitial('expected_profit_per_operation_chaos');
   };
 
   const loadMore = async () => {
