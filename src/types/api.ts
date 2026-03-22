@@ -521,6 +521,9 @@ export interface ScannerRecommendation {
   strategyId: string;
   league: string;
   itemOrMarketKey: string;
+  semanticKey?: string;
+  searchHint?: string;
+  itemName?: string;
   whyItFired: string;
   buyPlan: string;
   maxBuy: number | null;
@@ -533,12 +536,26 @@ export interface ScannerRecommendation {
   expectedHoldTime: string;
   expectedHoldMinutes: number | null;
   confidence: number | null;
+  effectiveConfidence?: number | null;
+  mlInfluenceScore?: number | null;
+  mlInfluenceReason?: string | null;
+  liquidityScore?: number | null;
+  freshnessMinutes?: number | null;
+  goldCost?: number | null;
+  recommendationSource?: string;
+  contractVersion?: number;
+  producerVersion?: string | null;
+  producerRunId?: string | null;
+  evidenceSnapshot?: Record<string, unknown> | string | null;
   recordedAt: string | null;
 }
 
 export interface ScannerRecommendationsMeta {
   nextCursor: string | null;
   hasMore: boolean;
+  source?: string;
+  primaryLeague?: string;
+  generatedAt?: string;
 }
 
 export interface ScannerRecommendationsResponse {

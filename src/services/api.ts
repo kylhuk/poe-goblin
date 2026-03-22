@@ -308,6 +308,14 @@ export async function getAnalyticsBacktests() {
   return request<BacktestAnalytics>('/api/v1/ops/analytics/backtests');
 }
 
+export interface OpportunitiesAnalytics {
+  [key: string]: unknown;
+}
+
+export async function getAnalyticsOpportunities(): Promise<OpportunitiesAnalytics> {
+  return request<OpportunitiesAnalytics>('/api/v1/ops/analytics/opportunities');
+}
+
 function normalizeMlCandidateComparison(raw: unknown): MlCandidateComparison | null {
   const o = asObject(raw);
   if (Object.keys(o).length === 0) return null;
