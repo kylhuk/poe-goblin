@@ -798,6 +798,58 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
   );
 }
 
+function ObservabilityPanel({ observability }: { observability: MlAutomationObservability }) {
+  return (
+    <Card className="card-game">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-sans">Observability</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 text-xs">
+          <div>
+            <span className="text-muted-foreground">Dataset Rows</span>
+            <p className="font-mono text-foreground">{formatCompact(observability.datasetRows)}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Promoted Models</span>
+            <p className="font-mono text-foreground">{observability.promotedModels}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Eval Runs</span>
+            <p className="font-mono text-foreground">{observability.evalRuns}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Eval Sample Rows</span>
+            <p className="font-mono text-foreground">{formatCompact(observability.evalSampleRows)}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Evaluation Available</span>
+            <div className="mt-0.5">
+              {observability.evaluationAvailable
+                ? <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                : <XCircle className="h-4 w-4 text-muted-foreground" />}
+            </div>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Latest Training</span>
+            <p className="font-mono text-foreground">{observability.latestTrainingAsOf ? formatDateTimeShort(observability.latestTrainingAsOf) : '—'}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Latest Promotion</span>
+            <p className="font-mono text-foreground">{observability.latestPromotionAt ? formatDateTimeShort(observability.latestPromotionAt) : '—'}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Latest Eval</span>
+            <p className="font-mono text-foreground">{observability.latestEvalAt ? formatDateTimeShort(observability.latestEvalAt) : '—'}</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
+
 function MlSummaryMetricCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
     <Card className="card-game">
