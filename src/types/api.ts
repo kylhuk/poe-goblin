@@ -10,7 +10,7 @@ export interface Service {
   lastCrawl: string | null; // ISO timestamp
   rowsInDb: number | null;
   containerInfo: string | null;
-  type: 'crawler' | 'analytics' | 'docker' | 'worker';
+  type: string;
   allowedActions?: Array<'start' | 'stop' | 'restart'>;
 }
 
@@ -141,9 +141,9 @@ export interface PriceComparable {
 }
 
 export interface PriceCheckResponse {
-  predictedValue: number;
+  predictedValue: number | null;
   currency: string;
-  confidence: number;
+  confidence: number | null;
   comparables: PriceComparable[];
   interval?: { p10: number | null; p90: number | null };
   saleProbabilityPercent?: number | null;
