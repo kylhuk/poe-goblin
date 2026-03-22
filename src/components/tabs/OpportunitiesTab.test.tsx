@@ -174,7 +174,7 @@ describe('OpportunitiesTab', () => {
 
     await waitFor(() => {
       expect(getScannerRecommendationsMock).toHaveBeenNthCalledWith(2, {
-        sort: 'expected_profit_chaos',
+        sort: 'expected_profit_per_operation_chaos',
         cursor: 'cursor-page-2',
         limit: 50,
       });
