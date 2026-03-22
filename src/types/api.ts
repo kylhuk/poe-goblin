@@ -595,6 +595,7 @@ export interface DashboardResponse {
     topOpportunity: string;
   };
   topOpportunities: ScannerRecommendation[];
+  deployment?: Record<string, unknown>;
 }
 
 // ========== ML Automation ==========

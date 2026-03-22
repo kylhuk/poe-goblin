@@ -573,7 +573,7 @@ function normalizeMlPredictOneResponse(payload: unknown): MlPredictOneResponse {
     league: optString(source.league) ?? undefined,
     route: optString(source.route) ?? undefined,
     servingModelVersion: optString(source.servingModelVersion ?? source.serving_model_version) ?? null,
-    rollout: optString(source.rollout) ?? null,
+    rollout: (source.rollout != null && typeof source.rollout === 'object') ? source.rollout as Record<string, unknown> : null,
     shadowComparison,
     ...normalizeTrustFields(source),
   };
