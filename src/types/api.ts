@@ -155,8 +155,6 @@ export interface PriceCheckResponse {
   estimateWarning?: string | null;
   fairValueP50?: number | null;
   fastSale24hPrice?: number | null;
-  route?: string;
-  league?: string;
 }
 
 // ========== ML Predict One ==========
