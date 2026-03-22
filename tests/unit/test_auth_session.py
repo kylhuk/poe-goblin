@@ -9,6 +9,7 @@ from unittest import mock
 import pytest
 
 from poe_trade.api.auth_session import (
+    _account_name_html_urls,
     clear_credential_state,
     credential_state_path,
     load_credential_state,
@@ -95,6 +96,17 @@ def test_resolve_account_name_uses_poe_session_cookie(tmp_path: Path) -> None:
     request = urlopen_mock.call_args[0][0]
     assert account_name == "qa-exile"
     assert request.get_header("Cookie") == "POESESSID=POESESSID-123"
+
+
+def test_account_name_html_urls_use_non_oauth_profile_pages(tmp_path: Path) -> None:
+    settings = _settings(str(tmp_path / "auth-state"))
+
+    urls = _account_name_html_urls(settings)
+
+    assert urls == (
+        "https://www.pathofexile.com/my-account",
+        "https://www.pathofexile.com/account/profile",
+    )
 
 
 def test_resolve_account_name_uses_plain_text_fallback_after_404(

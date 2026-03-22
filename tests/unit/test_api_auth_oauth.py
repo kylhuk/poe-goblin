@@ -37,12 +37,34 @@ def test_auth_login_requires_redirect_uri_when_oauth_client_configured() -> None
     with mock.patch.dict(os.environ, env, clear=True):
         settings = Settings.from_env()
     app = ApiApp(settings, clickhouse_client=ClickHouseClient(endpoint="http://ch"))
-    with pytest.raises(ApiError, match="POE_ACCOUNT_REDIRECT_URI") as exc:
+    with pytest.raises(ApiError, match="temporarily disabled") as exc:
         _ = app.handle(
             method="GET",
             raw_path="/api/v1/auth/login",
             headers={},
             body_reader=BytesIO(b""),
         )
-    assert exc.value.code == "oauth_config_invalid"
-    assert exc.value.status == 500
+    assert exc.value.code == "oauth_disabled"
+    assert exc.value.status == 501
+
+
+def test_auth_callback_is_temporarily_disabled() -> None:
+    env = {
+        "POE_API_OPERATOR_TOKEN": "phase1-token",
+        "POE_OAUTH_CLIENT_ID": "client-id",
+        "POE_ACCOUNT_REDIRECT_URI": "https://api.example.com/api/v1/auth/callback",
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        settings = Settings.from_env()
+    app = ApiApp(settings, clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+
+    with pytest.raises(ApiError, match="temporarily disabled") as exc:
+        _ = app.handle(
+            method="GET",
+            raw_path="/api/v1/auth/callback?state=test-state&code=test-code",
+            headers={},
+            body_reader=BytesIO(b""),
+        )
+
+    assert exc.value.code == "oauth_disabled"
+    assert exc.value.status == 501

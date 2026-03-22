@@ -1,0 +1,25 @@
+{
+  "league": "Mirage",
+  "result": {
+    "active_model_version": "v3",
+    "status": "completed",
+    "stop_reason": "v3_train_cycle",
+    "v3": {
+      "routes": [
+        "a",
+        "b"
+      ],
+      "trained_count": 2
+    }
+  },
+  "rollout": {
+    "candidate_model_version": null,
+    "cutover_enabled": false,
+    "effective_serving_model_version": null,
+    "incumbent_model_version": null,
+    "last_action": "noop",
+    "league": "Mirage",
+    "shadow_mode": false,
+    "updated_at": "2026-03-20 00:00:00"
+  }
+}

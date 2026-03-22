@@ -368,6 +368,8 @@ def _account_name_candidate_urls(settings: Settings) -> tuple[str, ...]:
 
 def _account_name_html_urls(settings: Settings) -> tuple[str, ...]:
     auth_base = settings.poe_auth_base_url.rstrip("/")
+    if auth_base.endswith("/oauth"):
+        auth_base = auth_base[: -len("/oauth")]
     return (
         f"{auth_base}/my-account",
         f"{auth_base}/account/profile",

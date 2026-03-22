@@ -18,18 +18,13 @@ from poe_trade.db import ClickHouseClient
 from .auth import cors_headers, parse_bearer_token, validate_bearer_token
 from .auth_session import (
     AccountResolutionError,
-    OAuthExchangeError,
-    authorize_redirect,
     clear_credential_state,
-    begin_login,
     clear_session,
     create_session,
-    exchange_oauth_code,
     get_session,
     load_credential_state,
     resolve_account_name,
     save_credential_state,
-    validate_state,
 )
 from .ml import (
     BackendUnavailable,
@@ -1073,74 +1068,18 @@ class ApiApp:
         return account_name, league, realm
 
     def _auth_login(self, _context: Mapping[str, object]) -> Response:
-        tx = begin_login(self.settings)
-        if not self.settings.oauth_client_id:
-            location = f"/api/v1/auth/callback?state={tx.state}&code=qa-simulated"
-        else:
-            if not self.settings.poe_account_redirect_uri:
-                raise ApiError(
-                    status=500,
-                    code="oauth_config_invalid",
-                    message="POE_ACCOUNT_REDIRECT_URI must exactly match your registered OAuth redirect URI",
-                )
-            location = authorize_redirect(self.settings, tx)
-        return Response(
-            status=302,
-            headers={"Location": location},
-            body=b"",
+        raise ApiError(
+            status=501,
+            code="oauth_disabled",
+            message="OAuth login is temporarily disabled; use POESESSID login instead",
         )
 
     def _auth_callback(self, context: Mapping[str, object]) -> Response:
-        params = _query_params_from_context(context)
-        state = _first_query_param(params, "state", default="")
-        code = _first_query_param(params, "code", default="")
-        if not code:
-            raise ApiError(status=400, code="invalid_input", message="code is required")
-
-        if not self.settings.oauth_client_id:
-            if not validate_state(self.settings, state=state):
-                raise ApiError(
-                    status=400, code="invalid_state", message="invalid state"
-                )
-            session = create_session(self.settings, account_name="qa-exile")
-            location = (
-                f"{self.settings.poe_account_frontend_complete_uri}?status=success"
-            )
-            cookie = _session_set_cookie(
-                self.settings.auth_cookie_name,
-                str(session.get("session_id") or ""),
-                secure=self.settings.auth_cookie_secure,
-            )
-            return Response(
-                status=302,
-                headers={"Location": location, "Set-Cookie": cookie},
-                body=b"",
-            )
-
-        try:
-            exchange = exchange_oauth_code(self.settings, code=code, state=state)
-        except OAuthExchangeError as exc:
-            location = (
-                f"{self.settings.poe_account_frontend_complete_uri}"
-                f"?status=error&reason={str(exc.code)}"
-            )
-            return Response(status=302, headers={"Location": location}, body=b"")
-
-        _ = save_credential_state(
-            self.settings,
-            account_name=exchange.account_name,
-            poe_session_id="",
-            status="oauth_connected",
-        )
-        session = create_session(self.settings, account_name=exchange.account_name)
-        location = f"{self.settings.poe_account_frontend_complete_uri}?status=success"
-        cookie = _session_set_cookie(
-            self.settings.auth_cookie_name,
-            str(session.get("session_id") or ""),
-            secure=self.settings.auth_cookie_secure,
-        )
-        return Response(
-            status=302, headers={"Location": location, "Set-Cookie": cookie}, body=b""
+        _ = context
+        raise ApiError(
+            status=501,
+            code="oauth_disabled",
+            message="OAuth callback is temporarily disabled; use POESESSID login instead",
         )
 
     def _auth_session(self, context: Mapping[str, object]) -> Response:
