@@ -141,9 +141,9 @@ export interface PriceComparable {
 }
 
 export interface PriceCheckResponse {
-  predictedValue: number;
+  predictedValue: number | null;
   currency: string;
-  confidence: number;
+  confidence: number | null;
   comparables: PriceComparable[];
   interval?: { p10: number | null; p90: number | null };
   saleProbabilityPercent?: number | null;
