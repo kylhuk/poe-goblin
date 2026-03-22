@@ -15,9 +15,21 @@ import type {
 import { useMouseGlow } from '../../hooks/useMouseGlow';
 import { Filter, X } from 'lucide-react';
 
-type ScannerSort = 'expected_profit_chaos' | 'expected_profit_per_minute_chaos';
+type ScannerSort =
+  | 'expected_profit_per_operation_chaos'
+  | 'expected_profit_chaos'
+  | 'expected_profit_per_minute_chaos'
+  | 'expected_roi'
+  | 'confidence'
+  | 'freshness_minutes'
+  | 'liquidity_score';
 
 const SORT_OPTIONS: Array<{ value: ScannerSort; label: string; testId: string }> = [
+  {
+    value: 'expected_profit_per_operation_chaos',
+    label: 'Profit / Op',
+    testId: 'scanner-sort-profit-per-op',
+  },
   {
     value: 'expected_profit_chaos',
     label: 'Profit',
@@ -27,6 +39,21 @@ const SORT_OPTIONS: Array<{ value: ScannerSort; label: string; testId: string }>
     value: 'expected_profit_per_minute_chaos',
     label: 'Profit / min',
     testId: 'scanner-sort-profit-per-minute',
+  },
+  {
+    value: 'expected_roi',
+    label: 'ROI',
+    testId: 'scanner-sort-roi',
+  },
+  {
+    value: 'confidence',
+    label: 'Confidence',
+    testId: 'scanner-sort-confidence',
+  },
+  {
+    value: 'freshness_minutes',
+    label: 'Freshness',
+    testId: 'scanner-sort-freshness',
   },
 ];
 
