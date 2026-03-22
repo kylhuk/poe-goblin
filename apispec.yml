@@ -1,0 +1,1107 @@
+openapi: 3.1.0
+info:
+  title: PoE Trade Backend API
+  version: v1
+  description: |
+    OpenAPI definition generated from the live backend routes in `poe_trade/api/app.py`
+    and aligned with frontend consumption in `frontend/src/services/api.ts`.
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local API service
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: health
+  - name: ops
+  - name: scanner
+  - name: services
+  - name: ml
+  - name: stash
+  - name: auth
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Health and ML readiness
+      security: []
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok, degraded] }
+                  service: { type: string }
+                  version: { type: string }
+                  ml: { type: object, additionalProperties: true }
+        '503':
+          description: Degraded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/ops/contract:
+    get:
+      tags: [ops]
+      summary: Ops contract and route registry
+      responses:
+        '200':
+          description: Contract payload
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    options:
+      tags: [ops]
+      summary: CORS preflight
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ops/services:
+    get:
+      tags: [services]
+      summary: List backend services
+      responses:
+        '200':
+          description: Services list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  services:
+                    type: array
+                    items: { $ref: '#/components/schemas/Service' }
+                required: [services]
+    options:
+      tags: [services]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ops/dashboard:
+    get:
+      tags: [ops]
+      summary: Dashboard payload
+      responses:
+        '200':
+          description: Dashboard data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardResponse' }
+        '503':
+          description: Backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [ops]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ops/messages:
+    get:
+      tags: [ops]
+      summary: Operational messages
+      responses:
+        '200':
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: '#/components/schemas/AppMessage' }
+                required: [messages]
+    options:
+      tags: [ops]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ops/scanner/summary:
+    get:
+      tags: [scanner]
+      summary: Scanner freshness and counts
+      responses:
+        '200':
+          description: Scanner summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScannerSummary' }
+    options:
+      tags: [scanner]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ops/scanner/recommendations:
+    get:
+      tags: [scanner]
+      summary: Paginated scanner recommendations
+      parameters:
+        - in: query
+          name: sort
+          schema: { type: string }
+          description: Sort key (for example expected_profit_per_operation_chaos)
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: league
+          schema: { type: string }
+        - in: query
+          name: strategy_id
+          schema: { type: string }
+        - in: query
+          name: min_confidence
+          schema: { type: number, minimum: 0, maximum: 1 }
+      responses:
+        '200':
+          description: Recommendations page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScannerRecommendationsResponse' }
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [scanner]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ops/alerts/{alert_id}/ack:
+    post:
+      tags: [ops]
+      summary: Acknowledge an alert
+      parameters:
+        - in: path
+          name: alert_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Alert acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  alertId: { type: string }
+                  status: { type: string, enum: [acked] }
+                required: [alertId, status]
+    options:
+      tags: [ops]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ops/analytics/{kind}:
+    get:
+      tags: [ops]
+      summary: Generic analytics endpoint
+      parameters:
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum:
+              - ingestion
+              - scanner
+              - opportunities
+              - alerts
+              - backtests
+              - ml
+              - report
+              - search-suggestions
+              - search-history
+              - pricing-outliers
+      responses:
+        '200':
+          description: Analytics payload by kind
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '404':
+          description: Unknown analytics kind
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [ops]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ops/analytics/search-suggestions:
+    get:
+      tags: [ops]
+      summary: Search suggestions
+      parameters:
+        - in: query
+          name: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Suggestions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchSuggestionsResponse' }
+    options:
+      tags: [ops]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ops/analytics/search-history:
+    get:
+      tags: [ops]
+      summary: Search history analytics
+      parameters:
+        - in: query
+          name: query
+          schema: { type: string }
+        - in: query
+          name: league
+          schema: { type: string }
+        - in: query
+          name: sort
+          schema: { type: string }
+        - in: query
+          name: order
+          schema: { type: string, enum: [asc, desc] }
+        - in: query
+          name: price_min
+          schema: { type: number }
+        - in: query
+          name: price_max
+          schema: { type: number }
+        - in: query
+          name: time_from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: time_to
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500 }
+      responses:
+        '200':
+          description: History payload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchHistoryResponse' }
+    options:
+      tags: [ops]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ops/analytics/pricing-outliers:
+    get:
+      tags: [ops]
+      summary: Pricing outlier analytics
+      parameters:
+        - in: query
+          name: query
+          schema: { type: string }
+        - in: query
+          name: league
+          schema: { type: string }
+        - in: query
+          name: sort
+          schema: { type: string }
+        - in: query
+          name: order
+          schema: { type: string, enum: [asc, desc] }
+        - in: query
+          name: min_total
+          schema: { type: integer }
+        - in: query
+          name: max_buy_in
+          schema: { type: integer }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500 }
+      responses:
+        '200':
+          description: Pricing outlier payload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PricingOutliersResponse' }
+    options:
+      tags: [ops]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/actions/services/{service_id}/{verb}:
+    post:
+      tags: [services]
+      summary: Execute service action
+      parameters:
+        - in: path
+          name: service_id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: verb
+          required: true
+          schema: { type: string, enum: [start, stop, restart] }
+      responses:
+        '200':
+          description: Service snapshot after action
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service: { $ref: '#/components/schemas/Service' }
+                required: [service]
+        '400':
+          description: Invalid action
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '403':
+          description: Action forbidden
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: Service not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '503':
+          description: Action failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [services]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ops/leagues/{league}/price-check:
+    post:
+      tags: [ops]
+      summary: Price check from clipboard item text
+      parameters:
+        - in: path
+          name: league
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                itemText: { type: string }
+              required: [itemText]
+      responses:
+        '200':
+          description: Price check result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceCheckResponse' }
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '503':
+          description: Backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [ops]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/stash/status:
+    get:
+      tags: [stash]
+      summary: Stash session/status summary
+      security: []
+      parameters:
+        - in: query
+          name: league
+          schema: { type: string }
+        - in: query
+          name: realm
+          schema: { type: string, default: pc }
+      responses:
+        '200':
+          description: Stash status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StashStatus' }
+        '503':
+          description: Backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [stash]
+      security: []
+      responses:
+        '204': { description: No content }
+
+  /api/v1/stash/tabs:
+    get:
+      tags: [stash]
+      summary: Published stash tabs
+      security: []
+      parameters:
+        - in: query
+          name: league
+          schema: { type: string }
+        - in: query
+          name: realm
+          schema: { type: string, default: pc }
+      responses:
+        '200':
+          description: Tabs payload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StashTabsResponse' }
+        '401':
+          description: Session required/expired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [stash]
+      security: []
+      responses:
+        '204': { description: No content }
+
+  /api/v1/stash/scan:
+    post:
+      tags: [stash]
+      summary: Start private stash scan
+      security: []
+      parameters:
+        - in: query
+          name: league
+          schema: { type: string }
+        - in: query
+          name: realm
+          schema: { type: string, default: pc }
+      responses:
+        '202':
+          description: Scan started (or deduplicated)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StashScanStartResponse' }
+    options:
+      tags: [stash]
+      security: []
+      responses:
+        '204': { description: No content }
+
+  /api/v1/stash/scan/status:
+    get:
+      tags: [stash]
+      summary: Get private stash scan status
+      security: []
+      parameters:
+        - in: query
+          name: league
+          schema: { type: string }
+        - in: query
+          name: realm
+          schema: { type: string, default: pc }
+      responses:
+        '200':
+          description: Scan status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StashScanStatus' }
+    options:
+      tags: [stash]
+      security: []
+      responses:
+        '204': { description: No content }
+
+  /api/v1/stash/items/{fingerprint}/history:
+    get:
+      tags: [stash]
+      summary: Price history for stash item lineage
+      security: []
+      parameters:
+        - in: path
+          name: fingerprint
+          required: true
+          schema: { type: string }
+        - in: query
+          name: league
+          schema: { type: string }
+        - in: query
+          name: realm
+          schema: { type: string, default: pc }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, default: 20 }
+      responses:
+        '200':
+          description: Item history
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StashItemHistoryResponse' }
+    options:
+      tags: [stash]
+      security: []
+      responses:
+        '204': { description: No content }
+
+  /api/v1/auth/login:
+    get:
+      tags: [auth]
+      summary: OAuth login (currently disabled)
+      security: []
+      responses:
+        '501':
+          description: OAuth disabled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [auth]
+      security: []
+      responses:
+        '204': { description: No content }
+
+  /api/v1/auth/callback:
+    get:
+      tags: [auth]
+      summary: OAuth callback (currently disabled)
+      security: []
+      responses:
+        '501':
+          description: OAuth disabled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [auth]
+      security: []
+      responses:
+        '204': { description: No content }
+
+  /api/v1/auth/session:
+    get:
+      tags: [auth]
+      summary: Get current backend auth session
+      security: []
+      responses:
+        '200':
+          description: Session state
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    post:
+      tags: [auth]
+      summary: Bootstrap backend auth session from POESESSID
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                poeSessionId: { type: string }
+                poeSESSID: { type: string }
+                POESESSID: { type: string }
+                poesessid: { type: string }
+      responses:
+        '200':
+          description: Connected session
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [auth]
+      security: []
+      responses:
+        '204': { description: No content }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Clear backend auth session
+      security: []
+      responses:
+        '200':
+          description: Logged out
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [logged_out] }
+                required: [status]
+    options:
+      tags: [auth]
+      security: []
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ml/contract:
+    get:
+      tags: [ml]
+      summary: ML contract and route map
+      responses:
+        '200':
+          description: ML contract
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    options:
+      tags: [ml]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ml/leagues/{league}/status:
+    get:
+      tags: [ml]
+      summary: ML status for league
+      parameters:
+        - in: path
+          name: league
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: ML status
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400':
+          description: League not allowed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [ml]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ml/leagues/{league}/predict-one:
+    post:
+      tags: [ml]
+      summary: Predict one item from clipboard payload
+      parameters:
+        - in: path
+          name: league
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                itemText: { type: string }
+                clipboard: { type: string }
+                input_format: { type: string }
+                payload: { type: string }
+                output_mode: { type: string }
+      responses:
+        '200':
+          description: Prediction result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MlPredictOneResponse' }
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    options:
+      tags: [ml]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ml/leagues/{league}/rollout:
+    get:
+      tags: [ml]
+      summary: Get rollout controls
+      parameters:
+        - in: path
+          name: league
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Rollout controls
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RolloutControls' }
+    post:
+      tags: [ml]
+      summary: Update rollout controls
+      parameters:
+        - in: path
+          name: league
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                shadowMode: { type: boolean }
+                cutoverEnabled: { type: boolean }
+                rollbackToIncumbent: { type: boolean }
+      responses:
+        '200':
+          description: Updated rollout controls
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RolloutControls' }
+    options:
+      tags: [ml]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ml/leagues/{league}/automation/status:
+    get:
+      tags: [ml]
+      summary: ML automation status
+      parameters:
+        - in: path
+          name: league
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Automation status
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    options:
+      tags: [ml]
+      responses:
+        '204': { description: No content }
+
+  /api/v1/ml/leagues/{league}/automation/history:
+    get:
+      tags: [ml]
+      summary: ML automation history
+      parameters:
+        - in: path
+          name: league
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Automation history
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    options:
+      tags: [ml]
+      responses:
+        '204': { description: No content }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ErrorEnvelope:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: {}
+          required: [code, message]
+      required: [error]
+
+    Service:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        status: { type: string, enum: [running, stopped, error, starting, stopping] }
+        uptime: { type: [integer, 'null'] }
+        lastCrawl: { type: [string, 'null'], format: date-time }
+        rowsInDb: { type: [integer, 'null'] }
+        containerInfo: { type: [string, 'null'] }
+        type: { type: string }
+        allowedActions:
+          type: array
+          items: { type: string, enum: [start, stop, restart] }
+      required: [id, name, description, status, type]
+
+    AppMessage:
+      type: object
+      properties:
+        id: { type: string }
+        timestamp: { type: string, format: date-time }
+        severity: { type: string, enum: [info, warning, critical] }
+        sourceModule: { type: string }
+        message: { type: string }
+        suggestedAction: { type: string }
+      required: [id, timestamp, severity, sourceModule, message, suggestedAction]
+
+    ScannerSummary:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, empty, stale] }
+        lastRunAt: { type: [string, 'null'], format: date-time }
+        recommendationCount: { type: integer }
+        freshnessMinutes: { type: [number, 'null'] }
+      required: [status, recommendationCount]
+
+    ScannerRecommendation:
+      type: object
+      properties:
+        scannerRunId: { type: string }
+        strategyId: { type: string }
+        league: { type: string }
+        itemOrMarketKey: { type: string }
+        whyItFired: { type: string }
+        buyPlan: { type: string }
+        maxBuy: { type: [number, 'null'] }
+        transformPlan: { type: string }
+        exitPlan: { type: string }
+        executionVenue: { type: string }
+        expectedProfitChaos: { type: [number, 'null'] }
+        expectedProfitPerMinuteChaos: { type: [number, 'null'] }
+        expectedRoi: { type: [number, 'null'] }
+        expectedHoldTime: { type: string }
+        expectedHoldMinutes: { type: [number, 'null'] }
+        confidence: { type: [number, 'null'] }
+        recordedAt: { type: [string, 'null'], format: date-time }
+      required: [scannerRunId, strategyId, league, itemOrMarketKey]
+
+    ScannerRecommendationsResponse:
+      type: object
+      properties:
+        recommendations:
+          type: array
+          items: { $ref: '#/components/schemas/ScannerRecommendation' }
+        meta:
+          type: object
+          properties:
+            source: { type: string }
+            primaryLeague: { type: string }
+            hasMore: { type: boolean }
+            nextCursor: { type: [string, 'null'] }
+            generatedAt: { type: string, format: date-time }
+          required: [hasMore]
+      required: [recommendations, meta]
+
+    SearchSuggestionsResponse:
+      type: object
+      properties:
+        query: { type: string }
+        suggestions:
+          type: array
+          items:
+            type: object
+            properties:
+              itemName: { type: string }
+              itemKind: { type: string }
+              matchCount: { type: integer }
+      required: [query, suggestions]
+
+    SearchHistoryResponse:
+      type: object
+      properties:
+        query: { type: object, additionalProperties: true }
+        filters: { type: object, additionalProperties: true }
+        histograms: { type: object, additionalProperties: true }
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              itemName: { type: string }
+              league: { type: string }
+              listedPrice: { type: number }
+              currency: { type: string }
+              addedOn: { type: [string, 'null'], format: date-time }
+      required: [query, filters, histograms, rows]
+
+    PricingOutliersResponse:
+      type: object
+      properties:
+        query: { type: object, additionalProperties: true }
+        rows:
+          type: array
+          items: { type: object, additionalProperties: true }
+        weekly:
+          type: array
+          items: { type: object, additionalProperties: true }
+      required: [query, rows, weekly]
+
+    PriceCheckResponse:
+      type: object
+      properties:
+        predictedValue: { type: [number, 'null'] }
+        fairValueP50: { type: [number, 'null'] }
+        fastSale24hPrice: { type: [number, 'null'] }
+        currency: { type: string }
+        confidence: { type: [number, 'null'] }
+        interval:
+          type: object
+          properties:
+            p10: { type: [number, 'null'] }
+            p90: { type: [number, 'null'] }
+        comparables:
+          type: array
+          items: { type: object, additionalProperties: true }
+        saleProbabilityPercent: { type: [number, 'null'] }
+        priceRecommendationEligible: { type: [boolean, 'null'] }
+        fallbackReason: { type: [string, 'null'] }
+        mlPredicted: { type: [boolean, 'null'] }
+        predictionSource: { type: [string, 'null'] }
+        estimateTrust: { type: [string, 'null'] }
+        estimateWarning: { type: [string, 'null'] }
+      required: [currency, comparables]
+
+    MlPredictOneResponse:
+      type: object
+      properties:
+        league: { type: string }
+        route: { type: string }
+        predictedValue: { type: [number, 'null'] }
+        currency: { type: string }
+        confidence: { type: [number, 'null'] }
+        interval:
+          type: object
+          properties:
+            p10: { type: [number, 'null'] }
+            p90: { type: [number, 'null'] }
+        saleProbabilityPercent: { type: [number, 'null'] }
+        priceRecommendationEligible: { type: [boolean, 'null'] }
+        fallbackReason: { type: string }
+        mlPredicted: { type: boolean }
+        predictionSource: { type: string }
+        estimateTrust: { type: string }
+        estimateWarning: { type: [string, 'null'] }
+        servingModelVersion: { type: [string, 'null'] }
+        rollout: { type: [object, 'null'], additionalProperties: true }
+        shadowComparison: { type: [object, 'null'], additionalProperties: true }
+
+    RolloutControls:
+      type: object
+      properties:
+        league: { type: string }
+        shadowMode: { type: boolean }
+        cutoverEnabled: { type: boolean }
+        candidateModelVersion: { type: [string, 'null'] }
+        incumbentModelVersion: { type: [string, 'null'] }
+        effectiveServingModelVersion: { type: [string, 'null'] }
+        updatedAt: { type: [string, 'null'], format: date-time }
+        lastAction: { type: [string, 'null'] }
+      required: [league, shadowMode, cutoverEnabled]
+
+    StashScanStatus:
+      type: object
+      properties:
+        status: { type: string, enum: [idle, running, publishing, published, failed] }
+        activeScanId: { type: [string, 'null'] }
+        publishedScanId: { type: [string, 'null'] }
+        startedAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+        publishedAt: { type: [string, 'null'], format: date-time }
+        progress: { type: object, additionalProperties: true }
+        error: { type: [string, 'null'] }
+      required: [status, activeScanId, publishedScanId]
+
+    StashStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [connected_populated, connected_empty, disconnected, session_expired, feature_unavailable]
+        connected: { type: boolean }
+        tabCount: { type: integer }
+        itemCount: { type: integer }
+        session: { type: [object, 'null'], additionalProperties: true }
+        publishedScanId: { type: [string, 'null'] }
+        publishedAt: { type: [string, 'null'], format: date-time }
+        scanStatus: { $ref: '#/components/schemas/StashScanStatus' }
+      required: [status, connected, tabCount, itemCount]
+
+    StashScanStartResponse:
+      type: object
+      properties:
+        scanId: { type: [string, 'null'] }
+        status: { type: string, enum: [running] }
+        startedAt: { type: [string, 'null'], format: date-time }
+        accountName: { type: string }
+        league: { type: string }
+        realm: { type: string }
+        deduplicated: { type: boolean }
+      required: [status, accountName, league, realm]
+
+    StashTabsResponse:
+      type: object
+      properties:
+        scanId: { type: [string, 'null'] }
+        publishedAt: { type: [string, 'null'], format: date-time }
+        isStale: { type: boolean }
+        scanStatus: { $ref: '#/components/schemas/StashScanStatus' }
+        stashTabs:
+          type: array
+          items: { type: object, additionalProperties: true }
+      required: [stashTabs]
+
+    StashItemHistoryResponse:
+      type: object
+      properties:
+        fingerprint: { type: string }
+        item: { type: object, additionalProperties: true }
+        history:
+          type: array
+          items: { type: object, additionalProperties: true }
+      required: [fingerprint, item, history]
+
+    DashboardResponse:
+      type: object
+      properties:
+        services:
+          type: array
+          items: { $ref: '#/components/schemas/Service' }
+        deployment: { type: object, additionalProperties: true }
+        summary: { type: object, additionalProperties: true }
+        topOpportunities:
+          type: array
+          items: { $ref: '#/components/schemas/ScannerRecommendation' }
+      required: [services, summary, topOpportunities]
