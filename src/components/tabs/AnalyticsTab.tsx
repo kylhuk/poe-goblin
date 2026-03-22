@@ -555,10 +555,8 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
   const datasetCoverage = history?.datasetCoverage ?? null;
   const promotions = history?.promotions ?? [];
   const runs = history?.history ?? [];
-  const modelMetrics = history?.modelMetrics ?? [];
-  const modelHistoryEntries = history?.modelHistory ?? [];
-  const routeFamilies = history?.routeFamilies ?? [];
-  const mode = history?.mode ?? status?.mode;
+  const mode = history?.mode;
+  const observability = status?.observability ?? history?.observability ?? null;
   const mdapeTrendData = qualityTrend
     .filter((point) => point.avgMdape != null)
     .map((point, index) => ({
