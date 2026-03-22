@@ -319,9 +319,8 @@ function OpportunityCard({
   recommendation: ScannerRecommendation;
   mouseGlow: (event: React.MouseEvent<HTMLElement>) => void;
 }) {
-  const displayName = recommendation.itemName || recommendation.searchHint || recommendation.itemOrMarketKey;
-  const conf = recommendation.effectiveConfidence ?? recommendation.confidence;
-  const confPct = conf != null ? `${Math.round(conf * 100)}%` : 'N/A';
+  const displayName = recommendation.itemOrMarketKey;
+  const confPct = recommendation.confidence != null ? `${Math.round(recommendation.confidence * 100)}%` : 'N/A';
 
   return (
     <Card className="card-game" onMouseMove={mouseGlow}>
@@ -329,15 +328,9 @@ function OpportunityCard({
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-sm font-sans">{displayName}</CardTitle>
           <div className="flex items-center gap-2">
-            {recommendation.freshnessMinutes != null && (
-              <span className="text-[10px] font-mono text-muted-foreground">{Math.round(recommendation.freshnessMinutes)}m ago</span>
-            )}
             <span className="text-xs font-mono text-muted-foreground">{recommendation.strategyId}</span>
           </div>
         </div>
-        {recommendation.searchHint && recommendation.searchHint !== displayName && (
-          <p className="text-[10px] text-muted-foreground font-mono truncate">{recommendation.searchHint}</p>
-        )}
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-foreground">{recommendation.whyItFired}</p>
@@ -375,17 +368,8 @@ function OpportunityCard({
           {recommendation.expectedRoi != null && (
             <span>ROI: <span className="text-foreground font-medium">{(recommendation.expectedRoi * 100).toFixed(1)}%</span></span>
           )}
-          {recommendation.liquidityScore != null && (
-            <span>Liq: <span className="text-foreground font-medium">{recommendation.liquidityScore.toFixed(2)}</span></span>
-          )}
-          {recommendation.goldCost != null && (
-            <span>Gold: <span className="text-foreground font-medium">{recommendation.goldCost.toFixed(0)}g</span></span>
-          )}
           {recommendation.executionVenue && (
             <span>Venue: <span className="text-foreground font-medium">{recommendation.executionVenue}</span></span>
-          )}
-          {recommendation.mlInfluenceReason && (
-            <span className="text-accent">ML: {recommendation.mlInfluenceReason}</span>
           )}
         </div>
       </CardContent>

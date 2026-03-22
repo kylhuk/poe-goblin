@@ -247,13 +247,6 @@ function PriceResultCard({
             </div>
           )}
 
-          {(result.route || result.league) && (
-            <p className="text-xs text-muted-foreground mt-1">
-              {result.route && <span>Route: {result.route}</span>}
-              {result.route && result.league && <span> · </span>}
-              {result.league && <span>League: {result.league}</span>}
-            </p>
-          )}
         </div>
 
         {/* Shadow comparison card */}

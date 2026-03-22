@@ -173,7 +173,6 @@ export interface RolloutControls {
   league: string;
   shadowMode: boolean;
   cutoverEnabled: boolean;
-  rollbackToIncumbent: boolean;
   candidateModelVersion: string | null;
   incumbentModelVersion: string | null;
   effectiveServingModelVersion: string | null;
@@ -486,7 +485,6 @@ function normalizeRolloutControls(raw: unknown): RolloutControls {
     league: optString(o.league) ?? '',
     shadowMode: typeof (o.shadowMode ?? o.shadow_mode) === 'boolean' ? (o.shadowMode ?? o.shadow_mode) as boolean : false,
     cutoverEnabled: typeof (o.cutoverEnabled ?? o.cutover_enabled) === 'boolean' ? (o.cutoverEnabled ?? o.cutover_enabled) as boolean : false,
-    rollbackToIncumbent: typeof (o.rollbackToIncumbent ?? o.rollback_to_incumbent) === 'boolean' ? (o.rollbackToIncumbent ?? o.rollback_to_incumbent) as boolean : false,
     candidateModelVersion: optString(o.candidateModelVersion ?? o.candidate_model_version),
     incumbentModelVersion: optString(o.incumbentModelVersion ?? o.incumbent_model_version),
     effectiveServingModelVersion: optString(o.effectiveServingModelVersion ?? o.effective_serving_model_version),
@@ -613,8 +611,6 @@ function normalizePriceCheckResponse(payload: unknown): PriceCheckResponse {
       : (typeof source.fallback_reason === 'string' ? source.fallback_reason : ''),
     fairValueP50: optNumber(source.fairValueP50 ?? source.fair_value_p50),
     fastSale24hPrice: optNumber(source.fastSale24hPrice ?? source.fast_sale_24h_price),
-    route: optString(source.route) ?? undefined,
-    league: optString(source.league) ?? undefined,
     ...normalizeTrustFields(source),
   };
 }

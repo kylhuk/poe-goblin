@@ -1192,7 +1192,7 @@ function RolloutCard() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const toggle = useCallback(async (field: 'shadowMode' | 'cutoverEnabled' | 'rollbackToIncumbent', value: boolean) => {
+  const toggle = useCallback(async (field: 'shadowMode' | 'cutoverEnabled', value: boolean) => {
     setUpdating(true);
     try {
       const updated = await updateRolloutControls({ [field]: value });
@@ -1253,15 +1253,6 @@ function RolloutCard() {
               onCheckedChange={(v) => toggle('cutoverEnabled', v)}
             />
             <Label htmlFor="cutover-enabled" className="text-xs">Cutover</Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              id="rollback-to-incumbent"
-              checked={data.rollbackToIncumbent}
-              disabled={updating}
-              onCheckedChange={(v) => toggle('rollbackToIncumbent', v)}
-            />
-            <Label htmlFor="rollback-to-incumbent" className="text-xs text-destructive">Rollback</Label>
           </div>
         </div>
 
