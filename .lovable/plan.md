@@ -1,43 +1,44 @@
 
 
-## Fix Build Errors and Enhance Frontend with Backend API
+## API Spec Alignment — Differences Found
 
-### Problems to Fix
+### 1. `updateRolloutControls` sends wrong key casing (BUG)
+**File:** `src/services/api.ts` lines 472-475
 
-**5 build errors across 4 files:**
+The apispec POST body for `/api/v1/ml/leagues/{league}/rollout` expects **camelCase** keys: `shadowMode`, `cutoverEnabled`, `rollbackToIncumbent`. But the frontend sends **snake_case**: `shadow_mode`, `cutover_enabled`, `rollback_to_incumbent`.
 
-1. **Merge conflict in `supabase/functions/api-proxy/index.ts`** (lines 122-132): Unresolved git conflict markers. Keep both approaches: rewrite set-cookie AND extract backend session header.
+**Fix:** Change body keys to camelCase.
 
-2. **Missing `publishedScanId` in `StashViewerTab.tsx`** (line 36): `EMPTY_SCAN_STATUS` is missing the required `publishedScanId: null` property.
+### 2. `MlPredictOneResponse.rollout` should be object, not string
+**File:** `src/services/api.ts` line 576
 
-3. **`as Response` type casts in `api.test.ts`** (lines 48, 109): Need `as unknown as Response` pattern since mock objects don't fully implement Response.
+The apispec defines `rollout` as `type: [object, 'null']` but the normalizer does `optString(source.rollout) ?? null`, discarding the object.
 
-4. **`fetchMock.mock.calls` typing in `api.test.ts`** (line 176): Tuple type mismatch, need explicit cast.
+**Fix:** Change to preserve the object. Update the type in `src/types/api.ts` from `rollout?: string | null` to `rollout?: Record<string, unknown> | null`.
 
-5. **`.filter` on `unknown` in `api.ts`** (line 717): Cast `leagueOptions` before calling `.filter`.
+### 3. `ScannerSummary` missing `freshnessMinutes` field
+**File:** `src/types/api.ts`
 
-### Frontend Enhancements Based on Backend API Analysis
+The apispec includes `freshnessMinutes: { type: [number, 'null'] }` on `ScannerSummary` but the frontend type doesn't have it.
 
-After reviewing the full backend route registry, I found these gaps/improvements:
+**Fix:** Add `freshnessMinutes?: number | null` to the `ScannerSummary` interface.
 
-**A. Stash Viewer: Use auth session state to skip "Connect account" blocker**
-- The `StashViewerTab` shows "Connect account" based on `stashStatus.status === 'disconnected'`, but this can fail if the status endpoint itself fails due to missing session cookie. The component should also check the `AuthContext.sessionState` to determine connectivity — if `sessionState === 'connected'`, proceed to load stash even if status returned disconnected (race condition).
+### 4. `DashboardResponse` missing `deployment` field
+**File:** `src/types/api.ts`
 
-**B. Add `analytics/opportunities` endpoint consumption**
-- Backend exposes `/api/v1/ops/analytics/opportunities` but frontend never calls it. The `OpportunitiesTab` only uses `scanner/recommendations`. Add the analytics opportunities data to enrich the Opportunities tab with aggregate statistics.
+The apispec includes `deployment: { type: object }` on `DashboardResponse`.
 
-**C. ML Rollout `POST` method support**
-- Backend supports both `GET` and `POST` on `/api/v1/ml/leagues/{league}/rollout`, but frontend uses `PUT`. Change to `POST` to match backend.
+**Fix:** Add `deployment?: Record<string, unknown>` to `DashboardResponse`.
 
-**D. Scanner recommendations sort field alignment**
-- Backend default sort is `expected_profit_per_operation_chaos` but frontend sends `expected_profit_chaos`. These may not match. Align the field names.
+### 5. `RolloutControls` type has `rollbackToIncumbent` but apispec response doesn't
+The apispec `RolloutControls` schema (GET response) doesn't include `rollbackToIncumbent` — it's only in the POST request body. The frontend type has it. This is harmless (the field just won't be present in responses), but for correctness, make it optional.
+
+**Fix:** Already optional behavior since it defaults to `false` in normalizer. No change needed.
 
 ---
 
 ### Files to Edit
 
-1. **`supabase/functions/api-proxy/index.ts`** — Resolve merge conflict (lines 122-132): keep `rewriteProxySetCookie` AND extract `x-poe-backend-session` header
-2. **`src/components/tabs/StashViewerTab.tsx`** — Add `publishedScanId: null` to `EMPTY_SCAN_STATUS`; integrate `useAuth().sessionState` to prevent false "disconnected" states
-3. **`src/services/api.test.ts`** — Fix 3 type cast errors with `as unknown as Response` and explicit array cast
-4. **`src/services/api.ts`** — Fix `.filter` on unknown type; change rollout `PUT` to `POST` to match backend
+1. **`src/services/api.ts`** — Fix rollout body keys to camelCase; fix `rollout` field normalization from `optString` to object preservation
+2. **`src/types/api.ts`** — Add `freshnessMinutes` to `ScannerSummary`; add `deployment` to `DashboardResponse`; change `rollout` type on `MlPredictOneResponse` from `string | null` to `Record<string, unknown> | null`
 
