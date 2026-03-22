@@ -1,44 +1,61 @@
 
 
-## API Spec Alignment — Differences Found
+## API Spec Alignment — Full Audit
 
-### 1. `updateRolloutControls` sends wrong key casing (BUG)
-**File:** `src/services/api.ts` lines 472-475
+### Changes detected in apispec.yml
 
-The apispec POST body for `/api/v1/ml/leagues/{league}/rollout` expects **camelCase** keys: `shadowMode`, `cutoverEnabled`, `rollbackToIncumbent`. But the frontend sends **snake_case**: `shadow_mode`, `cutover_enabled`, `rollback_to_incumbent`.
-
-**Fix:** Change body keys to camelCase.
-
-### 2. `MlPredictOneResponse.rollout` should be object, not string
-**File:** `src/services/api.ts` line 576
-
-The apispec defines `rollout` as `type: [object, 'null']` but the normalizer does `optString(source.rollout) ?? null`, discarding the object.
-
-**Fix:** Change to preserve the object. Update the type in `src/types/api.ts` from `rollout?: string | null` to `rollout?: Record<string, unknown> | null`.
-
-### 3. `ScannerSummary` missing `freshnessMinutes` field
-**File:** `src/types/api.ts`
-
-The apispec includes `freshnessMinutes: { type: [number, 'null'] }` on `ScannerSummary` but the frontend type doesn't have it.
-
-**Fix:** Add `freshnessMinutes?: number | null` to the `ScannerSummary` interface.
-
-### 4. `DashboardResponse` missing `deployment` field
-**File:** `src/types/api.ts`
-
-The apispec includes `deployment: { type: object }` on `DashboardResponse`.
-
-**Fix:** Add `deployment?: Record<string, unknown>` to `DashboardResponse`.
-
-### 5. `RolloutControls` type has `rollbackToIncumbent` but apispec response doesn't
-The apispec `RolloutControls` schema (GET response) doesn't include `rollbackToIncumbent` — it's only in the POST request body. The frontend type has it. This is harmless (the field just won't be present in responses), but for correctness, make it optional.
-
-**Fix:** Already optional behavior since it defaults to `false` in normalizer. No change needed.
+The automation endpoints (`/automation/status` and `/automation/history`) now have formal schemas instead of `{ type: object, additionalProperties: true }`. Three new schemas were added: `MlAutomationStatusResponse`, `MlAutomationHistoryResponse`, and `MlAutomationObservability`.
 
 ---
 
-### Files to Edit
+### 1. Add `MlAutomationObservability` type (NEW)
+**File:** `src/types/api.ts`
 
-1. **`src/services/api.ts`** — Fix rollout body keys to camelCase; fix `rollout` field normalization from `optString` to object preservation
-2. **`src/types/api.ts`** — Add `freshnessMinutes` to `ScannerSummary`; add `deployment` to `DashboardResponse`; change `rollout` type on `MlPredictOneResponse` from `string | null` to `Record<string, unknown> | null`
+New interface matching the spec exactly:
+- `datasetRows`, `promotedModels`, `evalRuns`, `evalSampleRows`, `evaluationAvailable` (required)
+- `latestTrainingAsOf`, `latestPromotionAt`, `latestEvalAt` (nullable)
+
+### 2. Fix `MlAutomationStatus` to match `MlAutomationStatusResponse`
+**File:** `src/types/api.ts`
+
+- **Remove** `mode` field (not in spec)
+- **Add** `observability: MlAutomationObservability` (required in spec)
+
+### 3. Fix `MlAutomationHistory` to match `MlAutomationHistoryResponse`
+**File:** `src/types/api.ts`
+
+- **Remove** `modelMetrics`, `modelHistory`, `routeFamilies` fields (not in spec)
+- **Remove** `MlModelMetric`, `MlModelHistoryEntry`, `MlRouteFamily` interfaces (no longer referenced)
+- **Add** `observability: MlAutomationObservability` (required in spec)
+
+### 4. Remove stub API methods and types not in the spec
+**File:** `src/types/api.ts` and `src/services/api.ts`
+
+The following have no corresponding endpoints in apispec.yml and are only referenced internally (no UI consumers):
+- Types: `FairValueItem`, `StaleListingOpp`, `GemState`, `HeistDrop`, `ShipmentRecommendation`, `GoldShadowData`, `SessionRecommendation`, `CharacterStats`, `GearSwapResult`, `ActivityType`, `HeistBin`, `SparklinePoint`
+- Stub methods: `getFairValueItems`, `getStaleListings`, `getGemStates`, `getHeistDrops`, `getShipmentRecommendation`, `getGoldShadowPrice`, `getSessionRecommendation`, `simulateGearSwap`
+- Remove from `ApiService` interface and from `api` object
+
+### 5. Update normalizers
+**File:** `src/services/api.ts`
+
+- `normalizeMlAutomationStatus`: Remove `mode`, add `observability` normalization
+- `normalizeMlAutomationHistory`: Remove `modelMetrics`/`modelHistory`/`routeFamilies` normalization, add `observability` normalization
+- Add new `normalizeMlAutomationObservability` helper
+
+### 6. Update UI — AnalyticsTab
+**File:** `src/components/tabs/AnalyticsTab.tsx`
+
+- **Remove** Model Metrics panel (~lines 761-792)
+- **Remove** Model Version History panel (~lines 794-823)
+- **Remove** Route Families panel (~lines 825-847)
+- **Remove** `mode` badge from `MlAutomationPanel` status display (line 561 uses `history?.mode ?? status?.mode` — now only `history?.mode`)
+- **Add** Observability panel showing `datasetRows`, `promotedModels`, `evalRuns`, `evalSampleRows`, `evaluationAvailable`, and nullable date fields — displayed in both automation status and history sections
+
+---
+
+### Files to edit
+1. `src/types/api.ts` — Add `MlAutomationObservability`, update `MlAutomationStatus` and `MlAutomationHistory`, remove unused stub types and interface methods
+2. `src/services/api.ts` — Update normalizers, remove stub methods
+3. `src/components/tabs/AnalyticsTab.tsx` — Remove 3 panels, update mode logic, add observability panel
 
