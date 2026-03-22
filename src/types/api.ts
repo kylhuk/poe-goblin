@@ -10,7 +10,7 @@ export interface Service {
   lastCrawl: string | null; // ISO timestamp
   rowsInDb: number | null;
   containerInfo: string | null;
-  type: 'crawler' | 'analytics' | 'docker' | 'worker';
+  type: string;
   allowedActions?: Array<'start' | 'stop' | 'restart'>;
 }
 
