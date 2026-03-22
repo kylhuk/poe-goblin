@@ -173,7 +173,6 @@ export interface RolloutControls {
   league: string;
   shadowMode: boolean;
   cutoverEnabled: boolean;
-  rollbackToIncumbent: boolean;
   candidateModelVersion: string | null;
   incumbentModelVersion: string | null;
   effectiveServingModelVersion: string | null;
