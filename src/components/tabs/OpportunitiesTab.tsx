@@ -104,7 +104,7 @@ function buildRequest(
 
 const OpportunitiesTab = forwardRef<HTMLDivElement, Record<string, never>>(function OpportunitiesTab(_props, ref) {
   const [recommendationResponse, setRecommendationResponse] = useState<ScannerRecommendationsResponse>(createEmptyResponse);
-  const [sort, setSort] = useState<ScannerSort>('expected_profit_chaos');
+  const [sort, setSort] = useState<ScannerSort>('expected_profit_per_operation_chaos');
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
