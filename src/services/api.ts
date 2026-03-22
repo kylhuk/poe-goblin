@@ -2,12 +2,8 @@ import type {
   ApiService,
   AppMessage,
   DashboardResponse,
-  FairValueItem,
-  GearSwapResult,
-  GemState,
-  GoldShadowData,
-  HeistDrop,
   MlAutomationHistory,
+  MlAutomationObservability,
   MlAutomationStatus,
   MlPredictOneRequest,
   MlPredictOneResponse,
@@ -24,13 +20,10 @@ import type {
   SearchHistoryResponse,
   SearchSuggestionsResponse,
   Service,
-  SessionRecommendation,
   StashItemHistoryResponse,
   StashScanStartResponse,
   StashScanStatus,
-  ShipmentRecommendation,
   StashStatus,
-  StashTab,
   StashTabsResponse,
 } from '@/types/api';
 
@@ -811,13 +804,28 @@ function optNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function normalizeMlAutomationStatus(payload: unknown): import('@/types/api').MlAutomationStatus {
+function normalizeMlAutomationObservability(raw: unknown): MlAutomationObservability {
+  const o = asObject(raw);
+  return {
+    datasetRows: optNumber(o.datasetRows ?? o.dataset_rows) ?? 0,
+    latestTrainingAsOf: optString(o.latestTrainingAsOf ?? o.latest_training_as_of),
+    promotedModels: optNumber(o.promotedModels ?? o.promoted_models) ?? 0,
+    latestPromotionAt: optString(o.latestPromotionAt ?? o.latest_promotion_at),
+    evalRuns: optNumber(o.evalRuns ?? o.eval_runs) ?? 0,
+    evalSampleRows: optNumber(o.evalSampleRows ?? o.eval_sample_rows) ?? 0,
+    latestEvalAt: optString(o.latestEvalAt ?? o.latest_eval_at),
+    evaluationAvailable: typeof (o.evaluationAvailable ?? o.evaluation_available) === 'boolean'
+      ? (o.evaluationAvailable ?? o.evaluation_available) as boolean
+      : false,
+  };
+}
+
+function normalizeMlAutomationStatus(payload: unknown): MlAutomationStatus {
   const source = asObject(payload);
   const latest = asObject(source.latestRun ?? source.latest_run);
   const hasLatest = Object.keys(latest).length > 0;
   return {
     league: optString(source.league) ?? 'Mirage',
-    mode: optString(source.mode),
     status: optString(source.status),
     activeModelVersion: optString(source.activeModelVersion ?? source.active_model_version),
     latestRun: hasLatest ? {
@@ -830,10 +838,11 @@ function normalizeMlAutomationStatus(payload: unknown): import('@/types/api').Ml
     routeHotspots: Array.isArray(source.routeHotspots ?? source.route_hotspots)
       ? (source.routeHotspots ?? source.route_hotspots) as unknown[]
       : [],
+    observability: normalizeMlAutomationObservability(source.observability),
   };
 }
 
-function normalizeMlAutomationHistory(payload: unknown): import('@/types/api').MlAutomationHistory {
+function normalizeMlAutomationHistory(payload: unknown): MlAutomationHistory {
   const source = asObject(payload);
   const historyRows = Array.isArray(source.history) ? source.history : [];
   const summary = asObject(source.summary);
@@ -842,9 +851,6 @@ function normalizeMlAutomationHistory(payload: unknown): import('@/types/api').M
   const routeMetrics = Array.isArray(source.routeMetrics ?? source.route_metrics) ? (source.routeMetrics ?? source.route_metrics) as unknown[] : [];
   const datasetCoverage = asObject(source.datasetCoverage ?? source.dataset_coverage);
   const promotions = Array.isArray(source.promotions) ? source.promotions : [];
-  const rawModelMetrics = Array.isArray(source.modelMetrics ?? source.model_metrics) ? (source.modelMetrics ?? source.model_metrics) as unknown[] : [];
-  const rawModelHistory = Array.isArray(source.modelHistory ?? source.model_history) ? (source.modelHistory ?? source.model_history) as unknown[] : [];
-  const rawRouteFamilies = Array.isArray(source.routeFamilies ?? source.route_families) ? (source.routeFamilies ?? source.route_families) as unknown[] : [];
   return {
     league: optString(source.league) ?? 'Mirage',
     mode: optString(source.mode),
@@ -927,34 +933,7 @@ function normalizeMlAutomationHistory(payload: unknown): import('@/types/api').M
         promotedAt: optString(row.promotedAt ?? row.promoted_at),
       };
     }),
-    modelMetrics: rawModelMetrics.length > 0 ? rawModelMetrics.map((entry) => {
-      const row = asObject(entry);
-      return {
-        route: optString(row.route),
-        modelVersion: optString(row.modelVersion ?? row.model_version),
-        sampleCount: optNumber(row.sampleCount ?? row.sample_count),
-        avgMdape: optNumber(row.avgMdape ?? row.avg_mdape),
-        avgIntervalCoverage: optNumber(row.avgIntervalCoverage ?? row.avg_interval_coverage),
-        recordedAt: optString(row.recordedAt ?? row.recorded_at),
-      };
-    }) : undefined,
-    modelHistory: rawModelHistory.length > 0 ? rawModelHistory.map((entry) => {
-      const row = asObject(entry);
-      return {
-        modelVersion: optString(row.modelVersion ?? row.model_version),
-        promotedAt: optString(row.promotedAt ?? row.promoted_at),
-        retiredAt: optString(row.retiredAt ?? row.retired_at),
-        runsCount: optNumber(row.runsCount ?? row.runs_count),
-      };
-    }) : undefined,
-    routeFamilies: rawRouteFamilies.length > 0 ? rawRouteFamilies.map((entry) => {
-      const row = asObject(entry);
-      return {
-        family: optString(row.family),
-        routes: Array.isArray(row.routes) ? (row.routes as string[]) : [],
-        totalSamples: optNumber(row.totalSamples ?? row.total_samples),
-      };
-    }) : undefined,
+    observability: normalizeMlAutomationObservability(source.observability),
   };
 }
 
@@ -1063,66 +1042,6 @@ export const api: ApiService = {
     });
   },
 
-  async getFairValueItems() {
-    return [];
-  },
-
-  async getStaleListings() {
-    return [];
-  },
-
-  async getGemStates() {
-    return [];
-  },
-
-  async getHeistDrops() {
-    return [];
-  },
-
-  async getShipmentRecommendation() {
-    return {
-      chosenPort: 'n/a',
-      resourceMix: {},
-      dustToAdd: 0,
-      expectedValue: 0,
-      expectedValuePerHour: 0,
-      expectedRiskLoss: 0,
-      whyThisWon: 'n/a',
-      updatedAt: new Date().toISOString(),
-    };
-  },
-
-  async getGoldShadowPrice() {
-    return {
-      chaosPerGold: 0,
-      feeInChaos: 0,
-      denominationHint: 'n/a',
-      updatedAt: new Date().toISOString(),
-    };
-  },
-
-  async getSessionRecommendation() {
-    return {
-      recommended: 'map',
-      triggerReason: 'n/a',
-      updatedAt: new Date().toISOString(),
-    };
-  },
-
-  async simulateGearSwap(_candidateItem) {
-    return {
-      current: {
-        fireRes: 0, coldRes: 0, lightningRes: 0, chaosRes: 0, spellSuppression: 0,
-        life: 0, str: 0, dex: 0, int: 0, evasionMasteryActive: false, auraFit: false,
-      },
-      simulated: {
-        fireRes: 0, coldRes: 0, lightningRes: 0, chaosRes: 0, spellSuppression: 0,
-        life: 0, str: 0, dex: 0, int: 0, evasionMasteryActive: false, auraFit: false,
-      },
-      failStates: ['Not supported'],
-      passStates: [],
-    };
-  },
 
   async priceCheck(req) {
     const league = await primaryLeague();

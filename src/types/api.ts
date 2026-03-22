@@ -14,118 +14,6 @@ export interface Service {
   allowedActions?: Array<'start' | 'stop' | 'restart'>;
 }
 
-// ========== Analytics: FairValueEngine ==========
-export interface SparklinePoint {
-  time: string;
-  value: number;
-}
-
-export interface FairValueItem {
-  id: string;
-  itemName: string;
-  fairValue: number;
-  publicStashFloor: number;
-  exchangeImpliedMid: number;
-  sparkline: SparklinePoint[];
-  spread: number;
-  liquidity: 'high' | 'medium' | 'low';
-  confidence: number; // 0-100
-  updatedAt: string;
-}
-
-// ========== Analytics: StaleListingArb ==========
-export interface StaleListingOpp {
-  id: string;
-  itemName: string;
-  askPrice: number;
-  fairValue: number;
-  discountPct: number;
-  firstSeen: string;
-  repricingCount: number;
-  sellerDormancyScore: number; // 0-100
-  expectedNetMargin: number;
-  expectedSaleTime: string; // e.g. "~12 min"
-  route: 'exchange unwind' | 'public relist';
-  grade: 'green' | 'yellow' | 'red';
-}
-
-// ========== Analytics: GemValueModel ==========
-export interface GemState {
-  id: string;
-  gemName: string;
-  level: number;
-  quality: number;
-  corrupted: boolean;
-  vaalState: string | null;
-  imbuedOutcome: string | null;
-  supportPoolSize: number;
-  currentAsk: number;
-  modelFairValue: number;
-  anomalyScore: number; // 0-100
-  comparables: { state: string; price: number }[];
-  updatedAt: string;
-}
-
-// ========== Analytics: HeistRouter ==========
-export type HeistBin = 'sell fast' | 'premium bin' | 'run' | 'ignore';
-export interface HeistDrop {
-  id: string;
-  itemName: string;
-  itemClass: string;
-  bin: HeistBin;
-  estimatedValueBand: string;
-  reason: string;
-}
-
-// ========== Analytics: ShipmentOptimizer ==========
-export interface ShipmentRecommendation {
-  chosenPort: string;
-  resourceMix: Record<string, number>;
-  dustToAdd: number;
-  expectedValue: number;
-  expectedValuePerHour: number;
-  expectedRiskLoss: number;
-  whyThisWon: string;
-  updatedAt: string;
-}
-
-// ========== Analytics: GoldShadowPrice ==========
-export interface GoldShadowData {
-  chaosPerGold: number;
-  feeInChaos: number;
-  denominationHint: string;
-  updatedAt: string;
-}
-
-// ========== Analytics: SessionController ==========
-export type ActivityType = 'map' | 'delve' | 'trade batch' | 'shipment prep';
-export interface SessionRecommendation {
-  recommended: ActivityType;
-  triggerReason: string;
-  updatedAt: string;
-}
-
-// ========== Analytics: GearSwapSimulator ==========
-export interface CharacterStats {
-  fireRes: number;
-  coldRes: number;
-  lightningRes: number;
-  chaosRes: number;
-  spellSuppression: number;
-  life: number;
-  str: number;
-  dex: number;
-  int: number;
-  evasionMasteryActive: boolean;
-  auraFit: boolean;
-}
-
-export interface GearSwapResult {
-  current: CharacterStats;
-  simulated: CharacterStats;
-  failStates: string[];
-  passStates: string[];
-}
 
 // ========== Price Check ==========
 export interface PriceCheckRequest {
@@ -582,10 +470,21 @@ export interface DashboardResponse {
   deployment?: Record<string, unknown>;
 }
 
+// ========== ML Automation Observability ==========
+export interface MlAutomationObservability {
+  datasetRows: number;
+  latestTrainingAsOf: string | null;
+  promotedModels: number;
+  latestPromotionAt: string | null;
+  evalRuns: number;
+  evalSampleRows: number;
+  latestEvalAt: string | null;
+  evaluationAvailable: boolean;
+}
+
 // ========== ML Automation ==========
 export interface MlAutomationStatus {
   league: string;
-  mode?: string | null;
   status?: string | null;
   activeModelVersion: string | null;
   latestRun?: {
@@ -595,7 +494,8 @@ export interface MlAutomationStatus {
     updatedAt?: string | null;
   } | null;
   promotionVerdict?: string | null;
-  routeHotspots?: unknown[];
+  routeHotspots: unknown[];
+  observability: MlAutomationObservability;
 }
 
 export interface MlAutomationHistoryRun {
@@ -621,31 +521,9 @@ export interface MlAutomationHistoryTrendPoint {
   activeModelVersion: string | null;
 }
 
-export interface MlModelMetric {
-  route: string | null;
-  modelVersion: string | null;
-  sampleCount: number | null;
-  avgMdape: number | null;
-  avgIntervalCoverage: number | null;
-  recordedAt: string | null;
-}
-
-export interface MlModelHistoryEntry {
-  modelVersion: string | null;
-  promotedAt: string | null;
-  retiredAt: string | null;
-  runsCount: number | null;
-}
-
-export interface MlRouteFamily {
-  family: string | null;
-  routes: string[];
-  totalSamples: number | null;
-}
-
 export interface MlAutomationHistory {
   league: string;
-  mode?: string | null;
+  mode: string | null;
   history: MlAutomationHistoryRun[];
   summary: {
     activeModelVersion: string | null;
@@ -688,9 +566,7 @@ export interface MlAutomationHistory {
     modelVersion: string | null;
     promotedAt: string | null;
   }>;
-  modelMetrics?: MlModelMetric[];
-  modelHistory?: MlModelHistoryEntry[];
-  routeFamilies?: MlRouteFamily[];
+  observability: MlAutomationObservability;
 }
 
 // ========== API Service Interface ==========
@@ -709,15 +585,6 @@ export interface ApiService {
   startService(id: string): Promise<void>;
   stopService(id: string): Promise<void>;
   restartService(id: string): Promise<void>;
-
-  getFairValueItems(): Promise<FairValueItem[]>;
-  getStaleListings(): Promise<StaleListingOpp[]>;
-  getGemStates(): Promise<GemState[]>;
-  getHeistDrops(): Promise<HeistDrop[]>;
-  getShipmentRecommendation(): Promise<ShipmentRecommendation>;
-  getGoldShadowPrice(): Promise<GoldShadowData>;
-  getSessionRecommendation(): Promise<SessionRecommendation>;
-  simulateGearSwap(candidateItem: string): Promise<GearSwapResult>;
 
   priceCheck(req: PriceCheckRequest): Promise<PriceCheckResponse>;
   mlPredictOne(req: MlPredictOneRequest): Promise<MlPredictOneResponse>;
