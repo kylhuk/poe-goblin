@@ -181,7 +181,7 @@ type ContractPayload = {
 
 import { logApiError } from './apiErrorLog';
 import { supabase } from '@/integrations/supabase/client';
-import { setPoeBackendSession, getPoeBackendSession } from '@/services/auth';
+
 
 let cachedPrimaryLeague: string | null = null;
 
