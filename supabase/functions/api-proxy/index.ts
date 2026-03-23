@@ -85,11 +85,15 @@ Deno.serve(async (req) => {
   try {
     const body = req.method !== "GET" && req.method !== "HEAD" ? await req.text() : undefined;
 
+    console.log(`[api-proxy] ${req.method} ${targetUrl}`);
+
     const backendRes = await fetch(targetUrl, {
       method: req.method,
       headers: forwardHeaders,
       body,
     });
+
+    console.log(`[api-proxy] backend responded ${backendRes.status}`);
 
     const responseHeaders = new Headers(corsHeaders);
     responseHeaders.set("Content-Type", backendRes.headers.get("Content-Type") || "application/json");
@@ -106,6 +110,7 @@ Deno.serve(async (req) => {
       headers: responseHeaders,
     });
   } catch (err) {
+    console.error(`[api-proxy] fetch error: ${err instanceof Error ? err.message : err}`);
     return new Response(
       JSON.stringify({ error: "Backend request failed", message: err instanceof Error ? err.message : "Unknown error" }),
       { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
