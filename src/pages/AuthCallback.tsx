@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/services/auth';
-import { authProxyFetch, POE_OAUTH_MESSAGE } from '@/services/authProxy';
+import { authProxyFetch, persistOAuthRelayResult, POE_OAUTH_MESSAGE } from '@/services/authProxy';
 
 type CallbackState = 'loading' | 'success' | 'error';
 
@@ -12,6 +12,7 @@ const AuthCallback = () => {
   const { refreshSession } = useAuth();
 
   useEffect(() => {
+    let cancelled = false;
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const stateParam = params.get('state');
@@ -27,6 +28,12 @@ const AuthCallback = () => {
     };
 
     if (error) {
+      persistOAuthRelayResult({
+        type: POE_OAUTH_MESSAGE,
+        state: stateParam,
+        status: 'error',
+        message: errorDescription || error,
+      });
       setState('error');
       setMessage(errorDescription || error);
       notifyOpener('error', errorDescription || error);
@@ -34,6 +41,11 @@ const AuthCallback = () => {
     }
 
     if (!code || !stateParam) {
+      persistOAuthRelayResult({
+        type: POE_OAUTH_MESSAGE,
+        status: 'error',
+        message: 'Missing OAuth parameters',
+      });
       setState('error');
       setMessage('Missing OAuth parameters');
       notifyOpener('error', 'Missing OAuth parameters');
@@ -48,7 +60,34 @@ const AuthCallback = () => {
           throw new Error(body.message || body.error || `Callback failed (${response.status})`);
         }
 
-        await refreshSession();
+        const body = await response.json().catch(() => ({}));
+
+        let confirmed = null;
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const session = await refreshSession();
+          if (session && session.status === 'connected' && session.accountName) {
+            confirmed = session;
+            break;
+          }
+          if (attempt < 4) {
+            await new Promise((resolve) => window.setTimeout(resolve, 200));
+          }
+        }
+
+        if (!confirmed) {
+          throw new Error('Path of Exile session was not confirmed');
+        }
+
+        persistOAuthRelayResult({
+          type: POE_OAUTH_MESSAGE,
+          state: stateParam,
+          status: 'success',
+          accountName: confirmed.accountName,
+          expiresAt: confirmed.expiresAt ?? body.expiresAt ?? null,
+          message: 'Path of Exile connected. Closing window…',
+        });
+
+        if (cancelled) return;
         setState('success');
         setMessage('Path of Exile connected. Closing window…');
         notifyOpener('success');
@@ -58,7 +97,14 @@ const AuthCallback = () => {
           navigate('/', { replace: true });
         }, 400);
       } catch (err) {
+        if (cancelled) return;
         const detail = err instanceof Error ? err.message : 'Login failed';
+        persistOAuthRelayResult({
+          type: POE_OAUTH_MESSAGE,
+          state: stateParam,
+          status: 'error',
+          message: detail,
+        });
         setState('error');
         setMessage(detail);
         notifyOpener('error', detail);
@@ -66,6 +112,9 @@ const AuthCallback = () => {
     };
 
     void relay();
+    return () => {
+      cancelled = true;
+    };
   }, [navigate, refreshSession]);
 
   return (
@@ -82,6 +131,7 @@ const AuthCallback = () => {
           <>
             <p className="text-destructive text-sm font-mono">{message}</p>
             <button
+              type="button"
               onClick={() => navigate('/', { replace: true })}
               className="text-xs text-muted-foreground hover:text-foreground underline transition-colors"
             >
@@ -95,4 +145,3 @@ const AuthCallback = () => {
 };
 
 export default AuthCallback;
-

@@ -2,7 +2,13 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { authProxyFetch, getOAuthPopupFeatures, POE_OAUTH_MESSAGE } from './authProxy';
+import {
+  authProxyFetch,
+  consumeOAuthRelayResult,
+  getOAuthPopupFeatures,
+  POE_OAUTH_MESSAGE,
+  type OAuthRelayResult,
+} from './authProxy';
 import { logApiError } from './apiErrorLog';
 
 export interface AuthUser {
@@ -72,6 +78,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userRole, setUserRole] = useState<UserRole>('public');
   const popupRef = useRef<Window | null>(null);
   const popupPollRef = useRef<number | null>(null);
+  const pendingOAuthStateRef = useRef<string | null>(null);
+  const oauthResultPollRef = useRef<number | null>(null);
 
   const checkApprovalAndRole = useCallback(async (userId: string) => {
     const { data: approval } = await supabase
@@ -146,6 +154,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return payload;
   }, []);
 
+  const clearOAuthPollers = useCallback(() => {
+    if (popupPollRef.current !== null) {
+      window.clearInterval(popupPollRef.current);
+      popupPollRef.current = null;
+    }
+    if (oauthResultPollRef.current !== null) {
+      window.clearInterval(oauthResultPollRef.current);
+      oauthResultPollRef.current = null;
+    }
+  }, []);
+
+  const handleOAuthRelayResult = useCallback(
+    async (result: OAuthRelayResult | null) => {
+      if (!result || result.type !== POE_OAUTH_MESSAGE) {
+        return;
+      }
+      if (pendingOAuthStateRef.current && result.state && result.state !== pendingOAuthStateRef.current) {
+        return;
+      }
+
+      clearOAuthPollers();
+      popupRef.current = null;
+      pendingOAuthStateRef.current = null;
+
+      if (result.status !== 'success') {
+        toast.dismiss('poe-oauth');
+        toast.error(result.message || 'Path of Exile login failed');
+        return;
+      }
+
+      if (result.accountName) {
+        setUser({ accountName: result.accountName });
+        setSessionState('connected');
+      } else {
+        const session = await refreshSession();
+        if (session.status !== 'connected' || !session.accountName) {
+          toast.dismiss('poe-oauth');
+          toast.error('Path of Exile session was not confirmed');
+          return;
+        }
+      }
+
+      toast.dismiss('poe-oauth');
+      toast.success('Path of Exile connected');
+    },
+    [clearOAuthPollers, refreshSession],
+  );
+
   useEffect(() => {
     if (!supabaseReady || !isApproved) {
       setIsLoading(false);
@@ -155,36 +211,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshSession, supabaseReady, isApproved]);
 
   useEffect(() => {
-    const clearPopupPoll = () => {
-      if (popupPollRef.current !== null) {
-        window.clearInterval(popupPollRef.current);
-        popupPollRef.current = null;
-      }
-    };
-
     const handleMessage = async (event: MessageEvent) => {
       if (event.origin !== window.location.origin || event.data?.type !== POE_OAUTH_MESSAGE) {
         return;
       }
+      await handleOAuthRelayResult(event.data as OAuthRelayResult);
+    };
 
-      clearPopupPoll();
-      popupRef.current = null;
-
-      if (event.data.status !== 'success') {
-        toast.error(event.data.message || 'Path of Exile login failed');
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== 'poe-oauth-result' || !event.newValue) {
         return;
       }
-
-      await refreshSession();
-      toast.success('Path of Exile connected');
+      try {
+        const parsed = JSON.parse(event.newValue) as OAuthRelayResult;
+        void handleOAuthRelayResult(parsed);
+      } catch {
+        // ignore
+      }
     };
 
     window.addEventListener('message', handleMessage);
+    window.addEventListener('storage', handleStorage);
     return () => {
-      clearPopupPoll();
+      clearOAuthPollers();
       window.removeEventListener('message', handleMessage);
+      window.removeEventListener('storage', handleStorage);
     };
-  }, [refreshSession]);
+  }, [clearOAuthPollers, handleOAuthRelayResult]);
 
   const login = useCallback(async () => {
     if (popupRef.current && !popupRef.current.closed) {
@@ -209,29 +262,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const authorizeUrl = data.authorizeUrl || data.authorize_url || data.url;
       if (!authorizeUrl) throw new Error('No authorize URL returned from backend');
 
+      try {
+        const parsed = new URL(authorizeUrl, window.location.origin);
+        pendingOAuthStateRef.current = parsed.searchParams.get('state');
+      } catch {
+        pendingOAuthStateRef.current = null;
+      }
+
       popup.location.href = authorizeUrl;
       popup.focus();
 
-      if (popupPollRef.current !== null) {
-        window.clearInterval(popupPollRef.current);
-      }
+      if (popupPollRef.current !== null) window.clearInterval(popupPollRef.current);
+      if (oauthResultPollRef.current !== null) window.clearInterval(oauthResultPollRef.current);
 
       popupPollRef.current = window.setInterval(() => {
         if (popupRef.current && popupRef.current.closed) {
-          window.clearInterval(popupPollRef.current ?? undefined);
-          popupPollRef.current = null;
+          clearOAuthPollers();
           popupRef.current = null;
+          pendingOAuthStateRef.current = null;
           toast.dismiss('poe-oauth');
         }
       }, 500);
+
+      oauthResultPollRef.current = window.setInterval(() => {
+        const result = consumeOAuthRelayResult();
+        if (result) {
+          void handleOAuthRelayResult(result);
+        }
+      }, 250);
     } catch (err) {
       popup.close();
       popupRef.current = null;
+      pendingOAuthStateRef.current = null;
+      clearOAuthPollers();
       toast.dismiss('poe-oauth');
       logApiError({ path: '/api/v1/auth/login', errorCode: 'login_error', message: err instanceof Error ? err.message : 'Login failed' });
       toast.error(err instanceof Error ? err.message : 'Login failed');
     }
-  }, []);
+  }, [clearOAuthPollers, handleOAuthRelayResult]);
 
   const logout = useCallback(async () => {
     try {
@@ -270,4 +338,3 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     </AuthContext.Provider>
   );
 };
-

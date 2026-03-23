@@ -8,7 +8,9 @@ const OAuthCallbackGate: React.FC<{ children: React.ReactNode }> = ({ children }
   const location = useLocation();
   const params = new URLSearchParams(location.search);
 
-  if (params.has('code') && params.has('state') && location.pathname !== '/auth/callback') {
+  const hasOAuthResponse = params.has('error') || (params.has('code') && params.has('state'));
+
+  if (hasOAuthResponse && location.pathname !== '/auth/callback') {
     return <Navigate to={`/auth/callback${location.search}`} replace />;
   }
 
