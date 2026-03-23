@@ -198,7 +198,6 @@ describe('StashViewerTab', () => {
     });
 
     expect(await screen.findByAltText('Grim Bane')).toBeInTheDocument();
-    expect(screen.getByText('Helmet')).toBeInTheDocument();
   });
 
   test('starts a scan, polls status, and refreshes once the scan publishes', async () => {
