@@ -257,7 +257,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       const res = await authProxyFetch('/login');
-      if (!res.ok) throw new Error(`Login request failed (${res.status})`);
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        const detail = `Login request failed (${res.status})${body ? `: ${body}` : ''}`;
+        // Show error inside the popup instead of closing it
+        try {
+          popup.document.open();
+          popup.document.write(`<!DOCTYPE html><html><head><title>Login Error</title><style>body{background:#1a1a2e;color:#e0e0e0;font-family:monospace;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:1rem;text-align:center}div{max-width:400px}h2{color:#ff6b6b}pre{background:#0d0d1a;padding:1rem;border-radius:8px;white-space:pre-wrap;word-break:break-all;font-size:0.85rem}button{margin-top:1rem;padding:0.5rem 1.5rem;background:#4a4a8a;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.9rem}button:hover{background:#5a5a9a}</style></head><body><div><h2>Backend Unreachable</h2><p>The PoE trade backend returned an error.</p><pre>${detail.replace(/</g, '&lt;')}</pre><p style="color:#888;font-size:0.8rem">This usually means the backend at api.poe.lama-lan.ch is down or unreachable.</p><button onclick="window.close()">Close</button></div></body></html>`);
+          popup.document.close();
+        } catch {
+          popup.close();
+        }
+        popupRef.current = null;
+        pendingOAuthStateRef.current = null;
+        clearOAuthPollers();
+        toast.dismiss('poe-oauth');
+        logApiError({ path: '/api/v1/auth/login', errorCode: 'login_error', message: detail });
+        toast.error('Backend unreachable — check the popup for details', { duration: 8000 });
+        return;
+      }
       const data = await res.json();
       const authorizeUrl = data.authorizeUrl || data.authorize_url || data.url;
       if (!authorizeUrl) throw new Error('No authorize URL returned from backend');
@@ -291,13 +309,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }, 250);
     } catch (err) {
-      popup.close();
+      // Show error inside popup instead of silently closing
+      try {
+        const detail = err instanceof Error ? err.message : 'Login failed';
+        popup.document.open();
+        popup.document.write(`<!DOCTYPE html><html><head><title>Login Error</title><style>body{background:#1a1a2e;color:#e0e0e0;font-family:monospace;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:1rem;text-align:center}div{max-width:400px}h2{color:#ff6b6b}pre{background:#0d0d1a;padding:1rem;border-radius:8px;white-space:pre-wrap;word-break:break-all;font-size:0.85rem}button{margin-top:1rem;padding:0.5rem 1.5rem;background:#4a4a8a;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.9rem}button:hover{background:#5a5a9a}</style></head><body><div><h2>Login Error</h2><pre>${detail.replace(/</g, '&lt;')}</pre><button onclick="window.close()">Close</button></div></body></html>`);
+        popup.document.close();
+      } catch {
+        popup.close();
+      }
       popupRef.current = null;
       pendingOAuthStateRef.current = null;
       clearOAuthPollers();
       toast.dismiss('poe-oauth');
       logApiError({ path: '/api/v1/auth/login', errorCode: 'login_error', message: err instanceof Error ? err.message : 'Login failed' });
-      toast.error(err instanceof Error ? err.message : 'Login failed');
+      toast.error(err instanceof Error ? err.message : 'Login failed', { duration: 8000 });
     }
   }, [clearOAuthPollers, handleOAuthRelayResult]);
 
