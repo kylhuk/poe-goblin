@@ -875,6 +875,10 @@ function normalizeMlAutomationHistory(payload: unknown): MlAutomationHistory {
 
 
 export const api: ApiService = {
+  async getHealthz() {
+    return request<HealthResponse>('/healthz');
+  },
+
   async getDashboard() {
     return request<DashboardResponse>('/api/v1/ops/dashboard');
   },
