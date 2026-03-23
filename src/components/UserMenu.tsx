@@ -24,12 +24,16 @@ const UserMenu = () => {
 
   if (isLoading) return null;
 
+  const navigate = useNavigate();
+
   if (!isAuthenticated) {
     return (
-      <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={handleOAuthLogin}>
-        <ExternalLink className="mr-2 h-3.5 w-3.5" />
-        Connect Path of Exile
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={() => navigate('/login')}>
+          <LogIn className="mr-1.5 h-3.5 w-3.5" />
+          Sign In
+        </Button>
+      </div>
     );
   }
 
