@@ -56,5 +56,5 @@ def test_qa_up_stays_on_base_compose_files() -> None:
 
 def test_dockerfile_uses_separate_runtime_dependency_manifest() -> None:
     dockerfile = repo_read("Dockerfile")
-    assert "requirements-runtime.txt" in dockerfile
-    assert "COPY poe_trade ./poe_trade" in dockerfile
+    assert "COPY requirements-runtime.txt ./" in dockerfile
+    assert "pip install --no-cache-dir -r requirements-runtime.txt" in dockerfile
