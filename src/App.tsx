@@ -8,6 +8,7 @@ import Index from "./pages/Index.tsx";
 import AuthCallback from "./pages/AuthCallback.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import Login from "./pages/Login.tsx";
+import OAuthCallbackGate from "./components/OAuthCallbackGate.tsx";
 
 const queryClient = new QueryClient();
 
@@ -47,13 +48,15 @@ const AppGate = () => {
   if (!isAuthenticated) {
     return (
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/auth/callback" element={<AuthCallback />} />
-          <Route path="/:tab/:subtab?" element={<Index />} />
-          <Route path="/" element={<Navigate to={`/${defaultTab}`} replace />} />
-          <Route path="*" element={<Navigate to={`/${defaultTab}`} replace />} />
-        </Routes>
+        <OAuthCallbackGate>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/:tab/:subtab?" element={<Index />} />
+            <Route path="/" element={<Navigate to={`/${defaultTab}`} replace />} />
+            <Route path="*" element={<Navigate to={`/${defaultTab}`} replace />} />
+          </Routes>
+        </OAuthCallbackGate>
       </BrowserRouter>
     );
   }
@@ -64,12 +67,14 @@ const AppGate = () => {
 
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/auth/callback" element={<AuthCallback />} />
-        <Route path="/:tab/:subtab?" element={<Index />} />
-        <Route path="/" element={<Navigate to={`/${defaultTab}`} replace />} />
-        <Route path="*" element={<NotFound />} />
-      </Routes>
+      <OAuthCallbackGate>
+        <Routes>
+          <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route path="/:tab/:subtab?" element={<Index />} />
+          <Route path="/" element={<Navigate to={`/${defaultTab}`} replace />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </OAuthCallbackGate>
     </BrowserRouter>
   );
 };

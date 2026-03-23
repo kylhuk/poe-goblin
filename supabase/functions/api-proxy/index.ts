@@ -76,7 +76,6 @@ Deno.serve(async (req) => {
 
   const forwardHeaders = buildForwardHeaders({
     existingCookie: req.headers.get("cookie") || "",
-    backendSession: req.headers.get("x-poe-backend-session"),
   });
   if (apiKey) {
     forwardHeaders["Authorization"] = `Bearer ${apiKey}`;
@@ -94,15 +93,10 @@ Deno.serve(async (req) => {
     const responseHeaders = new Headers(corsHeaders);
     responseHeaders.set("Content-Type", backendRes.headers.get("Content-Type") || "application/json");
 
-    // Extract poe_session cookie from backend set-cookie and expose it as a custom header
+    // Forward set-cookie from backend
     const setCookie = backendRes.headers.get("set-cookie");
     if (setCookie) {
       responseHeaders.set("set-cookie", rewriteProxySetCookie(setCookie));
-      const match = setCookie.match(/poe_session=([^;]+)/);
-      if (match) {
-        responseHeaders.set("x-poe-backend-session", match[1]);
-        responseHeaders.set("Access-Control-Expose-Headers", "x-poe-backend-session");
-      }
     }
 
     const responseBody = await backendRes.arrayBuffer();
