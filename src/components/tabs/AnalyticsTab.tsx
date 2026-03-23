@@ -23,7 +23,6 @@ import {
   getAnalyticsScanner, 
   getAnalyticsAlerts, 
   getAnalyticsBacktests, 
-  getAnalyticsMl, 
   getAnalyticsPricingOutliers,
   getAnalyticsReport,
   getAnalyticsSearchHistory,
@@ -32,9 +31,6 @@ import {
   type ScannerRow, 
   type AlertRow, 
   type BacktestAnalytics, 
-  type MlAnalytics, 
-  type MlStatus,
-  type MlRouteHotspot,
   type ReportAnalytics,
   type ReportData,
   type GoldDiagnosticsResponse,
@@ -259,287 +255,46 @@ function humanize(s: string): string {
 }
 
 function MlPanel() {
-  const [data, setData] = useState<MlAnalytics | null>(null);
+  const [status, setStatus] = useState<MlAutomationStatus | null>(null);
+  const [history, setHistory] = useState<MlAutomationHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [automationStatus, setAutomationStatus] = useState<MlAutomationStatus | null>(null);
-  const [automationHistory, setAutomationHistory] = useState<MlAutomationHistory | null>(null);
-  const [automationError, setAutomationError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
-    getAnalyticsMl()
-      .then(setData)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load ML analytics'));
-
+    setLoading(true);
     Promise.all([api.getMlAutomationStatus(), api.getMlAutomationHistory()])
-      .then(([status, history]) => {
-        setAutomationStatus(status);
-        setAutomationHistory(history);
+      .then(([nextStatus, nextHistory]) => {
+        setStatus(nextStatus);
+        setHistory(nextHistory);
+        setError(null);
       })
-      .catch(err => setAutomationError(err instanceof Error ? err.message : 'Failed to load automation data'));
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Failed to load live ML data');
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, []);
-  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
+
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 5_000);
+    return () => clearInterval(iv);
+  }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
-  if (!data?.status) {
-    return <RenderState kind="empty" message="No ML data available" />;
-  }
+  if (loading && !status && !history) return <RenderState kind="loading" message="Loading live ML data…" />;
 
-  const s = data.status as MlStatus;
-  const cmp = s.candidate_vs_incumbent ?? null;
-
-  return (
-    <div className="space-y-4">
-      {/* Warmup notice */}
-      {s.warmup && (
-        <Card className="card-game border-sky-500/30">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3 text-xs">
-              <Badge className="bg-sky-500/20 text-sky-400 border-sky-500/30">Warmup</Badge>
-              <span className="text-muted-foreground">{s.warmup.message || 'Model warming up'}</span>
-              {s.warmup.runs_needed != null && s.warmup.runs_completed != null && (
-                <span className="font-mono text-foreground ml-auto">
-                  {s.warmup.runs_completed}/{s.warmup.runs_needed} runs
-                </span>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Status Header */}
-      <Card className="card-game">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-sans">Training Run</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 text-xs">
-            <div>
-              <span className="text-muted-foreground">League</span>
-              <p className="font-mono text-foreground">{s.league}</p>
-            </div>
-            <div className="col-span-2 sm:col-span-3">
-              <p className="text-[11px] text-muted-foreground">
-                Status reflects whether training and evaluation finished. Verdict shows whether the latest candidate replaced the incumbent model.
-              </p>
-            </div>
-            <div className="sm:col-span-2">
-              <span className="text-muted-foreground">Run ID</span>
-              <p className="font-mono text-foreground truncate">{s.run}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Status</span>
-              <div className="mt-0.5"><Badge className={statusColor(s.status)}>{humanize(s.status)}</Badge></div>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Verdict</span>
-              <div className="mt-0.5"><Badge className={verdictColor(s.promotion_verdict)}>{humanize(s.promotion_verdict)}</Badge></div>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Active Model</span>
-              <p className="font-mono text-foreground">{s.active_model_version ?? 'None'}</p>
-            </div>
-            <div className="col-span-2 sm:col-span-3">
-              <span className="text-muted-foreground">Stop Reason</span>
-              <p className="font-mono text-foreground">{humanize(s.stop_reason)}</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Metrics */}
-      <div className="grid grid-cols-2 gap-4">
-        <Card className="card-game">
-          <CardContent className="p-4 text-center">
-            <span className="text-xs text-muted-foreground">Avg MDAPE</span>
-            <p className="text-lg font-mono text-foreground">{s.latest_avg_mdape != null ? (s.latest_avg_mdape * 100).toFixed(1) : '—'}%</p>
-          </CardContent>
-        </Card>
-        <Card className="card-game">
-          <CardContent className="p-4 text-center">
-            <span className="text-xs text-muted-foreground">Interval Coverage</span>
-            <p className="text-lg font-mono text-foreground">{s.latest_avg_interval_coverage != null ? (s.latest_avg_interval_coverage * 100).toFixed(1) : '—'}%</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Promotion Policy */}
-      {s.promotion_policy && (
-        <Card className="card-game">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-sans">Promotion Gates</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-xs">
-              {s.promotion_policy.mdape_ceiling != null && (
-                <div>
-                  <span className="text-muted-foreground">MDAPE Ceiling</span>
-                  <p className="font-mono text-foreground">{(s.promotion_policy.mdape_ceiling * 100).toFixed(1)}%</p>
-                </div>
-              )}
-              {s.promotion_policy.coverage_floor != null && (
-                <div>
-                  <span className="text-muted-foreground">Coverage Floor</span>
-                  <p className="font-mono text-foreground">{(s.promotion_policy.coverage_floor * 100).toFixed(1)}%</p>
-                </div>
-              )}
-              {s.promotion_policy.min_rows != null && (
-                <div>
-                  <span className="text-muted-foreground">Min Rows</span>
-                  <p className="font-mono text-foreground">{s.promotion_policy.min_rows.toLocaleString()}</p>
-                </div>
-              )}
-              {Object.entries(s.promotion_policy)
-                .filter(([k]) => !['mdape_ceiling', 'coverage_floor', 'min_rows', 'mdapeCeiling', 'coverageFloor', 'minRows'].includes(k))
-                .map(([k, v]) => (
-                  <div key={k}>
-                    <span className="text-muted-foreground">{humanize(k)}</span>
-                    <p className="font-mono text-foreground">{typeof v === 'number' ? (v < 1 ? (v * 100).toFixed(1) + '%' : v.toLocaleString()) : String(v ?? '—')}</p>
-                  </div>
-                ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Candidate vs Incumbent */}
-      {cmp && (
-        <Card className="card-game">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-sans">Candidate vs Incumbent</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs">Metric</TableHead>
-                  <TableHead className="text-xs">Candidate</TableHead>
-                  <TableHead className="text-xs">Incumbent</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow>
-                  <TableCell className="text-xs text-muted-foreground">Run ID</TableCell>
-                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.candidate_run_id || '—'}</TableCell>
-                  <TableCell className="text-xs font-mono truncate max-w-[140px]">{cmp.incumbent_run_id || '—'}</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="text-xs text-muted-foreground">Avg MDAPE</TableCell>
-                  <TableCell className="text-xs font-mono">{cmp.candidate_avg_mdape != null ? (cmp.candidate_avg_mdape * 100).toFixed(1) + '%' : '—'}</TableCell>
-                  <TableCell className="text-xs font-mono">{cmp.incumbent_avg_mdape != null ? (cmp.incumbent_avg_mdape * 100).toFixed(1) + '%' : '—'}</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="text-xs text-muted-foreground">Interval Coverage</TableCell>
-                  <TableCell className="text-xs font-mono">{cmp.candidate_avg_interval_coverage != null ? (cmp.candidate_avg_interval_coverage * 100).toFixed(1) + '%' : '—'}</TableCell>
-                  <TableCell className="text-xs font-mono">{cmp.incumbent_avg_interval_coverage != null ? (cmp.incumbent_avg_interval_coverage * 100).toFixed(1) + '%' : '—'}</TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-            <div className="flex items-center gap-6 px-4 py-3 border-t border-border text-xs">
-              <span className="text-muted-foreground">MDAPE Δ: <span className="font-mono text-foreground">{cmp.mdape_improvement != null ? (cmp.mdape_improvement * 100).toFixed(1) + '%' : '—'}</span></span>
-              <span className="text-muted-foreground">Coverage Δ: <span className="font-mono text-foreground">{cmp.coverage_delta != null ? (cmp.coverage_delta * 100).toFixed(1) + '%' : '—'}</span></span>
-              <span className="text-muted-foreground flex items-center gap-1">
-                Floor OK: {cmp.coverage_floor_ok
-                  ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                  : <XCircle className="h-3.5 w-3.5 text-destructive" />}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Route Hotspots */}
-      {s.route_hotspots.length > 0 ? (
-        <Card className="card-game">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-sans">Route Hotspots</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs">Route</TableHead>
-                  <TableHead className="text-xs">MDAPE</TableHead>
-                  <TableHead className="text-xs">Coverage</TableHead>
-                  <TableHead className="text-xs">Samples</TableHead>
-                  <TableHead className="text-xs">Anomaly</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {s.route_hotspots.map((h: MlRouteHotspot, i: number) => (
-                  <TableRow key={i}>
-                    <TableCell className="text-xs font-mono">{h.route ?? '—'}</TableCell>
-                    <TableCell className="text-xs font-mono">{h.avg_mdape != null ? (h.avg_mdape * 100).toFixed(1) + '%' : '—'}</TableCell>
-                    <TableCell className="text-xs font-mono">{h.avg_interval_coverage != null ? (h.avg_interval_coverage * 100).toFixed(1) + '%' : '—'}</TableCell>
-                    <TableCell className="text-xs font-mono">{h.sample_count?.toLocaleString() ?? '—'}</TableCell>
-                    <TableCell className="text-xs">
-                      {h.anomaly === true
-                        ? <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[10px]">Yes</Badge>
-                        : h.anomaly === false
-                          ? <span className="text-muted-foreground">No</span>
-                          : <span className="text-muted-foreground">—</span>}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      ) : (
-        <p className="text-xs text-muted-foreground text-center py-2">No route hotspots</p>
-      )}
-
-      {/* Route Decisions */}
-      {(s as MlStatus & { route_decisions: unknown[] }).route_decisions?.length > 0 && (
-        <Card className="card-game">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-sans">Route Decisions</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs">Route</TableHead>
-                  <TableHead className="text-xs">Decision</TableHead>
-                  <TableHead className="text-xs">Reason</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {((s as MlStatus & { route_decisions: unknown[] }).route_decisions).map((rd: unknown, i: number) => {
-                  const d = rd as Record<string, unknown>;
-                  return (
-                    <TableRow key={i}>
-                      <TableCell className="text-xs font-mono">{String(d.route ?? d.route_key ?? '—')}</TableCell>
-                      <TableCell className="text-xs"><Badge className={statusColor(String(d.decision ?? d.action ?? ''))}>{humanize(String(d.decision ?? d.action ?? 'unknown'))}</Badge></TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{String(d.reason ?? '—')}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ML Automation Section */}
-      <MlAutomationPanel status={automationStatus} history={automationHistory} error={automationError} />
-    </div>
-  );
+  return <MlAutomationPanel status={status} history={history} />;
 }
 
-function MlAutomationPanel({ status, history, error }: { status: MlAutomationStatus | null; history: MlAutomationHistory | null; error: string | null }) {
-  if (error) {
-    return (
-      <Card className="card-game">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-sans">ML Automation</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <RenderState kind="degraded" message={error} />
-        </CardContent>
-      </Card>
-    );
-  }
-
+function MlAutomationPanel({
+  status,
+  history,
+}: {
+  status: MlAutomationStatus | null;
+  history: MlAutomationHistory | null;
+}) {
   const summary = history?.summary ?? null;
   const qualityTrend = history?.qualityTrend ?? [];
   const trainingCadence = history?.trainingCadence ?? [];
@@ -548,6 +303,7 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
   const promotions = history?.promotions ?? [];
   const runs = history?.history ?? [];
   const observability = status?.observability ?? history?.observability ?? null;
+
   const mdapeTrendData = qualityTrend
     .filter((point) => point.avgMdape != null)
     .map((point, index) => ({
@@ -564,75 +320,119 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
     label: point.date.slice(5),
     runs: point.runs,
   }));
-  const deltaLabel = summary?.mdapeDeltaVsPrevious != null
-    ? `${summary.mdapeDeltaVsPrevious >= 0 ? '+' : ''}${(summary.mdapeDeltaVsPrevious * 100).toFixed(1)} pts`
-    : '—';
+  const summaryCards = summary
+    ? [
+        { label: 'Runs / 7d', value: String(summary.runsLast7d) },
+        { label: 'Runs / 30d', value: String(summary.runsLast30d) },
+        summary.medianHoursBetweenRuns != null
+          ? { label: 'Median cadence', value: `${summary.medianHoursBetweenRuns.toFixed(1)}h` }
+          : null,
+        summary.latestAvgMdape != null
+          ? { label: 'Latest MDAPE', value: formatPct(summary.latestAvgMdape) }
+          : null,
+        summary.latestAvgIntervalCoverage != null
+          ? { label: 'Latest coverage', value: formatPct(summary.latestAvgIntervalCoverage) }
+          : null,
+        summary.bestAvgMdape != null
+          ? { label: 'Best MDAPE', value: formatPct(summary.bestAvgMdape) }
+          : null,
+        summary.trendDirection !== 'unknown'
+          ? {
+              label: 'Trend',
+              value: humanize(summary.trendDirection),
+              detail: summary.mdapeDeltaVsPrevious != null
+                ? `${summary.mdapeDeltaVsPrevious >= 0 ? '+' : ''}${(summary.mdapeDeltaVsPrevious * 100).toFixed(1)} pts`
+                : undefined,
+            }
+          : null,
+      ].filter((card): card is { label: string; value: string; detail?: string } => card !== null)
+    : [];
+  const hasDatasetCoverage = Boolean(
+    datasetCoverage && (
+      datasetCoverage.totalRows > 0 ||
+      datasetCoverage.supportedRows > 0 ||
+      datasetCoverage.routes.length > 0
+    )
+  );
 
   return (
     <div className="space-y-4">
       {status && (
         <Card className="card-game">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-sans">Automation Status</CardTitle>
-            </CardHeader>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Automation Status</CardTitle>
+          </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 text-xs">
-              <div>
-                <span className="text-muted-foreground">League</span>
-                <p className="font-mono text-foreground">{status.league}</p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Active Model</span>
-                <p className="font-mono text-foreground">{status.activeModelVersion ?? 'None'}</p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Status</span>
-                <div className="mt-0.5">
-                  <Badge className={status.status ? statusColor(status.status) : 'bg-muted text-muted-foreground border-border'}>
-                    {status.status ? humanize(status.status) : 'Unknown'}
-                  </Badge>
+              {hasText(status.league) && (
+                <div>
+                  <span className="text-muted-foreground">League</span>
+                  <p className="font-mono text-foreground">{status.league}</p>
                 </div>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Verdict</span>
-                <div className="mt-0.5">
-                  <Badge className={status.promotionVerdict ? verdictColor(status.promotionVerdict) : 'bg-muted text-muted-foreground border-border'}>
-                    {status.promotionVerdict ? humanize(status.promotionVerdict) : 'Unknown'}
-                  </Badge>
+              )}
+              {hasText(status.activeModelVersion) && (
+                <div>
+                  <span className="text-muted-foreground">Active Model</span>
+                  <p className="font-mono text-foreground">{status.activeModelVersion}</p>
                 </div>
-              </div>
+              )}
+              {hasText(status.status) && (
+                <div>
+                  <span className="text-muted-foreground">Status</span>
+                  <div className="mt-0.5">
+                    <Badge className={statusColor(status.status ?? '')}>{humanize(status.status ?? '')}</Badge>
+                  </div>
+                </div>
+              )}
+              {hasText(status.promotionVerdict) && (
+                <div>
+                  <span className="text-muted-foreground">Verdict</span>
+                  <div className="mt-0.5">
+                    <Badge className={verdictColor(status.promotionVerdict ?? '')}>{humanize(status.promotionVerdict ?? '')}</Badge>
+                  </div>
+                </div>
+              )}
               {status.latestRun && (
                 <div className="col-span-2 sm:col-span-4">
                   <span className="text-muted-foreground">Latest Run</span>
                   <div className="flex flex-wrap items-center gap-3 mt-1">
-                    <span className="font-mono text-foreground truncate">{status.latestRun.runId ?? '—'}</span>
-                    <Badge className={status.latestRun.status ? statusColor(status.latestRun.status) : 'bg-muted text-muted-foreground border-border'}>
-                      {status.latestRun.status ? humanize(status.latestRun.status) : 'Unknown'}
-                    </Badge>
-                    <span className="text-muted-foreground">{status.latestRun.updatedAt ? formatDateTimeShort(status.latestRun.updatedAt) : '—'}</span>
+                    {hasText(status.latestRun.runId) && <span className="font-mono text-foreground truncate">{status.latestRun.runId}</span>}
+                    {hasText(status.latestRun.status) && (
+                      <Badge className={statusColor(status.latestRun.status ?? '')}>{humanize(status.latestRun.status ?? '')}</Badge>
+                    )}
+                    {hasText(status.latestRun.updatedAt) && (
+                      <span className="text-muted-foreground">{formatDateTimeShort(status.latestRun.updatedAt ?? '')}</span>
+                    )}
+                    {hasText(status.latestRun.stopReason) && (
+                      <span className="text-muted-foreground">{humanize(status.latestRun.stopReason ?? '')}</span>
+                    )}
                   </div>
                 </div>
               )}
-              {status.trainerRuntime && (
+              {status.trainerRuntime && hasRenderableTrainerRuntime(status.trainerRuntime) && (
                 <div className="col-span-2 sm:col-span-4 border-t border-border pt-3 mt-1">
                   <span className="text-muted-foreground font-medium">Trainer Runtime</span>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-2">
-                    <div>
-                      <span className="text-muted-foreground">Stage</span>
-                      <p className="font-mono text-foreground">{status.trainerRuntime.stage ?? '—'}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Status</span>
-                      <div className="mt-0.5">
-                        <Badge className={status.trainerRuntime.status ? statusColor(status.trainerRuntime.status) : 'bg-muted text-muted-foreground border-border'}>
-                          {status.trainerRuntime.status ? humanize(status.trainerRuntime.status) : 'Unknown'}
-                        </Badge>
+                    {hasText(status.trainerRuntime.stage) && (
+                      <div>
+                        <span className="text-muted-foreground">Stage</span>
+                        <p className="font-mono text-foreground">{status.trainerRuntime.stage}</p>
                       </div>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Updated</span>
-                      <p className="font-mono text-foreground">{status.trainerRuntime.updatedAt ? formatDateTimeShort(status.trainerRuntime.updatedAt) : '—'}</p>
-                    </div>
+                    )}
+                    {hasText(status.trainerRuntime.status) && (
+                      <div>
+                        <span className="text-muted-foreground">Status</span>
+                        <div className="mt-0.5">
+                          <Badge className={statusColor(status.trainerRuntime.status ?? '')}>{humanize(status.trainerRuntime.status ?? '')}</Badge>
+                        </div>
+                      </div>
+                    )}
+                    {hasText(status.trainerRuntime.updatedAt) && (
+                      <div>
+                        <span className="text-muted-foreground">Updated</span>
+                        <p className="font-mono text-foreground">{formatDateTimeShort(status.trainerRuntime.updatedAt ?? '')}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -641,129 +441,130 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
         </Card>
       )}
 
-      {summary && (
-        <>
-          <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
-            <MlSummaryMetricCard label="Runs / 7d" value={String(summary.runsLast7d)} />
-            <MlSummaryMetricCard label="Runs / 30d" value={String(summary.runsLast30d)} />
-            <MlSummaryMetricCard label="Median cadence" value={summary.medianHoursBetweenRuns != null ? `${summary.medianHoursBetweenRuns.toFixed(1)}h` : '—'} />
-            <MlSummaryMetricCard label="Best MDAPE" value={formatPct(summary.bestAvgMdape)} />
-            <MlSummaryMetricCard label="Trend" value={humanize(summary.trendDirection)} detail={deltaLabel} />
-          </div>
+      {summaryCards.length > 0 && (
+        <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
+          {summaryCards.map((card) => (
+            <MlSummaryMetricCard key={card.label} label={card.label} value={card.value} detail={card.detail} />
+          ))}
+        </div>
+      )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <MlLineChartCard title="MDAPE trend" data={mdapeTrendData} emptyMessage="No completed evaluations yet" suffix="%" />
-            <MlLineChartCard title="Coverage trend" data={coverageTrendData} emptyMessage="No interval coverage history yet" suffix="%" />
-            <MlBarChartCard title="Training cadence" data={cadenceData} emptyMessage="No training cadence history yet" />
-          </div>
+      {(mdapeTrendData.length > 0 || coverageTrendData.length > 0 || cadenceData.length > 0) && (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          {mdapeTrendData.length > 0 && <MlLineChartCard title="MDAPE trend" data={mdapeTrendData} suffix="%" />}
+          {coverageTrendData.length > 0 && <MlLineChartCard title="Coverage trend" data={coverageTrendData} suffix="%" />}
+          {cadenceData.length > 0 && <MlBarChartCard title="Training cadence" data={cadenceData} />}
+        </div>
+      )}
 
-          {datasetCoverage && (
-            <Card className="card-game">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-sans">Dataset coverage</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 text-xs">
-                  <div>
-                    <span className="text-muted-foreground">Total Rows</span>
-                    <p className="font-mono text-foreground">{formatCompact(datasetCoverage.totalRows)}</p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Supported Rows</span>
-                    <p className="font-mono text-foreground">{formatCompact(datasetCoverage.supportedRows)}</p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Coverage Ratio</span>
-                    <p className="font-mono text-foreground">{formatPct(datasetCoverage.coverageRatio)}</p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Base Types</span>
-                    <p className="font-mono text-foreground">{datasetCoverage.baseTypeCount != null ? formatCompact(datasetCoverage.baseTypeCount) : '—'}</p>
-                  </div>
+      {hasDatasetCoverage && datasetCoverage && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Dataset coverage</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 text-xs">
+              <div>
+                <span className="text-muted-foreground">Total Rows</span>
+                <p className="font-mono text-foreground">{formatCompact(datasetCoverage.totalRows)}</p>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Supported Rows</span>
+                <p className="font-mono text-foreground">{formatCompact(datasetCoverage.supportedRows)}</p>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Coverage Ratio</span>
+                <p className="font-mono text-foreground">{formatPct(datasetCoverage.coverageRatio)}</p>
+              </div>
+              {datasetCoverage.baseTypeCount != null && (
+                <div>
+                  <span className="text-muted-foreground">Base Types</span>
+                  <p className="font-mono text-foreground">{formatCompact(datasetCoverage.baseTypeCount)}</p>
                 </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-xs">Route</TableHead>
-                      <TableHead className="text-xs text-right">Rows</TableHead>
-                      <TableHead className="text-xs text-right">Share</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {datasetCoverage.routes.map((route) => (
-                      <TableRow key={route.route ?? 'unknown'}>
-                        <TableCell className="text-xs font-mono">{route.route ?? 'unknown'}</TableCell>
-                        <TableCell className="text-xs font-mono text-right">{formatCompact(route.rows)}</TableCell>
-                        <TableCell className="text-xs font-mono text-right">{formatPct(route.share)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          )}
-
-          {routeMetrics.length > 0 && (
-          <Card className="card-game">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-sans">Route metrics</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
+              )}
+            </div>
+            {datasetCoverage.routes.length > 0 && (
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-xs">Route</TableHead>
-                    <TableHead className="text-xs text-right">Samples</TableHead>
-                    <TableHead className="text-xs text-right">MDAPE</TableHead>
-                    <TableHead className="text-xs text-right">Coverage</TableHead>
-                    <TableHead className="text-xs text-right">Abstain</TableHead>
+                    <TableHead className="text-xs text-right">Rows</TableHead>
+                    <TableHead className="text-xs text-right">Share</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {routeMetrics.map((route) => (
+                  {datasetCoverage.routes.map((route) => (
                     <TableRow key={route.route ?? 'unknown'}>
                       <TableCell className="text-xs font-mono">{route.route ?? 'unknown'}</TableCell>
-                      <TableCell className="text-xs font-mono text-right">{route.sampleCount != null ? formatCompact(route.sampleCount) : '—'}</TableCell>
-                      <TableCell className="text-xs font-mono text-right">{formatPct(route.avgMdape)}</TableCell>
-                      <TableCell className="text-xs font-mono text-right">{formatPct(route.avgIntervalCoverage)}</TableCell>
-                      <TableCell className="text-xs font-mono text-right">{formatPct(route.avgAbstainRate)}</TableCell>
+                      <TableCell className="text-xs font-mono text-right">{formatCompact(route.rows)}</TableCell>
+                      <TableCell className="text-xs font-mono text-right">{formatPct(route.share)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
-          )}
-
-          {promotions.length > 0 && (
-          <Card className="card-game">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-sans">Model promotions</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs">Model</TableHead>
-                    <TableHead className="text-xs">Promoted At</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {promotions.map((row) => (
-                    <TableRow key={`${row.modelVersion ?? 'unknown'}-${row.promotedAt ?? 'none'}`}>
-                      <TableCell className="text-xs font-mono">{row.modelVersion ?? '—'}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{row.promotedAt ? formatDateTimeShort(row.promotedAt) : '—'}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-          )}
-        </>
+            )}
+          </CardContent>
+        </Card>
       )}
 
-      {/* Observability */}
+      {routeMetrics.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Route metrics</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Route</TableHead>
+                  <TableHead className="text-xs text-right">Samples</TableHead>
+                  <TableHead className="text-xs text-right">MDAPE</TableHead>
+                  <TableHead className="text-xs text-right">Coverage</TableHead>
+                  <TableHead className="text-xs text-right">Abstain</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {routeMetrics.map((route) => (
+                  <TableRow key={route.route ?? 'unknown'}>
+                    <TableCell className="text-xs font-mono">{route.route ?? 'unknown'}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{route.sampleCount != null ? formatCompact(route.sampleCount) : ''}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{formatPct(route.avgMdape)}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{formatPct(route.avgIntervalCoverage)}</TableCell>
+                    <TableCell className="text-xs font-mono text-right">{formatPct(route.avgAbstainRate)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {promotions.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Model promotions</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Model</TableHead>
+                  <TableHead className="text-xs">Promoted At</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {promotions.map((row) => (
+                  <TableRow key={`${row.modelVersion ?? 'unknown'}-${row.promotedAt ?? 'none'}`}>
+                    <TableCell className="text-xs font-mono">{row.modelVersion ?? ''}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{row.promotedAt ? formatDateTimeShort(row.promotedAt) : ''}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
       {observability && <ObservabilityPanel observability={observability} />}
 
       {runs.length > 0 && (
@@ -787,13 +588,17 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
               <TableBody>
                 {runs.map((run) => (
                   <TableRow key={run.runId ?? 'unknown'}>
-                    <TableCell className="text-xs font-mono truncate max-w-[160px]">{run.runId ?? '—'}</TableCell>
-                    <TableCell><Badge className={`text-xs ${run.status ? statusColor(run.status) : 'bg-muted text-muted-foreground border-border'}`}>{run.status ? humanize(run.status) : 'Unknown'}</Badge></TableCell>
-                    <TableCell><Badge className={`text-xs ${run.verdict ? verdictColor(run.verdict) : 'bg-muted text-muted-foreground border-border'}`}>{run.verdict ? humanize(run.verdict) : 'Unknown'}</Badge></TableCell>
-                    <TableCell className="text-xs font-mono text-right">{run.rowsProcessed != null ? formatCompact(run.rowsProcessed) : '—'}</TableCell>
+                    <TableCell className="text-xs font-mono truncate max-w-[160px]">{run.runId ?? ''}</TableCell>
+                    <TableCell>
+                      {hasText(run.status) ? <Badge className={`text-xs ${statusColor(run.status ?? '')}`}>{humanize(run.status ?? '')}</Badge> : null}
+                    </TableCell>
+                    <TableCell>
+                      {hasText(run.verdict) ? <Badge className={`text-xs ${verdictColor(run.verdict ?? '')}`}>{humanize(run.verdict ?? '')}</Badge> : null}
+                    </TableCell>
+                    <TableCell className="text-xs font-mono text-right">{run.rowsProcessed != null ? formatCompact(run.rowsProcessed) : ''}</TableCell>
                     <TableCell className="text-xs font-mono text-right">{formatPct(run.avgMdape)}</TableCell>
                     <TableCell className="text-xs font-mono text-right">{formatPct(run.avgIntervalCoverage)}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{run.updatedAt ? formatDateTimeShort(run.updatedAt) : '—'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{run.updatedAt ? formatDateTimeShort(run.updatedAt) : ''}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -833,22 +638,28 @@ function ObservabilityPanel({ observability }: { observability: MlAutomationObse
             <span className="text-muted-foreground">Evaluation Available</span>
             <div className="mt-0.5">
               {observability.evaluationAvailable
-                ? <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                : <XCircle className="h-4 w-4 text-muted-foreground" />}
+                ? <span className="text-emerald-400">Yes</span>
+                : <span className="text-muted-foreground">No</span>}
             </div>
           </div>
-          <div>
-            <span className="text-muted-foreground">Latest Training</span>
-            <p className="font-mono text-foreground">{observability.latestTrainingAsOf ? formatDateTimeShort(observability.latestTrainingAsOf) : '—'}</p>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Latest Promotion</span>
-            <p className="font-mono text-foreground">{observability.latestPromotionAt ? formatDateTimeShort(observability.latestPromotionAt) : '—'}</p>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Latest Eval</span>
-            <p className="font-mono text-foreground">{observability.latestEvalAt ? formatDateTimeShort(observability.latestEvalAt) : '—'}</p>
-          </div>
+          {observability.latestTrainingAsOf && (
+            <div>
+              <span className="text-muted-foreground">Latest Training</span>
+              <p className="font-mono text-foreground">{formatDateTimeShort(observability.latestTrainingAsOf)}</p>
+            </div>
+          )}
+          {observability.latestPromotionAt && (
+            <div>
+              <span className="text-muted-foreground">Latest Promotion</span>
+              <p className="font-mono text-foreground">{formatDateTimeShort(observability.latestPromotionAt)}</p>
+            </div>
+          )}
+          {observability.latestEvalAt && (
+            <div>
+              <span className="text-muted-foreground">Latest Eval</span>
+              <p className="font-mono text-foreground">{formatDateTimeShort(observability.latestEvalAt)}</p>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -922,6 +733,16 @@ function MlBarChartCard({ title, data, emptyMessage }: { title: string; data: Ar
 function formatPct(value: number | null | undefined): string {
   if (value == null) return '—';
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function hasText(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasRenderableTrainerRuntime(runtime: MlAutomationStatus['trainerRuntime']): boolean {
+  return Boolean(
+    runtime.stage || runtime.status || runtime.updatedAt || Object.keys(runtime.details || {}).length > 0
+  );
 }
 
 function formatCompact(value: number): string {

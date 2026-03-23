@@ -12,10 +12,16 @@ const {
   getAnalyticsSearchSuggestionsMock,
   getAnalyticsSearchHistoryMock,
   getAnalyticsPricingOutliersMock,
+  getAnalyticsMlMock,
+  getMlAutomationStatusMock,
+  getMlAutomationHistoryMock,
 } = vi.hoisted(() => ({
   getAnalyticsSearchSuggestionsMock: vi.fn(),
   getAnalyticsSearchHistoryMock: vi.fn(),
   getAnalyticsPricingOutliersMock: vi.fn(),
+  getAnalyticsMlMock: vi.fn(),
+  getMlAutomationStatusMock: vi.fn(),
+  getMlAutomationHistoryMock: vi.fn(),
 }));
 
 vi.mock('@/components/ui/card', () => ({
@@ -114,13 +120,152 @@ vi.mock('@/services/api', () => ({
   getAnalyticsScanner: vi.fn(),
   getAnalyticsAlerts: vi.fn(),
   getAnalyticsBacktests: vi.fn(),
-  getAnalyticsMl: vi.fn(),
+  getAnalyticsMl: getAnalyticsMlMock,
   getAnalyticsPricingOutliers: getAnalyticsPricingOutliersMock,
   getAnalyticsReport: vi.fn(),
   getAnalyticsSearchHistory: getAnalyticsSearchHistoryMock,
   getAnalyticsSearchSuggestions: getAnalyticsSearchSuggestionsMock,
-  api: {},
+  api: {
+    getMlAutomationStatus: getMlAutomationStatusMock,
+    getMlAutomationHistory: getMlAutomationHistoryMock,
+  },
 }));
+
+function createMlAutomationStatus(overrides: Record<string, unknown> = {}) {
+  return {
+    league: 'Mirage',
+    status: 'failed_gates',
+    activeModelVersion: 'mirage-v3.11',
+    latestRun: {
+      runId: 'run-2',
+      status: 'promoted',
+      stopReason: 'complete',
+      updatedAt: '2026-03-20T12:00:00Z',
+    },
+    promotionVerdict: 'hold',
+    routeHotspots: [],
+    observability: {
+      datasetRows: 2700,
+      latestTrainingAsOf: '2026-03-20T11:57:36Z',
+      promotedModels: 2,
+      latestPromotionAt: '2026-03-20T12:03:00Z',
+      evalRuns: 4,
+      evalSampleRows: 640,
+      latestEvalAt: '2026-03-20T12:02:10Z',
+      evaluationAvailable: true,
+    },
+    trainerRuntime: {
+      stage: 'evaluate_models',
+      status: 'running',
+      updatedAt: '2026-03-20T12:04:00Z',
+      details: { rows: 640 },
+    },
+    ...overrides,
+  };
+}
+
+function createMlAutomationHistory(overrides: Record<string, unknown> = {}) {
+  return {
+    league: 'Mirage',
+    mode: 'hybrid',
+    history: [
+      {
+        runId: 'run-1',
+        status: 'completed',
+        stopReason: 'complete',
+        activeModelVersion: 'mirage-v3.10',
+        updatedAt: '2026-03-19T10:00:00Z',
+        rowsProcessed: 1000,
+        avgMdape: 0.14,
+        avgIntervalCoverage: 0.62,
+        verdict: 'hold',
+      },
+      {
+        runId: 'run-2',
+        status: 'promoted',
+        stopReason: 'promotion_gate_passed',
+        activeModelVersion: 'mirage-v3.11',
+        updatedAt: '2026-03-20T10:00:00Z',
+        rowsProcessed: 1200,
+        avgMdape: 0.11,
+        avgIntervalCoverage: 0.67,
+        verdict: 'promote',
+      },
+    ],
+    summary: {
+      activeModelVersion: 'mirage-v3.11',
+      lastRunAt: '2026-03-20T10:00:00Z',
+      lastPromotedAt: '2026-03-20T10:15:00Z',
+      runsLast7d: 2,
+      runsLast30d: 2,
+      medianHoursBetweenRuns: 12,
+      latestAvgMdape: 0.11,
+      latestAvgIntervalCoverage: 0.67,
+      bestAvgMdape: 0.11,
+      mdapeDeltaVsPrevious: 0.03,
+      trendDirection: 'improving',
+    },
+    qualityTrend: [
+      {
+        runId: 'run-1',
+        updatedAt: '2026-03-19T10:00:00Z',
+        avgMdape: 0.14,
+        avgIntervalCoverage: 0.62,
+        verdict: 'hold',
+        activeModelVersion: 'mirage-v3.10',
+      },
+      {
+        runId: 'run-2',
+        updatedAt: '2026-03-20T10:00:00Z',
+        avgMdape: 0.11,
+        avgIntervalCoverage: 0.67,
+        verdict: 'promote',
+        activeModelVersion: 'mirage-v3.11',
+      },
+    ],
+    trainingCadence: [
+      { date: '2026-03-19', runs: 1 },
+      { date: '2026-03-20', runs: 1 },
+    ],
+    routeMetrics: [
+      {
+        route: 'structured_boosted',
+        sampleCount: 400,
+        avgMdape: 0.09,
+        avgIntervalCoverage: 0.7,
+        avgAbstainRate: 0.05,
+        recordedAt: '2026-03-20T10:00:00Z',
+      },
+    ],
+    datasetCoverage: {
+      totalRows: 2700,
+      supportedRows: 2500,
+      coverageRatio: 0.925,
+      baseTypeCount: 220,
+      routes: [
+        {
+          route: 'structured_boosted',
+          rows: 1500,
+          share: 0.556,
+        },
+      ],
+    },
+    promotions: [
+      { modelVersion: 'mirage-v3.11', promotedAt: '2026-03-20T10:15:00Z' },
+    ],
+    observability: {
+      datasetRows: 2700,
+      latestTrainingAsOf: '2026-03-20T11:57:36Z',
+      promotedModels: 2,
+      latestPromotionAt: '2026-03-20T12:03:00Z',
+      evalRuns: 4,
+      evalSampleRows: 640,
+      latestEvalAt: '2026-03-20T12:02:10Z',
+      evaluationAvailable: true,
+    },
+    ...overrides,
+  };
+}
 
 function createSearchHistoryResponse(overrides: Partial<SearchHistoryResponse> = {}): SearchHistoryResponse {
   return {
@@ -261,6 +406,9 @@ beforeEach(() => {
   getAnalyticsSearchSuggestionsMock.mockResolvedValue(createSuggestionsResponse());
   getAnalyticsSearchHistoryMock.mockResolvedValue(createSearchHistoryResponse());
   getAnalyticsPricingOutliersMock.mockResolvedValue(createPricingOutliersResponse());
+  getAnalyticsMlMock.mockResolvedValue({});
+  getMlAutomationStatusMock.mockResolvedValue(createMlAutomationStatus());
+  getMlAutomationHistoryMock.mockResolvedValue(createMlAutomationHistory());
 });
 
 afterEach(() => {
@@ -559,5 +707,71 @@ describe('AnalyticsTab low-investment outliers panel', () => {
     await renderOutliersPanel();
 
     expect(screen.getByTestId('state-degraded')).toHaveTextContent(/missing opportunity metrics/i);
+  });
+});
+
+describe('AnalyticsTab ML panel', () => {
+  test('renders live automation and training data without legacy empty placeholders', async () => {
+    render(<AnalyticsTab subtab="ml" />);
+
+    await act(async () => {
+      vi.advanceTimersByTime(260);
+    });
+    await flushMicrotasks();
+
+    expect(getAnalyticsMlMock).not.toHaveBeenCalled();
+    expect(getMlAutomationStatusMock).toHaveBeenCalledTimes(1);
+    expect(getMlAutomationHistoryMock).toHaveBeenCalledTimes(1);
+
+    expect(screen.getByText('Runs / 7d')).toBeInTheDocument();
+    expect(screen.getAllByText('2').length).toBeGreaterThan(0);
+    expect(screen.getByText('Latest Promotion')).toBeInTheDocument();
+    expect(screen.getByText('Latest Eval')).toBeInTheDocument();
+    expect(screen.getByText('Trainer Runtime')).toBeInTheDocument();
+    expect(screen.getByText('Route metrics')).toBeInTheDocument();
+    expect(screen.getByText('Model promotions')).toBeInTheDocument();
+    expect(screen.getByText('Run History')).toBeInTheDocument();
+    expect(screen.queryByText(/No ML data available/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Unknown/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/None/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No route hotspots/i)).not.toBeInTheDocument();
+  });
+
+  test('hides empty live-only sections when the API returns sparse data', async () => {
+    getMlAutomationStatusMock.mockResolvedValueOnce(createMlAutomationStatus({
+      latestRun: null,
+      trainerRuntime: null,
+      routeHotspots: [],
+    }));
+    getMlAutomationHistoryMock.mockResolvedValueOnce(createMlAutomationHistory({
+      history: [],
+      qualityTrend: [],
+      trainingCadence: [],
+      routeMetrics: [],
+      promotions: [],
+      datasetCoverage: {
+        totalRows: 0,
+        supportedRows: 0,
+        coverageRatio: 0,
+        baseTypeCount: null,
+        routes: [],
+      },
+    }));
+
+    render(<AnalyticsTab subtab="ml" />);
+
+    await act(async () => {
+      vi.advanceTimersByTime(260);
+    });
+    await flushMicrotasks();
+
+    expect(screen.queryByText('Latest Run')).not.toBeInTheDocument();
+    expect(screen.queryByText('Trainer Runtime')).not.toBeInTheDocument();
+    expect(screen.queryByText('Route metrics')).not.toBeInTheDocument();
+    expect(screen.queryByText('Model promotions')).not.toBeInTheDocument();
+    expect(screen.queryByText('Run History')).not.toBeInTheDocument();
+    expect(screen.queryByText(/No ML data available/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Unknown/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/None/i)).not.toBeInTheDocument();
   });
 });
