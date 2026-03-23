@@ -28,6 +28,8 @@ import type {
   StashScanStatus,
   StashStatus,
   StashTabsResponse,
+  PoeItem,
+  StashTab,
 } from '@/types/api';
 
 export interface IngestionRow {
@@ -665,6 +667,101 @@ function normalizePricingOutliersResponse(payload: unknown): PricingOutliersResp
   };
 }
 
+function frameTypeFromRarity(value: unknown): number {
+  switch (value) {
+    case 'magic':
+      return 1;
+    case 'rare':
+      return 2;
+    case 'unique':
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+function normalizePoeItem(raw: unknown): PoeItem {
+  const item = asObject(raw);
+  const name = optString(item.name) ?? '';
+  const typeLine = optString(item.typeLine ?? item.type_line ?? item.itemClass ?? item.item_class) ?? name;
+  const iconUrl = optString(item.icon ?? item.iconUrl ?? item.icon_url) ?? '';
+
+  return {
+    id: optString(item.id) ?? crypto.randomUUID(),
+    name,
+    typeLine,
+    baseType: optString(item.baseType ?? item.base_type) ?? undefined,
+    icon: iconUrl,
+    iconUrl: iconUrl || undefined,
+    x: optNumber(item.x) ?? 0,
+    y: optNumber(item.y) ?? 0,
+    w: optNumber(item.w) ?? 1,
+    h: optNumber(item.h) ?? 1,
+    frameType: optNumber(item.frameType ?? item.frame_type) ?? frameTypeFromRarity(item.rarity),
+    stackSize: optNumber(item.stackSize ?? item.stack_size) ?? undefined,
+    maxStackSize: optNumber(item.maxStackSize ?? item.max_stack_size) ?? undefined,
+    ilvl: optNumber(item.ilvl) ?? undefined,
+    identified: typeof item.identified === 'boolean' ? item.identified : undefined,
+    corrupted: typeof item.corrupted === 'boolean' ? item.corrupted : undefined,
+    duplicated: typeof item.duplicated === 'boolean' ? item.duplicated : undefined,
+    properties: Array.isArray(item.properties) ? item.properties as PoeItem['properties'] : undefined,
+    requirements: Array.isArray(item.requirements) ? item.requirements as PoeItem['requirements'] : undefined,
+    implicitMods: Array.isArray(item.implicitMods ?? item.implicit_mods) ? (item.implicitMods ?? item.implicit_mods) as string[] : undefined,
+    explicitMods: Array.isArray(item.explicitMods ?? item.explicit_mods) ? (item.explicitMods ?? item.explicit_mods) as string[] : undefined,
+    craftedMods: Array.isArray(item.craftedMods ?? item.crafted_mods) ? (item.craftedMods ?? item.crafted_mods) as string[] : undefined,
+    enchantMods: Array.isArray(item.enchantMods ?? item.enchant_mods) ? (item.enchantMods ?? item.enchant_mods) as string[] : undefined,
+    fracturedMods: Array.isArray(item.fracturedMods ?? item.fractured_mods) ? (item.fracturedMods ?? item.fractured_mods) as string[] : undefined,
+    utilityMods: Array.isArray(item.utilityMods ?? item.utility_mods) ? (item.utilityMods ?? item.utility_mods) as string[] : undefined,
+    descrText: optString(item.descrText ?? item.descr_text) ?? undefined,
+    flavourText: Array.isArray(item.flavourText ?? item.flavour_text) ? (item.flavourText ?? item.flavour_text) as string[] : undefined,
+    sockets: Array.isArray(item.sockets) ? item.sockets as PoeItem['sockets'] : undefined,
+    listedPrice: optNumber(item.listedPrice ?? item.listed_price),
+    estimatedPrice: optNumber(item.estimatedPrice ?? item.estimated_price),
+    estimatedPriceConfidence: optNumber(item.estimatedPriceConfidence ?? item.estimated_price_confidence),
+    priceDeltaChaos: optNumber(item.priceDeltaChaos ?? item.price_delta_chaos),
+    priceDeltaPercent: optNumber(item.priceDeltaPercent ?? item.price_delta_percent),
+    priceEvaluation: optString(item.priceEvaluation ?? item.price_evaluation) as PoeItem['priceEvaluation'],
+    currency: optString(item.currency) ?? undefined,
+  };
+}
+
+function normalizeStashTab(raw: unknown): StashTab {
+  const tab = asObject(raw);
+  const rawItems = Array.isArray(tab.items) ? tab.items : [];
+
+  return {
+    id: optString(tab.id) ?? crypto.randomUUID(),
+    name: optString(tab.name) ?? 'Tab',
+    type: (optString(tab.type) as StashTab['type']) ?? 'normal',
+    items: rawItems.map(normalizePoeItem),
+    quadLayout: typeof tab.quadLayout === 'boolean' ? tab.quadLayout : Boolean(tab.quad_layout),
+    currencyLayout: (tab.currencyLayout ?? tab.currency_layout) as StashTab['currencyLayout'],
+    fragmentLayout: (tab.fragmentLayout ?? tab.fragment_layout) as StashTab['fragmentLayout'],
+    essenceLayout: (tab.essenceLayout ?? tab.essence_layout) as StashTab['essenceLayout'],
+    deliriumLayout: (tab.deliriumLayout ?? tab.delirium_layout) as StashTab['deliriumLayout'],
+    blightLayout: (tab.blightLayout ?? tab.blight_layout) as StashTab['blightLayout'],
+    ultimatumLayout: (tab.ultimatumLayout ?? tab.ultimatum_layout) as StashTab['ultimatumLayout'],
+    mapLayout: (tab.mapLayout ?? tab.map_layout) as StashTab['mapLayout'],
+    divinationLayout: (tab.divinationLayout ?? tab.divination_layout) as StashTab['divinationLayout'],
+    uniqueLayout: (tab.uniqueLayout ?? tab.unique_layout) as StashTab['uniqueLayout'],
+    delveLayout: (tab.delveLayout ?? tab.delve_layout) as StashTab['delveLayout'],
+    metamorphLayout: (tab.metamorphLayout ?? tab.metamorph_layout) as StashTab['metamorphLayout'],
+  };
+}
+
+function normalizeStashTabsResponse(payload: unknown): StashTabsResponse {
+  const source = asObject(payload);
+  const rawTabs = Array.isArray(source.stashTabs ?? source.stash_tabs) ? (source.stashTabs ?? source.stash_tabs) as unknown[] : [];
+
+  return {
+    scanId: optString(source.scanId ?? source.scan_id),
+    publishedAt: optString(source.publishedAt ?? source.published_at),
+    isStale: typeof source.isStale === 'boolean' ? source.isStale : Boolean(source.is_stale),
+    scanStatus: (source.scanStatus ?? source.scan_status) as StashTabsResponse['scanStatus'],
+    stashTabs: rawTabs.map(normalizeStashTab),
+  };
+}
+
 export async function getAnalyticsSearchSuggestions(query: string) {
   const queryString = buildQueryString({ query });
   return request<SearchSuggestionsResponse>(`/api/v1/ops/analytics/search-suggestions${queryString}`);
@@ -1010,10 +1107,10 @@ export const api: ApiService = {
 
   async getStashTabs() {
     const league = await primaryLeague();
-    const payload = await request<StashTabsResponse>(
+    const payload = await request<unknown>(
       `/api/v1/stash/tabs?league=${encodeURIComponent(league)}&realm=pc`
     );
-    return payload;
+    return normalizeStashTabsResponse(payload);
   },
 
   async getMessages() {
