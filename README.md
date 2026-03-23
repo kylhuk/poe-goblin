@@ -16,7 +16,7 @@
 - `make up` = fast dev start, no `--build`
 - `make build` = explicit image refresh
 - `make rebuild` = refresh images, then restart the stack if needed
-- source edits in `poe_trade/` no longer force Docker rebuilds
+- repo-root source edits no longer force Docker rebuilds
 
 ## After Docker is running
 - `docker compose ps` to confirm the core services are healthy.

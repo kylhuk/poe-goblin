@@ -1,6 +1,7 @@
 .git
 .worktrees
 .state
+.sisyphus
 artifacts
 logs
 .venv
