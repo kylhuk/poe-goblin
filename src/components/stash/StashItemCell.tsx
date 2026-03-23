@@ -32,6 +32,7 @@ export default function StashItemCell({ item, isQuad, style, className }: StashI
   const evalBg = item.priceEvaluation ? EVAL_BG[item.priceEvaluation] : '';
   const borderClass = FRAME_TYPE_BORDER[item.frameType] ?? 'border-muted-foreground/20';
   const displayName = item.name || item.typeLine;
+  const iconSrc = item.icon || item.iconUrl;
 
   return (
     <HoverCard openDelay={80} closeDelay={50}>
@@ -46,9 +47,9 @@ export default function StashItemCell({ item, isQuad, style, className }: StashI
           style={style}
         >
           {/* Official icon */}
-          {item.icon && (
+          {iconSrc && (
             <img
-              src={item.icon}
+              src={iconSrc}
               alt={displayName}
               className="w-full h-full object-contain pointer-events-none select-none"
               loading="lazy"
@@ -64,20 +65,6 @@ export default function StashItemCell({ item, isQuad, style, className }: StashI
               isQuad ? 'text-[5px]' : 'text-[9px]',
             )}>
               {item.stackSize}
-            </span>
-          )}
-
-          {/* Fallback name if no icon — hide on quad */}
-          {!item.icon && !isQuad && (
-            <span className="leading-tight text-center truncate w-full px-0.5 text-muted-foreground text-[7px]">
-              {displayName}
-            </span>
-          )}
-
-          {/* Price tag — normal tabs only */}
-          {item.estimatedPrice != null && !isQuad && (
-            <span className="absolute bottom-0 right-0.5 text-[6px] font-mono text-gold-bright/60">
-              {item.estimatedPrice}{item.currency === 'div' ? 'd' : 'c'}
             </span>
           )}
         </div>

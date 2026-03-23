@@ -170,7 +170,7 @@ describe('StashViewerTab', () => {
 
     render(<StashViewerTab />);
 
-    expect((await screen.findAllByText('Grim Bane')).length).toBeGreaterThan(0);
+    expect(await screen.findByTestId('stash-panel-grid')).toBeInTheDocument();
     vi.useFakeTimers();
 
     await act(async () => {
@@ -184,7 +184,7 @@ describe('StashViewerTab', () => {
       await Promise.resolve();
     });
 
-    expect(screen.getAllByText('Grim Bane').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('stash-panel-grid')).toBeInTheDocument();
     expect(getStashScanStatusMock).toHaveBeenCalled();
   });
 
@@ -203,8 +203,8 @@ describe('StashViewerTab', () => {
       expect(getStashItemHistoryMock).toHaveBeenCalledWith('sig:item-1');
     });
 
-    expect((await screen.findAllByText('Grim Bane')).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Helmet').length).toBeGreaterThan(0);
+    expect(await screen.findByText('Grim Bane')).toBeInTheDocument();
+    expect(screen.getByText('Helmet')).toBeInTheDocument();
   });
 
   test('starts a scan, polls status, and refreshes once the scan publishes', async () => {
@@ -238,7 +238,7 @@ describe('StashViewerTab', () => {
       });
 
     render(<StashViewerTab />);
-    expect((await screen.findAllByText('Grim Bane')).length).toBeGreaterThan(0);
+    expect(await screen.findByTestId('stash-panel-grid')).toBeInTheDocument();
     vi.useFakeTimers();
 
     await act(async () => {

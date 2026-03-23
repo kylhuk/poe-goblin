@@ -211,6 +211,7 @@ export interface PoeItem {
   typeLine: string;
   baseType?: string;
   icon: string;
+  iconUrl?: string;
   x: number;
   y: number;
   w: number;
