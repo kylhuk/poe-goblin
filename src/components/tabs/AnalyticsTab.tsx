@@ -613,6 +613,29 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
                   </div>
                 </div>
               )}
+              {status.trainerRuntime && (
+                <div className="col-span-2 sm:col-span-4 border-t border-border pt-3 mt-1">
+                  <span className="text-muted-foreground font-medium">Trainer Runtime</span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-2">
+                    <div>
+                      <span className="text-muted-foreground">Stage</span>
+                      <p className="font-mono text-foreground">{status.trainerRuntime.stage ?? '—'}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Status</span>
+                      <div className="mt-0.5">
+                        <Badge className={status.trainerRuntime.status ? statusColor(status.trainerRuntime.status) : 'bg-muted text-muted-foreground border-border'}>
+                          {status.trainerRuntime.status ? humanize(status.trainerRuntime.status) : 'Unknown'}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Updated</span>
+                      <p className="font-mono text-foreground">{status.trainerRuntime.updatedAt ? formatDateTimeShort(status.trainerRuntime.updatedAt) : '—'}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
