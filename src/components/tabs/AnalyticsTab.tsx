@@ -345,7 +345,7 @@ function MlAutomationPanel({
                 : undefined,
             }
           : null,
-      ].filter((card): card is { label: string; value: string; detail?: string } => card !== null)
+      ].filter(Boolean) as Array<{ label: string; value: string; detail?: string }>
     : [];
   const hasDatasetCoverage = Boolean(
     datasetCoverage && (
@@ -451,9 +451,9 @@ function MlAutomationPanel({
 
       {(mdapeTrendData.length > 0 || coverageTrendData.length > 0 || cadenceData.length > 0) && (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-          {mdapeTrendData.length > 0 && <MlLineChartCard title="MDAPE trend" data={mdapeTrendData} suffix="%" />}
-          {coverageTrendData.length > 0 && <MlLineChartCard title="Coverage trend" data={coverageTrendData} suffix="%" />}
-          {cadenceData.length > 0 && <MlBarChartCard title="Training cadence" data={cadenceData} />}
+          {mdapeTrendData.length > 0 && <MlLineChartCard title="MDAPE trend" data={mdapeTrendData} emptyMessage="No MDAPE data" suffix="%" />}
+          {coverageTrendData.length > 0 && <MlLineChartCard title="Coverage trend" data={coverageTrendData} emptyMessage="No coverage data" suffix="%" />}
+          {cadenceData.length > 0 && <MlBarChartCard title="Training cadence" data={cadenceData} emptyMessage="No cadence data" />}
         </div>
       )}
 

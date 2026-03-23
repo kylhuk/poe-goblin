@@ -11,16 +11,12 @@ export function getCorsHeaders(req: Request): Record<string, string> {
 
 export function buildForwardHeaders(params: {
   existingCookie: string;
-  backendSession: string | null;
 }): Record<string, string> {
   const forwardHeaders: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  const cookieParts: string[] = [];
-  if (params.existingCookie) cookieParts.push(params.existingCookie);
-  if (params.backendSession) cookieParts.push(`poe_session=${params.backendSession}`);
-  if (cookieParts.length > 0) {
-    forwardHeaders["Cookie"] = cookieParts.join("; ");
+  if (params.existingCookie) {
+    forwardHeaders["Cookie"] = params.existingCookie;
   }
   return forwardHeaders;
 }
