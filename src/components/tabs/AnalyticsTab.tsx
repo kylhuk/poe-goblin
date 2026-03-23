@@ -703,6 +703,7 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
             </Card>
           )}
 
+          {routeMetrics.length > 0 && (
           <Card className="card-game">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-sans">Route metrics</CardTitle>
@@ -732,6 +733,7 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
               </Table>
             </CardContent>
           </Card>
+          )}
 
           <Card className="card-game">
             <CardHeader className="pb-2">
