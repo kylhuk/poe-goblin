@@ -5,6 +5,7 @@ import { logApiError } from './apiErrorLog';
 
 const PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID;
 const PROXY_URL = `https://${PROJECT_ID}.supabase.co/functions/v1/api-proxy`;
+const POE_SESSION_URL = `https://${PROJECT_ID}.supabase.co/functions/v1/poe-session`;
 
 // Module-level POESESSID so proxyFetch can attach it on every request
 let _poeSessionId: string | null = null;
@@ -199,51 +200,74 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return payload;
   }, []);
 
-  // Save POESESSID to database for persistence
+  // Save session via server-side encryption edge function
   const saveSessionToDb = useCallback(async (poeSessionId: string, accountName: string) => {
-    const userId = supabaseUser?.id;
-    if (!userId) return;
-    const { error } = await supabase
-      .from('user_poe_sessions')
-      .upsert({ user_id: userId, encrypted_session: poeSessionId, account_name: accountName }, { onConflict: 'user_id' });
-    if (!error) setSessionPersisted(true);
-  }, [supabaseUser]);
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) return;
+    try {
+      const res = await fetch(POE_SESSION_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ poeSessionId, accountName }),
+      });
+      if (res.ok) setSessionPersisted(true);
+    } catch {
+      // Silent fail
+    }
+  }, []);
 
   const deleteSessionFromDb = useCallback(async () => {
-    const userId = supabaseUser?.id;
-    if (!userId) return;
-    await supabase.from('user_poe_sessions').delete().eq('user_id', userId);
-    setSessionPersisted(false);
-  }, [supabaseUser]);
-
-  // Restore saved session on init
-  const restoreSession = useCallback(async () => {
-    const userId = supabaseUser?.id;
-    if (!userId) return;
-    const { data } = await supabase
-      .from('user_poe_sessions')
-      .select('encrypted_session, account_name')
-      .eq('user_id', userId)
-      .maybeSingle();
-    if (data?.encrypted_session) {
-      setSessionPersisted(true);
-      // Set in memory so all subsequent proxy requests include it
-      setPoeSessionId(data.encrypted_session);
-      // POST to establish backend session
-      try {
-        const response = await proxyFetch('/api/v1/auth/session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ poeSessionId: data.encrypted_session }),
-        });
-        if (!response.ok) {
-          logApiError({ path: '/api/v1/auth/session', statusCode: response.status, errorCode: 'auth_restore', message: `Session restore failed (${response.status})` });
-        }
-      } catch {
-        // Silent fail on restore
-      }
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) return;
+    try {
+      await fetch(POE_SESSION_URL, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+    } catch {
+      // Silent fail
     }
-  }, [supabaseUser]);
+    setSessionPersisted(false);
+  }, []);
+
+  // Restore saved session on init via server-side decryption
+  const restoreSession = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) return;
+    try {
+      const res = await fetch(POE_SESSION_URL, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.poeSessionId) {
+        setSessionPersisted(true);
+        setPoeSessionId(data.poeSessionId);
+        // POST to establish backend session
+        try {
+          const response = await proxyFetch('/api/v1/auth/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ poeSessionId: data.poeSessionId }),
+          });
+          if (!response.ok) {
+            logApiError({ path: '/api/v1/auth/session', statusCode: response.status, errorCode: 'auth_restore', message: `Session restore failed (${response.status})` });
+          }
+        } catch {
+          // Silent fail on restore
+        }
+      }
+    } catch {
+      // Silent fail
+    }
+  }, []);
 
   useEffect(() => {
     if (!supabaseReady || !isApproved) {

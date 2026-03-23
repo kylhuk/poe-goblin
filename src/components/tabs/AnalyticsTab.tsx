@@ -40,7 +40,7 @@ import {
   type GoldDiagnosticsResponse,
 } from '@/services/api';
 import { api } from '@/services/api';
-import type { MlAutomationStatus, MlAutomationHistory, PricingOutliersResponse, SearchHistoryResponse, SearchSuggestion } from '@/types/api';
+import type { MlAutomationStatus, MlAutomationHistory, MlAutomationObservability, PricingOutliersResponse, SearchHistoryResponse, SearchSuggestion } from '@/types/api';
 import { RenderState } from '@/components/shared/RenderState';
 import { Progress } from '@/components/ui/progress';
 
@@ -547,9 +547,7 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
   const datasetCoverage = history?.datasetCoverage ?? null;
   const promotions = history?.promotions ?? [];
   const runs = history?.history ?? [];
-  const modelMetrics = history?.modelMetrics ?? [];
-  const modelHistoryEntries = history?.modelHistory ?? [];
-  const routeFamilies = history?.routeFamilies ?? [];
+  const observability = status?.observability ?? history?.observability ?? null;
   const mdapeTrendData = qualityTrend
     .filter((point) => point.avgMdape != null)
     .map((point, index) => ({
@@ -742,93 +740,8 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
         </>
       )}
 
-      {/* Model Metrics (per-route model performance) */}
-      {modelMetrics.length > 0 && (
-        <Card className="card-game">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-sans">Model Metrics</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs">Route</TableHead>
-                  <TableHead className="text-xs">Model</TableHead>
-                  <TableHead className="text-xs text-right">Samples</TableHead>
-                  <TableHead className="text-xs text-right">MDAPE</TableHead>
-                  <TableHead className="text-xs text-right">Coverage</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {modelMetrics.map((m, i) => (
-                  <TableRow key={i}>
-                    <TableCell className="text-xs font-mono">{m.route ?? '—'}</TableCell>
-                    <TableCell className="text-xs font-mono">{m.modelVersion ?? '—'}</TableCell>
-                    <TableCell className="text-xs font-mono text-right">{m.sampleCount != null ? formatCompact(m.sampleCount) : '—'}</TableCell>
-                    <TableCell className="text-xs font-mono text-right">{formatPct(m.avgMdape)}</TableCell>
-                    <TableCell className="text-xs font-mono text-right">{formatPct(m.avgIntervalCoverage)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Model History */}
-      {modelHistoryEntries.length > 0 && (
-        <Card className="card-game">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-sans">Model Version History</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs">Model</TableHead>
-                  <TableHead className="text-xs">Promoted</TableHead>
-                  <TableHead className="text-xs">Retired</TableHead>
-                  <TableHead className="text-xs text-right">Runs</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {modelHistoryEntries.map((m, i) => (
-                  <TableRow key={i}>
-                    <TableCell className="text-xs font-mono">{m.modelVersion ?? '—'}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{m.promotedAt ? formatDateTimeShort(m.promotedAt) : '—'}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{m.retiredAt ? formatDateTimeShort(m.retiredAt) : '—'}</TableCell>
-                    <TableCell className="text-xs font-mono text-right">{m.runsCount ?? '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Route Families */}
-      {routeFamilies.length > 0 && (
-        <Card className="card-game">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-sans">Route Families</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {routeFamilies.map((f, i) => (
-              <div key={i} className="text-xs">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-medium text-foreground">{f.family ?? 'Unknown'}</span>
-                  {f.totalSamples != null && <span className="text-muted-foreground font-mono">{formatCompact(f.totalSamples)} samples</span>}
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {f.routes.map((r) => (
-                    <Badge key={r} variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5">{r}</Badge>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+      {/* Observability */}
+      {observability && <ObservabilityPanel observability={observability} />}
 
       {runs.length > 0 && (
         <Card className="card-game">
@@ -868,6 +781,58 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
     </div>
   );
 }
+
+function ObservabilityPanel({ observability }: { observability: MlAutomationObservability }) {
+  return (
+    <Card className="card-game">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-sans">Observability</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 text-xs">
+          <div>
+            <span className="text-muted-foreground">Dataset Rows</span>
+            <p className="font-mono text-foreground">{formatCompact(observability.datasetRows)}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Promoted Models</span>
+            <p className="font-mono text-foreground">{observability.promotedModels}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Eval Runs</span>
+            <p className="font-mono text-foreground">{observability.evalRuns}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Eval Sample Rows</span>
+            <p className="font-mono text-foreground">{formatCompact(observability.evalSampleRows)}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Evaluation Available</span>
+            <div className="mt-0.5">
+              {observability.evaluationAvailable
+                ? <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                : <XCircle className="h-4 w-4 text-muted-foreground" />}
+            </div>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Latest Training</span>
+            <p className="font-mono text-foreground">{observability.latestTrainingAsOf ? formatDateTimeShort(observability.latestTrainingAsOf) : '—'}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Latest Promotion</span>
+            <p className="font-mono text-foreground">{observability.latestPromotionAt ? formatDateTimeShort(observability.latestPromotionAt) : '—'}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Latest Eval</span>
+            <p className="font-mono text-foreground">{observability.latestEvalAt ? formatDateTimeShort(observability.latestEvalAt) : '—'}</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
 
 function MlSummaryMetricCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
