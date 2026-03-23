@@ -463,44 +463,6 @@ function normalizeMlPredictOneResponse(payload: unknown): MlPredictOneResponse {
   const p90 = typeof intervalSource.p90 === 'number'
     ? intervalSource.p90
     : (typeof source.price_p90 === 'number' ? source.price_p90 : null);
-  const rawShadow = source.shadowComparison ?? source.shadow_comparison;
-  let shadowComparison: import('@/types/api').ShadowComparison | null = null;
-  if (rawShadow && typeof rawShadow === 'object') {
-    const sc = rawShadow as Record<string, unknown>;
-    const candidateRaw = asObject(sc.candidate);
-    const incumbentRaw = asObject(sc.incumbent);
-    const candidateSide = Object.keys(candidateRaw).length > 0 ? {
-      route: optString(candidateRaw.route),
-      price_p50: optNumber(candidateRaw.price_p50),
-      confidence_percent: optNumber(candidateRaw.confidence_percent),
-      interval_p10: optNumber(candidateRaw.interval_p10),
-      interval_p90: optNumber(candidateRaw.interval_p90),
-    } : null;
-    const incumbentSide = Object.keys(incumbentRaw).length > 0 ? {
-      route: optString(incumbentRaw.route),
-      price_p50: optNumber(incumbentRaw.price_p50),
-      confidence_percent: optNumber(incumbentRaw.confidence_percent),
-      interval_p10: optNumber(incumbentRaw.interval_p10),
-      interval_p90: optNumber(incumbentRaw.interval_p90),
-    } : null;
-    // Compute delta if both sides have p50
-    let deltaPercent = optNumber(sc.deltaPercent ?? sc.delta_percent);
-    if (deltaPercent == null && candidateSide?.price_p50 != null && incumbentSide?.price_p50 != null && incumbentSide.price_p50 !== 0) {
-      deltaPercent = ((candidateSide.price_p50 - incumbentSide.price_p50) / incumbentSide.price_p50) * 100;
-    }
-    shadowComparison = {
-      candidateModelVersion: optString(sc.candidateModelVersion ?? sc.candidate_model_version),
-      incumbentModelVersion: optString(sc.incumbentModelVersion ?? sc.incumbent_model_version),
-      candidate: candidateSide,
-      incumbent: incumbentSide,
-      deltaPercent,
-    };
-  }
-
-  const searchRaw = asObject(source.searchDiagnostics ?? source.search_diagnostics);
-  const comparablesSummaryRaw = asObject(source.comparablesSummary ?? source.comparables_summary);
-  const valueDriversRaw = asObject(source.valueDrivers ?? source.value_drivers);
-  const scenarioPricesRaw = asObject(source.scenarioPrices ?? source.scenario_prices);
 
   return {
     predictedValue: typeof source.predictedValue === 'number'
@@ -522,40 +484,6 @@ function normalizeMlPredictOneResponse(payload: unknown): MlPredictOneResponse {
       : (typeof source.fallback_reason === 'string' ? source.fallback_reason : ''),
     league: optString(source.league) ?? undefined,
     route: optString(source.route) ?? undefined,
-    servingModelVersion: optString(source.servingModelVersion ?? source.serving_model_version) ?? null,
-    shadowComparison,
-    searchDiagnostics: {
-      stage: (optNumber(searchRaw.stage) ?? 0) as 0 | 1 | 2 | 3 | 4,
-      candidateCount: optNumber(searchRaw.candidateCount ?? searchRaw.candidate_count) ?? 0,
-      effectiveSupport: optNumber(searchRaw.effectiveSupport ?? searchRaw.effective_support) ?? 0,
-      droppedAffixes: Array.isArray(searchRaw.droppedAffixes ?? searchRaw.dropped_affixes)
-        ? (searchRaw.droppedAffixes ?? searchRaw.dropped_affixes as unknown[])
-            .map((entry) => optString(entry) ?? '')
-            .filter((entry) => entry.length > 0)
-        : [],
-      degradationReason: optString(searchRaw.degradationReason ?? searchRaw.degradation_reason),
-    },
-    comparablesSummary: {
-      anchorPrice: optNumber(comparablesSummaryRaw.anchorPrice ?? comparablesSummaryRaw.anchor_price),
-      anchorLow: optNumber(comparablesSummaryRaw.anchorLow ?? comparablesSummaryRaw.anchor_low),
-      anchorHigh: optNumber(comparablesSummaryRaw.anchorHigh ?? comparablesSummaryRaw.anchor_high),
-    },
-    valueDrivers: {
-      positive: Array.isArray(valueDriversRaw.positive) ? valueDriversRaw.positive.map((entry) => String(entry)) : [],
-      negative: Array.isArray(valueDriversRaw.negative) ? valueDriversRaw.negative.map((entry) => String(entry)) : [],
-    },
-    scenarioPrices: {
-      weakerRolls: Array.isArray(scenarioPricesRaw.weakerRolls ?? scenarioPricesRaw.weaker_rolls)
-        ? (scenarioPricesRaw.weakerRolls ?? scenarioPricesRaw.weaker_rolls as unknown[])
-            .map((entry) => optNumber(entry))
-            .filter((entry): entry is number => entry != null)
-        : [],
-      strongerRolls: Array.isArray(scenarioPricesRaw.strongerRolls ?? scenarioPricesRaw.stronger_rolls)
-        ? (scenarioPricesRaw.strongerRolls ?? scenarioPricesRaw.stronger_rolls as unknown[])
-            .map((entry) => optNumber(entry))
-            .filter((entry): entry is number => entry != null)
-        : [],
-    },
     ...normalizeTrustFields(source),
   };
 }
