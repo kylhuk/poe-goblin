@@ -1,25 +1,9 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
-
+import { toast } from 'sonner';
+import { authProxyFetch, getOAuthPopupFeatures, POE_OAUTH_MESSAGE } from './authProxy';
 import { logApiError } from './apiErrorLog';
-
-async function proxyFetch(path: string, init?: RequestInit): Promise<Response> {
-  const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token;
-  const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-  const url = `https://${projectId}.supabase.co/functions/v1/api-proxy`;
-  return fetch(url, {
-    ...init,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      'x-proxy-path': `/api/v1/auth${path}`,
-      ...(init?.headers || {}),
-    },
-  });
-}
 
 export interface AuthUser {
   accountName: string;
@@ -69,7 +53,7 @@ export const useAuth = () => useContext(AuthContext);
 
 async function fetchSession(): Promise<SessionPayload> {
   try {
-    const response = await proxyFetch('/session');
+    const response = await authProxyFetch('/session');
     if (!response.ok) {
       logApiError({ path: '/api/v1/auth/session', statusCode: response.status, errorCode: 'auth_session', message: `Session check failed (${response.status})` });
       return { status: 'disconnected' };
@@ -86,6 +70,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [supabaseReady, setSupabaseReady] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
   const [userRole, setUserRole] = useState<UserRole>('public');
+  const popupRef = useRef<Window | null>(null);
+  const popupPollRef = useRef<number | null>(null);
 
   const checkApprovalAndRole = useCallback(async (userId: string) => {
     const { data: approval } = await supabase
@@ -168,27 +154,91 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     void refreshSession().finally(() => setIsLoading(false));
   }, [refreshSession, supabaseReady, isApproved]);
 
+  useEffect(() => {
+    const clearPopupPoll = () => {
+      if (popupPollRef.current !== null) {
+        window.clearInterval(popupPollRef.current);
+        popupPollRef.current = null;
+      }
+    };
+
+    const handleMessage = async (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.data?.type !== POE_OAUTH_MESSAGE) {
+        return;
+      }
+
+      clearPopupPoll();
+      popupRef.current = null;
+
+      if (event.data.status !== 'success') {
+        toast.error(event.data.message || 'Path of Exile login failed');
+        return;
+      }
+
+      await refreshSession();
+      toast.success('Path of Exile connected');
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      clearPopupPoll();
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [refreshSession]);
+
   const login = useCallback(async () => {
     try {
-      const res = await proxyFetch('/login');
+      const res = await authProxyFetch('/login');
       if (!res.ok) throw new Error(`Login request failed (${res.status})`);
       const data = await res.json();
       const authorizeUrl = data.authorizeUrl || data.authorize_url || data.url;
       if (!authorizeUrl) throw new Error('No authorize URL returned from backend');
-      window.location.assign(authorizeUrl);
+
+      if (popupRef.current && !popupRef.current.closed) {
+        popupRef.current.focus();
+        return;
+      }
+
+      const popup = window.open(authorizeUrl, 'poe-oauth', getOAuthPopupFeatures());
+      if (!popup) {
+        toast.error('Popup blocked. Please allow popups and try again.');
+        throw new Error('OAuth popup blocked');
+      }
+
+      popupRef.current = popup;
+      popup.focus();
+      toast.loading('Waiting for Path of Exile login…', { id: 'poe-oauth' });
+
+      if (popupPollRef.current !== null) {
+        window.clearInterval(popupPollRef.current);
+      }
+
+      popupPollRef.current = window.setInterval(() => {
+        if (popupRef.current && popupRef.current.closed) {
+          window.clearInterval(popupPollRef.current ?? undefined);
+          popupPollRef.current = null;
+          popupRef.current = null;
+          toast.dismiss('poe-oauth');
+        }
+      }, 500);
     } catch (err) {
+      toast.dismiss('poe-oauth');
       logApiError({ path: '/api/v1/auth/login', errorCode: 'login_error', message: err instanceof Error ? err.message : 'Login failed' });
+      if (err instanceof Error && err.message !== 'OAuth popup blocked') {
+        toast.error(err.message);
+      }
     }
   }, []);
 
   const logout = useCallback(async () => {
     try {
-      await proxyFetch('/logout', { method: 'POST' });
+      await authProxyFetch('/logout', { method: 'POST' });
     } catch (err) {
       logApiError({ path: '/api/v1/auth/logout', errorCode: 'network_error', message: err instanceof Error ? err.message : 'Network error' });
     } finally {
       setUser(null);
       setSessionState('disconnected');
+      toast.success('Disconnected from Path of Exile');
     }
   }, []);
 
@@ -217,3 +267,4 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     </AuthContext.Provider>
   );
 };
+
