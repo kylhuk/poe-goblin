@@ -2,9 +2,6 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getSessionMock: vi.fn(),
-  getPoeSessionIdMock: vi.fn(),
-  getPoeBackendSessionMock: vi.fn(),
-  setPoeBackendSessionMock: vi.fn(),
 }));
 
 vi.mock('@/integrations/supabase/client', () => ({
@@ -15,11 +12,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
-vi.mock('@/services/auth', () => ({
-  getPoeSessionId: mocks.getPoeSessionIdMock,
-  getPoeBackendSession: mocks.getPoeBackendSessionMock,
-  setPoeBackendSession: mocks.setPoeBackendSessionMock,
-}));
+vi.mock('@/services/auth', () => ({}));
 
 import {
   api,
@@ -65,8 +58,6 @@ describe('api.getScannerRecommendations', () => {
   test('serializes filters into backend query params and returns metadata', async () => {
     vi.stubEnv('VITE_SUPABASE_PROJECT_ID', 'project-id');
     mocks.getSessionMock.mockResolvedValue({ data: { session: { access_token: 'token-123' } } });
-    mocks.getPoeSessionIdMock.mockReturnValue('legacy-session-id');
-    mocks.getPoeBackendSessionMock.mockReturnValue(null);
     const responsePayload = {
       recommendations: [sampleRecommendation],
       meta: {
@@ -91,7 +82,6 @@ describe('api.getScannerRecommendations', () => {
     const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
     const parsedUrl = new URL(String(calledUrl));
     expect(parsedUrl.pathname).toBe('/functions/v1/api-proxy');
-    expect((init.headers as Record<string, string>)['x-poe-session']).toBeUndefined();
     expect((init.headers as Record<string, string>)['x-proxy-path']).toContain('/api/v1/ops/scanner/recommendations');
     const proxiedUrl = new URL(`https://example.com${(init.headers as Record<string, string>)['x-proxy-path']}`);
     expect(proxiedUrl.searchParams.get('sort')).toBe('liquidity_score');

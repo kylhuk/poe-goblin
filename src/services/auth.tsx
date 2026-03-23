@@ -4,28 +4,15 @@ import { supabase } from '@/integrations/supabase/client';
 import { API_BASE } from '@/services/config';
 import { logApiError } from './apiErrorLog';
 
-let _poeBackendSession: string | null = null;
-export function setPoeBackendSession(id: string | null) {
-  _poeBackendSession = id;
-}
-export function getPoeBackendSession() {
-  return _poeBackendSession;
-}
-
 async function proxyFetch(path: string, init?: RequestInit): Promise<Response> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
-  const extraHeaders: Record<string, string> = {};
-  if (_poeBackendSession) {
-    extraHeaders['x-poe-backend-session'] = _poeBackendSession;
-  }
   return fetch(`${API_BASE}/api/v1/auth${path}`, {
     ...init,
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...extraHeaders,
       ...(init?.headers || {}),
     },
   });
@@ -178,44 +165,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     void refreshSession().finally(() => setIsLoading(false));
   }, [refreshSession, supabaseReady, isApproved]);
 
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) {
-        return;
-      }
-      const data = event.data;
-      if (!data || typeof data !== 'object' || data.type !== 'poe_auth_callback_complete') {
-        return;
-      }
-      void refreshSession();
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [refreshSession]);
-
   const login = useCallback(async () => {
-    const loginUrl = `${API_BASE}/api/v1/auth/login`;
-    const popup = window.open(
-      loginUrl,
-      'poe-auth',
-      'popup=yes,width=640,height=800,resizable=yes,scrollbars=yes',
-    );
-    if (!popup) {
-      window.location.assign(loginUrl);
-      return;
+    try {
+      const res = await proxyFetch('/login');
+      if (!res.ok) throw new Error(`Login request failed (${res.status})`);
+      const data = await res.json();
+      const authorizeUrl = data.authorizeUrl || data.authorize_url || data.url;
+      if (!authorizeUrl) throw new Error('No authorize URL returned from backend');
+      window.location.assign(authorizeUrl);
+    } catch (err) {
+      logApiError({ path: '/api/v1/auth/login', errorCode: 'login_error', message: err instanceof Error ? err.message : 'Login failed' });
     }
-    popup.focus();
   }, []);
 
   const logout = useCallback(async () => {
     try {
-      await proxyFetch('/logout', {
-        method: 'POST',
-      });
+      await proxyFetch('/logout', { method: 'POST' });
     } catch (err) {
       logApiError({ path: '/api/v1/auth/logout', errorCode: 'network_error', message: err instanceof Error ? err.message : 'Network error' });
     } finally {
-      setPoeBackendSession(null);
       setUser(null);
       setSessionState('disconnected');
     }
