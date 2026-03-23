@@ -365,6 +365,7 @@ body::after {
   background: hsl(25 10% 4%);
   border: 1px solid hsl(25 8% 10%);
   position: relative;
+  aspect-ratio: 1;
 }
 
 .stash-empty-cell::after {
@@ -385,6 +386,7 @@ body::after {
   background: hsl(25 10% 4%);
   border: 1px solid hsl(25 8% 10%);
   transition: filter 0.15s ease, box-shadow 0.15s ease;
+  overflow: hidden;
 }
 
 .stash-item-cell:hover {

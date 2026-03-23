@@ -15,8 +15,8 @@ export default function NormalGrid({ items, gridSize }: NormalGridProps) {
       <div
         className="stash-grid"
         style={{
-          gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${gridSize}, minmax(0, 1fr))`,
+          gridTemplateColumns: `repeat(${gridSize}, 1fr)`,
+          gridTemplateRows: `repeat(${gridSize}, 1fr)`,
           gap: isQuad ? '0px' : '1px',
         }}
       >
