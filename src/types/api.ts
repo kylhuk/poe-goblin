@@ -560,8 +560,27 @@ export interface MlAutomationHistory {
   };
 }
 
+// ========== Health ==========
+export interface HealthResponse {
+  status: 'ok' | 'degraded';
+  service: string;
+  version: string;
+  ml: Record<string, unknown>;
+}
+
+// ========== ML Contract ==========
+export interface MlContractResponse {
+  [key: string]: unknown;
+}
+
+// ========== ML League Status ==========
+export interface MlLeagueStatusResponse {
+  [key: string]: unknown;
+}
+
 // ========== API Service Interface ==========
 export interface ApiService {
+  getHealthz(): Promise<HealthResponse>;
   getDashboard(): Promise<DashboardResponse>;
   getScannerSummary(): Promise<ScannerSummary>;
   getScannerRecommendations(
@@ -571,6 +590,8 @@ export interface ApiService {
   getStashStatus(): Promise<StashStatus>;
   getMlAutomationStatus(): Promise<MlAutomationStatus>;
   getMlAutomationHistory(): Promise<MlAutomationHistory>;
+  getMlContract(): Promise<MlContractResponse>;
+  getMlLeagueStatus(): Promise<MlLeagueStatusResponse>;
 
   getServices(): Promise<Service[]>;
   startService(id: string): Promise<void>;
