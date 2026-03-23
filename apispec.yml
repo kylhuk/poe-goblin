@@ -745,50 +745,6 @@ paths:
       responses:
         '204': { description: No content }
 
-  /api/v1/ml/leagues/{league}/rollout:
-    get:
-      tags: [ml]
-      summary: Get rollout controls
-      parameters:
-        - in: path
-          name: league
-          required: true
-          schema: { type: string }
-      responses:
-        '200':
-          description: Rollout controls
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/RolloutControls' }
-    post:
-      tags: [ml]
-      summary: Update rollout controls
-      parameters:
-        - in: path
-          name: league
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                shadowMode: { type: boolean }
-                cutoverEnabled: { type: boolean }
-                rollbackToIncumbent: { type: boolean }
-      responses:
-        '200':
-          description: Updated rollout controls
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/RolloutControls' }
-    options:
-      tags: [ml]
-      responses:
-        '204': { description: No content }
-
   /api/v1/ml/leagues/{league}/automation/status:
     get:
       tags: [ml]
@@ -1014,23 +970,6 @@ components:
         predictionSource: { type: string }
         estimateTrust: { type: string }
         estimateWarning: { type: [string, 'null'] }
-        servingModelVersion: { type: [string, 'null'] }
-        rollout: { type: [object, 'null'], additionalProperties: true }
-        shadowComparison: { type: [object, 'null'], additionalProperties: true }
-
-    RolloutControls:
-      type: object
-      properties:
-        league: { type: string }
-        shadowMode: { type: boolean }
-        cutoverEnabled: { type: boolean }
-        candidateModelVersion: { type: [string, 'null'] }
-        incumbentModelVersion: { type: [string, 'null'] }
-        effectiveServingModelVersion: { type: [string, 'null'] }
-        updatedAt: { type: [string, 'null'], format: date-time }
-        lastAction: { type: [string, 'null'] }
-      required: [league, shadowMode, cutoverEnabled]
-
     MlAutomationObservability:
       type: object
       properties:
@@ -1067,6 +1006,13 @@ components:
           type: array
           items: { type: object, additionalProperties: true }
         observability: { $ref: '#/components/schemas/MlAutomationObservability' }
+        trainerRuntime:
+          type: [object, 'null']
+          properties:
+            stage: { type: [string, 'null'] }
+            status: { type: [string, 'null'] }
+            updatedAt: { type: [string, 'null'], format: date-time }
+            details: { type: object, additionalProperties: true }
       required: [league, routeHotspots, observability]
 
     MlAutomationHistoryResponse:
@@ -1081,6 +1027,15 @@ components:
         qualityTrend:
           type: array
           items: { type: object, additionalProperties: true }
+        charts:
+          type: object
+          properties:
+            mdapeHistory:
+              type: array
+              items: { type: object, additionalProperties: true }
+            coverageHistory:
+              type: array
+              items: { type: object, additionalProperties: true }
         trainingCadence:
           type: array
           items: { type: object, additionalProperties: true }

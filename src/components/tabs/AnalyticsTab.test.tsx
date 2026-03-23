@@ -119,8 +119,6 @@ vi.mock('@/services/api', () => ({
   getAnalyticsReport: vi.fn(),
   getAnalyticsSearchHistory: getAnalyticsSearchHistoryMock,
   getAnalyticsSearchSuggestions: getAnalyticsSearchSuggestionsMock,
-  getRolloutControls: vi.fn(),
-  updateRolloutControls: vi.fn(),
   api: {},
 }));
 

@@ -28,8 +28,6 @@ import {
   getAnalyticsReport,
   getAnalyticsSearchHistory,
   getAnalyticsSearchSuggestions,
-  getRolloutControls,
-  updateRolloutControls,
   type IngestionRow, 
   type ScannerRow, 
   type AlertRow, 
@@ -40,13 +38,10 @@ import {
   type ReportAnalytics,
   type ReportData,
   type GoldDiagnosticsResponse,
-  type RolloutControls,
 } from '@/services/api';
 import { api } from '@/services/api';
 import type { MlAutomationStatus, MlAutomationHistory, PricingOutliersResponse, SearchHistoryResponse, SearchSuggestion } from '@/types/api';
 import { RenderState } from '@/components/shared/RenderState';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 
 interface AnalyticsTabProps {
@@ -525,9 +520,6 @@ function MlPanel() {
         </Card>
       )}
 
-      {/* ML Rollout Controls */}
-      <RolloutCard />
-
       {/* ML Automation Section */}
       <MlAutomationPanel status={automationStatus} history={automationHistory} error={automationError} />
     </div>
@@ -558,7 +550,6 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
   const modelMetrics = history?.modelMetrics ?? [];
   const modelHistoryEntries = history?.modelHistory ?? [];
   const routeFamilies = history?.routeFamilies ?? [];
-  const mode = history?.mode ?? status?.mode;
   const mdapeTrendData = qualityTrend
     .filter((point) => point.avgMdape != null)
     .map((point, index) => ({
@@ -583,16 +574,9 @@ function MlAutomationPanel({ status, history, error }: { status: MlAutomationSta
     <div className="space-y-4">
       {status && (
         <Card className="card-game">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
+            <CardHeader className="pb-2">
               <CardTitle className="text-sm font-sans">Automation Status</CardTitle>
-              {mode && (
-                <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5">
-                  {mode}
-                </Badge>
-              )}
-            </div>
-          </CardHeader>
+            </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 text-xs">
               <div>
@@ -1179,93 +1163,6 @@ function DiagnosticsPanel() {
     </div>
   );
 }
-
-function RolloutCard() {
-  const [data, setData] = useState<RolloutControls | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [updating, setUpdating] = useState(false);
-
-  const load = useCallback(() => {
-    getRolloutControls()
-      .then(setData)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load rollout'));
-  }, []);
-  useEffect(() => { load(); }, [load]);
-
-  const toggle = useCallback(async (field: 'shadowMode' | 'cutoverEnabled', value: boolean) => {
-    setUpdating(true);
-    try {
-      const updated = await updateRolloutControls({ [field]: value });
-      setData(updated);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update rollout');
-    } finally {
-      setUpdating(false);
-    }
-  }, []);
-
-  if (error) {
-    return (
-      <Card className="card-game">
-        <CardHeader className="pb-2"><CardTitle className="text-sm font-sans">Rollout Controls</CardTitle></CardHeader>
-        <CardContent><RenderState kind="degraded" message={error} /></CardContent>
-      </Card>
-    );
-  }
-  if (!data) return null;
-
-  return (
-    <Card className="card-game">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-sans">Rollout Controls</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 text-xs">
-          <div>
-            <span className="text-muted-foreground">Candidate</span>
-            <p className="font-mono text-foreground">{data.candidateModelVersion ?? 'None'}</p>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Incumbent</span>
-            <p className="font-mono text-foreground">{data.incumbentModelVersion ?? 'None'}</p>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Serving</span>
-            <p className="font-mono text-foreground">{data.effectiveServingModelVersion ?? 'None'}</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-6 flex-wrap">
-          <div className="flex items-center gap-2">
-            <Switch
-              id="shadow-mode"
-              checked={data.shadowMode}
-              disabled={updating}
-              onCheckedChange={(v) => toggle('shadowMode', v)}
-            />
-            <Label htmlFor="shadow-mode" className="text-xs">Shadow Mode</Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              id="cutover-enabled"
-              checked={data.cutoverEnabled}
-              disabled={updating}
-              onCheckedChange={(v) => toggle('cutoverEnabled', v)}
-            />
-            <Label htmlFor="cutover-enabled" className="text-xs">Cutover</Label>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
-          {data.lastAction && <span>Last action: <span className="font-mono text-foreground">{data.lastAction}</span></span>}
-          {data.updatedAt && <span>Updated: <span className="text-foreground">{formatDateTimeShort(data.updatedAt)}</span></span>}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-
 
 type HistogramBucket = {
   bucketStart: number | string;
