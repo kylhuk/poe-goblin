@@ -6,44 +6,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { ConfidenceBadge } from '@/components/shared/StatusIndicators';
 import { api } from '@/services/api';
-import type { PriceCheckResponse, MlPredictOneResponse, ShadowComparison } from '@/types/api';
+import type { PriceCheckResponse, ShadowComparison } from '@/types/api';
 import { Brain, AlertTriangle, ServerCrash, ShieldAlert, Info, GitCompare } from 'lucide-react';
 import { RenderState } from '@/components/shared/RenderState';
 import { useMouseGlow } from '@/hooks/useMouseGlow';
 
-/** Merged result combining price-check data with predict-one shadow/rollout metadata */
-interface MergedPriceResult extends PriceCheckResponse {
-  servingModelVersion?: string | null;
-  rollout?: Record<string, unknown> | null;
-  shadowComparison?: ShadowComparison | null;
-}
-
-function isLowTrustEstimate(r: MergedPriceResult): boolean {
+function isLowTrustEstimate(r: PriceCheckResponse): boolean {
   return r.mlPredicted === false || r.estimateTrust === 'low' || !!r.fallbackReason;
-}
-
-function mergePriceAndTrust(
-  price: PriceCheckResponse,
-  trust: MlPredictOneResponse | null,
-): MergedPriceResult {
-  if (!trust) return price;
-  return {
-    ...price,
-    // Trust fields: prefer price-check (now populated), fallback to predict-one
-    mlPredicted: price.mlPredicted ?? trust.mlPredicted,
-    predictionSource: price.predictionSource ?? trust.predictionSource,
-    estimateTrust: price.estimateTrust ?? trust.estimateTrust,
-    estimateWarning: price.estimateWarning ?? trust.estimateWarning,
-    // Predict-one-only fields
-    servingModelVersion: trust.servingModelVersion,
-    rollout: trust.rollout,
-    shadowComparison: trust.shadowComparison,
-  };
 }
 
 const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function PriceCheckTab(_props, ref) {
   const [text, setText] = useState('');
-  const [result, setResult] = useState<MergedPriceResult | null>(null);
+  const [result, setResult] = useState<PriceCheckResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -60,18 +34,8 @@ const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function
     setError(null);
     setErrorCode(null);
     try {
-      // Single price-check call now returns trust metadata; predict-one only for shadow/rollout
       const priceData = await api.priceCheck({ itemText: text });
-
-      // Optional secondary call for shadow/rollout data — don't block on failure
-      let trust: MlPredictOneResponse | null = null;
-      try {
-        trust = await api.mlPredictOne({ itemText: text });
-      } catch {
-        // Shadow data is optional
-      }
-
-      setResult(mergePriceAndTrust(priceData, trust));
+      setResult(priceData);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Price prediction failed';
       const code = msg.split(':')[0] ?? '';
@@ -161,7 +125,7 @@ function PriceCheckInput({
 function PriceResultCard({
   result, lowTrust, onMouseMove,
 }: {
-  result: MergedPriceResult;
+  result: PriceCheckResponse;
   lowTrust: boolean;
   onMouseMove: React.MouseEventHandler;
 }) {
@@ -171,16 +135,6 @@ function PriceResultCard({
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="text-sm font-sans">ML Prediction</CardTitle>
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            {result.servingModelVersion && (
-              <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5">
-                model {result.servingModelVersion}
-              </Badge>
-            )}
-            {result.rollout && (
-              <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5 border-accent/40 text-accent-foreground">
-                {JSON.stringify(result.rollout)}
-              </Badge>
-            )}
             {result.predictionSource && (
               <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-5">
                 {result.predictionSource}
@@ -251,6 +205,30 @@ function PriceResultCard({
 
         {/* Shadow comparison card */}
         {result.shadowComparison && <ShadowComparisonCard shadow={result.shadowComparison} />}
+
+        {(result.valueDrivers?.positive?.length || result.valueDrivers?.negative?.length) ? (
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Value Drivers</p>
+            {result.valueDrivers?.positive?.length ? (
+              <p className="text-xs text-foreground">Positive: {result.valueDrivers.positive.join(', ')}</p>
+            ) : null}
+            {result.valueDrivers?.negative?.length ? (
+              <p className="text-xs text-muted-foreground">Negative: {result.valueDrivers.negative.join(', ')}</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {result.searchDiagnostics ? (
+          <div className="text-xs text-muted-foreground">
+            Stage {result.searchDiagnostics.stage} • {result.searchDiagnostics.effectiveSupport} effective support
+          </div>
+        ) : null}
+
+        {result.scenarioPrices?.weakerRolls?.length ? (
+          <div className="text-xs text-muted-foreground">
+            Weaker rolls: {result.scenarioPrices.weakerRolls.join(', ')}
+          </div>
+        ) : null}
 
         {/* Comparables */}
         <ComparablesTable comparables={result.comparables} />
@@ -330,8 +308,8 @@ function ComparablesTable({ comparables }: { comparables: MergedPriceResult['com
               </TableRow>
             </TableHeader>
             <TableBody>
-              {comparables.map((row, index) => (
-                <TableRow key={`${row.name}-${row.price}-${index}`}>
+              {comparables.map((row) => (
+                <TableRow key={`${row.name}-${row.price}-${row.addedOn ?? 'none'}-${row.currency}`}>
                   <TableCell className="text-xs font-medium text-foreground">{row.name}</TableCell>
                   <TableCell className="text-xs font-mono">{row.price}</TableCell>
                   <TableCell className="text-xs font-mono">{row.currency}</TableCell>

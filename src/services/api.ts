@@ -168,18 +168,6 @@ export interface GoldDiagnosticsResponse {
   marts: GoldDiagnosticsMart[];
 }
 
-// ========== ML Rollout Controls ==========
-export interface RolloutControls {
-  league: string;
-  shadowMode: boolean;
-  cutoverEnabled: boolean;
-  candidateModelVersion: string | null;
-  incumbentModelVersion: string | null;
-  effectiveServingModelVersion: string | null;
-  updatedAt: string | null;
-  lastAction: string | null;
-}
-
 export interface ReportAnalytics {
   status: string;
   report: ReportData;
@@ -460,40 +448,6 @@ function normalizeReportAnalytics(raw: unknown): ReportAnalytics {
   };
 }
 
-export async function getRolloutControls(): Promise<RolloutControls> {
-  const league = await primaryLeague();
-  const raw = await request<Record<string, unknown>>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/rollout`);
-  return normalizeRolloutControls(raw);
-}
-
-export async function updateRolloutControls(updates: { shadowMode?: boolean; cutoverEnabled?: boolean; rollbackToIncumbent?: boolean }): Promise<RolloutControls> {
-  const league = await primaryLeague();
-  const body: Record<string, unknown> = {};
-  if (updates.shadowMode !== undefined) body.shadowMode = updates.shadowMode;
-  if (updates.cutoverEnabled !== undefined) body.cutoverEnabled = updates.cutoverEnabled;
-  if (updates.rollbackToIncumbent !== undefined) body.rollbackToIncumbent = updates.rollbackToIncumbent;
-  const raw = await request<Record<string, unknown>>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/rollout`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
-  return normalizeRolloutControls(raw);
-}
-
-function normalizeRolloutControls(raw: unknown): RolloutControls {
-  const o = asObject(raw);
-  return {
-    league: optString(o.league) ?? '',
-    shadowMode: typeof (o.shadowMode ?? o.shadow_mode) === 'boolean' ? (o.shadowMode ?? o.shadow_mode) as boolean : false,
-    cutoverEnabled: typeof (o.cutoverEnabled ?? o.cutover_enabled) === 'boolean' ? (o.cutoverEnabled ?? o.cutover_enabled) as boolean : false,
-    candidateModelVersion: optString(o.candidateModelVersion ?? o.candidate_model_version),
-    incumbentModelVersion: optString(o.incumbentModelVersion ?? o.incumbent_model_version),
-    effectiveServingModelVersion: optString(o.effectiveServingModelVersion ?? o.effective_serving_model_version),
-    updatedAt: optString(o.updatedAt ?? o.updated_at),
-    lastAction: optString(o.lastAction ?? o.last_action),
-  };
-}
-
-
 function normalizeTrustFields(source: Record<string, unknown>) {
   return {
     mlPredicted: typeof (source.mlPredicted ?? source.ml_predicted) === 'boolean'
@@ -550,6 +504,11 @@ function normalizeMlPredictOneResponse(payload: unknown): MlPredictOneResponse {
     };
   }
 
+  const searchRaw = asObject(source.searchDiagnostics ?? source.search_diagnostics);
+  const comparablesSummaryRaw = asObject(source.comparablesSummary ?? source.comparables_summary);
+  const valueDriversRaw = asObject(source.valueDrivers ?? source.value_drivers);
+  const scenarioPricesRaw = asObject(source.scenarioPrices ?? source.scenario_prices);
+
   return {
     predictedValue: typeof source.predictedValue === 'number'
       ? source.predictedValue
@@ -571,8 +530,39 @@ function normalizeMlPredictOneResponse(payload: unknown): MlPredictOneResponse {
     league: optString(source.league) ?? undefined,
     route: optString(source.route) ?? undefined,
     servingModelVersion: optString(source.servingModelVersion ?? source.serving_model_version) ?? null,
-    rollout: (source.rollout != null && typeof source.rollout === 'object') ? source.rollout as Record<string, unknown> : null,
     shadowComparison,
+    searchDiagnostics: {
+      stage: (optNumber(searchRaw.stage) ?? 0) as 0 | 1 | 2 | 3 | 4,
+      candidateCount: optNumber(searchRaw.candidateCount ?? searchRaw.candidate_count) ?? 0,
+      effectiveSupport: optNumber(searchRaw.effectiveSupport ?? searchRaw.effective_support) ?? 0,
+      droppedAffixes: Array.isArray(searchRaw.droppedAffixes ?? searchRaw.dropped_affixes)
+        ? (searchRaw.droppedAffixes ?? searchRaw.dropped_affixes as unknown[])
+            .map((entry) => optString(entry) ?? '')
+            .filter((entry) => entry.length > 0)
+        : [],
+      degradationReason: optString(searchRaw.degradationReason ?? searchRaw.degradation_reason),
+    },
+    comparablesSummary: {
+      anchorPrice: optNumber(comparablesSummaryRaw.anchorPrice ?? comparablesSummaryRaw.anchor_price),
+      anchorLow: optNumber(comparablesSummaryRaw.anchorLow ?? comparablesSummaryRaw.anchor_low),
+      anchorHigh: optNumber(comparablesSummaryRaw.anchorHigh ?? comparablesSummaryRaw.anchor_high),
+    },
+    valueDrivers: {
+      positive: Array.isArray(valueDriversRaw.positive) ? valueDriversRaw.positive.map((entry) => String(entry)) : [],
+      negative: Array.isArray(valueDriversRaw.negative) ? valueDriversRaw.negative.map((entry) => String(entry)) : [],
+    },
+    scenarioPrices: {
+      weakerRolls: Array.isArray(scenarioPricesRaw.weakerRolls ?? scenarioPricesRaw.weaker_rolls)
+        ? (scenarioPricesRaw.weakerRolls ?? scenarioPricesRaw.weaker_rolls as unknown[])
+            .map((entry) => optNumber(entry))
+            .filter((entry): entry is number => entry != null)
+        : [],
+      strongerRolls: Array.isArray(scenarioPricesRaw.strongerRolls ?? scenarioPricesRaw.stronger_rolls)
+        ? (scenarioPricesRaw.strongerRolls ?? scenarioPricesRaw.stronger_rolls as unknown[])
+            .map((entry) => optNumber(entry))
+            .filter((entry): entry is number => entry != null)
+        : [],
+    },
     ...normalizeTrustFields(source),
   };
 }
@@ -585,6 +575,12 @@ function normalizePriceCheckResponse(payload: unknown): PriceCheckResponse {
   const p10 = typeof intervalSource.p10 === 'number' ? intervalSource.p10 : null;
   const p90 = typeof intervalSource.p90 === 'number' ? intervalSource.p90 : null;
   const rawComparables = Array.isArray(source.comparables) ? source.comparables : [];
+  const searchRaw = asObject(source.searchDiagnostics ?? source.search_diagnostics);
+  const comparablesSummaryRaw = asObject(source.comparablesSummary ?? source.comparables_summary);
+  const valueDriversRaw = asObject(source.valueDrivers ?? source.value_drivers);
+  const scenarioPricesRaw = asObject(source.scenarioPrices ?? source.scenario_prices);
+  const shadowRaw = asObject(source.shadowComparison ?? source.shadow_comparison);
+
   return {
     predictedValue: typeof source.predictedValue === 'number' ? source.predictedValue : 0,
     currency: typeof source.currency === 'string' && source.currency.trim() ? source.currency : 'chaos',
@@ -611,6 +607,47 @@ function normalizePriceCheckResponse(payload: unknown): PriceCheckResponse {
       : (typeof source.fallback_reason === 'string' ? source.fallback_reason : ''),
     fairValueP50: optNumber(source.fairValueP50 ?? source.fair_value_p50),
     fastSale24hPrice: optNumber(source.fastSale24hPrice ?? source.fast_sale_24h_price),
+    searchDiagnostics: {
+      stage: (optNumber(searchRaw.stage) ?? 0) as 0 | 1 | 2 | 3 | 4,
+      candidateCount: optNumber(searchRaw.candidateCount ?? searchRaw.candidate_count) ?? 0,
+      effectiveSupport: optNumber(searchRaw.effectiveSupport ?? searchRaw.effective_support) ?? 0,
+      droppedAffixes: Array.isArray(searchRaw.droppedAffixes ?? searchRaw.dropped_affixes)
+        ? (searchRaw.droppedAffixes ?? searchRaw.dropped_affixes as unknown[])
+            .map((entry) => optString(entry) ?? '')
+            .filter((entry) => entry.length > 0)
+        : [],
+      degradationReason: optString(searchRaw.degradationReason ?? searchRaw.degradation_reason),
+    },
+    comparablesSummary: {
+      anchorPrice: optNumber(comparablesSummaryRaw.anchorPrice ?? comparablesSummaryRaw.anchor_price),
+      anchorLow: optNumber(comparablesSummaryRaw.anchorLow ?? comparablesSummaryRaw.anchor_low),
+      anchorHigh: optNumber(comparablesSummaryRaw.anchorHigh ?? comparablesSummaryRaw.anchor_high),
+    },
+    valueDrivers: {
+      positive: Array.isArray(valueDriversRaw.positive) ? valueDriversRaw.positive.map((entry) => String(entry)) : [],
+      negative: Array.isArray(valueDriversRaw.negative) ? valueDriversRaw.negative.map((entry) => String(entry)) : [],
+    },
+    scenarioPrices: {
+      weakerRolls: Array.isArray(scenarioPricesRaw.weakerRolls ?? scenarioPricesRaw.weaker_rolls)
+        ? (scenarioPricesRaw.weakerRolls ?? scenarioPricesRaw.weaker_rolls as unknown[])
+            .map((entry) => optNumber(entry))
+            .filter((entry): entry is number => entry != null)
+        : [],
+      strongerRolls: Array.isArray(scenarioPricesRaw.strongerRolls ?? scenarioPricesRaw.stronger_rolls)
+        ? (scenarioPricesRaw.strongerRolls ?? scenarioPricesRaw.stronger_rolls as unknown[])
+            .map((entry) => optNumber(entry))
+            .filter((entry): entry is number => entry != null)
+        : [],
+    },
+    shadowComparison: Object.keys(shadowRaw).length > 0
+      ? {
+          candidateModelVersion: optString(shadowRaw.candidateModelVersion ?? shadowRaw.candidate_model_version),
+          incumbentModelVersion: optString(shadowRaw.incumbentModelVersion ?? shadowRaw.incumbent_model_version),
+          candidate: null,
+          incumbent: null,
+          deltaPercent: optNumber(shadowRaw.deltaPercent ?? shadowRaw.delta_percent),
+        }
+      : null,
     ...normalizeTrustFields(source),
   };
 }
@@ -812,14 +849,13 @@ function optNumber(value: unknown): number | null {
 }
 
 function normalizeMlAutomationStatus(payload: unknown): import('@/types/api').MlAutomationStatus {
-  const source = asObject(payload);
-  const latest = asObject(source.latestRun ?? source.latest_run);
-  const hasLatest = Object.keys(latest).length > 0;
-  return {
-    league: optString(source.league) ?? 'Mirage',
-    mode: optString(source.mode),
-    status: optString(source.status),
-    activeModelVersion: optString(source.activeModelVersion ?? source.active_model_version),
+    const source = asObject(payload);
+    const latest = asObject(source.latestRun ?? source.latest_run);
+    const hasLatest = Object.keys(latest).length > 0;
+    return {
+      league: optString(source.league) ?? 'Mirage',
+      status: optString(source.status),
+      activeModelVersion: optString(source.activeModelVersion ?? source.active_model_version),
     latestRun: hasLatest ? {
       runId: optString(latest.runId ?? latest.run_id),
       status: optString(latest.status),
@@ -844,10 +880,9 @@ function normalizeMlAutomationHistory(payload: unknown): import('@/types/api').M
   const promotions = Array.isArray(source.promotions) ? source.promotions : [];
   const rawModelMetrics = Array.isArray(source.modelMetrics ?? source.model_metrics) ? (source.modelMetrics ?? source.model_metrics) as unknown[] : [];
   const rawModelHistory = Array.isArray(source.modelHistory ?? source.model_history) ? (source.modelHistory ?? source.model_history) as unknown[] : [];
-  const rawRouteFamilies = Array.isArray(source.routeFamilies ?? source.route_families) ? (source.routeFamilies ?? source.route_families) as unknown[] : [];
-  return {
-    league: optString(source.league) ?? 'Mirage',
-    mode: optString(source.mode),
+    const rawRouteFamilies = Array.isArray(source.routeFamilies ?? source.route_families) ? (source.routeFamilies ?? source.route_families) as unknown[] : [];
+    return {
+      league: optString(source.league) ?? 'Mirage',
     history: historyRows.map((entry) => {
       const row = asObject(entry);
       return {

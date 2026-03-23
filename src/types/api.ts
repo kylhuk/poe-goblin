@@ -155,6 +155,35 @@ export interface PriceCheckResponse {
   estimateWarning?: string | null;
   fairValueP50?: number | null;
   fastSale24hPrice?: number | null;
+  searchDiagnostics?: SearchDiagnostics;
+  comparablesSummary?: ComparablesSummary;
+  valueDrivers?: ValueDrivers;
+  scenarioPrices?: ScenarioPrices;
+  shadowComparison?: ShadowComparison | null;
+}
+
+export interface SearchDiagnostics {
+  stage: 0 | 1 | 2 | 3 | 4;
+  candidateCount: number;
+  effectiveSupport: number;
+  droppedAffixes: string[];
+  degradationReason?: string | null;
+}
+
+export interface ComparablesSummary {
+  anchorPrice?: number | null;
+  anchorLow?: number | null;
+  anchorHigh?: number | null;
+}
+
+export interface ValueDrivers {
+  positive: string[];
+  negative: string[];
+}
+
+export interface ScenarioPrices {
+  weakerRolls: number[];
+  strongerRolls?: number[];
 }
 
 // ========== ML Predict One ==========
@@ -193,8 +222,11 @@ export interface MlPredictOneResponse {
   estimateTrust?: string;
   estimateWarning?: string | null;
   servingModelVersion?: string | null;
-  rollout?: Record<string, unknown> | null;
   shadowComparison?: ShadowComparison | null;
+  searchDiagnostics?: SearchDiagnostics;
+  comparablesSummary?: ComparablesSummary;
+  valueDrivers?: ValueDrivers;
+  scenarioPrices?: ScenarioPrices;
 }
 
 // ========== Search History Analytics ==========
@@ -585,7 +617,6 @@ export interface DashboardResponse {
 // ========== ML Automation ==========
 export interface MlAutomationStatus {
   league: string;
-  mode?: string | null;
   status?: string | null;
   activeModelVersion: string | null;
   latestRun?: {
@@ -645,7 +676,6 @@ export interface MlRouteFamily {
 
 export interface MlAutomationHistory {
   league: string;
-  mode?: string | null;
   history: MlAutomationHistoryRun[];
   summary: {
     activeModelVersion: string | null;
