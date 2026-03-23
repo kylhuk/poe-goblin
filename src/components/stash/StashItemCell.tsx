@@ -16,9 +16,9 @@ const FRAME_TYPE_BORDER: Record<number, string> = {
 };
 
 const EVAL_BG: Record<string, string> = {
-  well_priced: 'bg-success/15',
-  could_be_better: 'bg-warning/15',
-  mispriced: 'bg-destructive/20',
+  well_priced: 'bg-success/8',
+  could_be_better: 'bg-warning/8',
+  mispriced: 'bg-destructive/10',
 };
 
 interface StashItemCellProps {
@@ -38,7 +38,8 @@ export default function StashItemCell({ item, isQuad, style, className }: StashI
       <HoverCardTrigger asChild>
         <div
           className={cn(
-            'stash-item-cell group relative flex flex-col items-center justify-center overflow-hidden',
+            'stash-item-cell group relative',
+            borderClass,
             evalBg,
             className,
           )}
@@ -49,10 +50,7 @@ export default function StashItemCell({ item, isQuad, style, className }: StashI
             <img
               src={item.icon}
               alt={displayName}
-              className={cn(
-                'max-w-full max-h-full object-contain pointer-events-none select-none',
-                'transition-all group-hover:brightness-125',
-              )}
+              className="w-full h-full object-contain pointer-events-none select-none"
               loading="lazy"
               draggable={false}
             />
@@ -61,24 +59,22 @@ export default function StashItemCell({ item, isQuad, style, className }: StashI
           {/* Stack size badge */}
           {item.stackSize != null && item.stackSize > 1 && (
             <span className={cn(
-              'absolute top-0 left-0.5 font-mono font-bold text-foreground drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]',
-              isQuad ? 'text-[6px]' : 'text-[9px]',
+              'absolute top-0 left-0.5 font-mono font-bold text-foreground',
+              'drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] drop-shadow-[0_0_4px_rgba(0,0,0,0.8)]',
+              isQuad ? 'text-[5px]' : 'text-[9px]',
             )}>
               {item.stackSize}
             </span>
           )}
 
-          {/* Fallback name if no icon */}
-          {!item.icon && (
-            <span className={cn(
-              'leading-tight text-center truncate w-full px-0.5 text-muted-foreground',
-              isQuad ? 'text-[5px]' : 'text-[7px]',
-            )}>
+          {/* Fallback name if no icon — hide on quad */}
+          {!item.icon && !isQuad && (
+            <span className="leading-tight text-center truncate w-full px-0.5 text-muted-foreground text-[7px]">
               {displayName}
             </span>
           )}
 
-          {/* Price tag */}
+          {/* Price tag — normal tabs only */}
           {item.estimatedPrice != null && !isQuad && (
             <span className="absolute bottom-0 right-0.5 text-[6px] font-mono text-gold-bright/60">
               {item.estimatedPrice}{item.currency === 'div' ? 'd' : 'c'}

@@ -32,16 +32,16 @@ export default function SpecialLayoutGrid({ items, layout }: SpecialLayoutGridPr
     <div className="stash-frame" data-testid="stash-panel-grid">
       {/* Section sub-tabs */}
       {sections.length > 1 && (
-        <div className="flex items-center gap-0 mb-1">
+        <div className="flex items-center gap-0 mb-0">
           {sections.map(section => (
             <button
               key={section}
               onClick={() => setActiveSection(section)}
               className={cn(
-                'px-3 py-1 text-[10px] font-display tracking-wide border border-b-0 transition-all',
+                'px-3 py-1.5 text-[10px] font-display tracking-wider uppercase border border-b-0 transition-all',
                 section === activeSection
-                  ? 'bg-gold-dim/30 text-gold-bright border-gold-dim'
-                  : 'bg-card text-muted-foreground border-gold-dim/20 hover:text-gold hover:bg-gold-dim/10'
+                  ? 'bg-gold-dim/25 text-gold-bright border-gold-dim/60 shadow-[0_-1px_4px_hsl(38_55%_42%/0.15)]'
+                  : 'bg-[hsl(25_10%_6%)] text-muted-foreground border-[hsl(25_8%_12%)] hover:text-gold hover:bg-gold-dim/10'
               )}
             >
               {section}

@@ -17,6 +17,7 @@ export default function NormalGrid({ items, gridSize }: NormalGridProps) {
         style={{
           gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))`,
           gridTemplateRows: `repeat(${gridSize}, minmax(0, 1fr))`,
+          gap: isQuad ? '0px' : '1px',
         }}
       >
         {/* Empty cell bg */}
