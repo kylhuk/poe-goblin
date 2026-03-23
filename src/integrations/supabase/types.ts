@@ -32,6 +32,42 @@ export type Database = {
         }
         Relationships: []
       }
+      debug_traffic: {
+        Row: {
+          created_at: string
+          id: string
+          method: string
+          path: string
+          request_body: string | null
+          request_headers: Json | null
+          response_body: string | null
+          response_headers: Json | null
+          response_status: number | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          method: string
+          path: string
+          request_body?: string | null
+          request_headers?: Json | null
+          response_body?: string | null
+          response_headers?: Json | null
+          response_status?: number | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          method?: string
+          path?: string
+          request_body?: string | null
+          request_headers?: Json | null
+          response_body?: string | null
+          response_headers?: Json | null
+          response_status?: number | null
+        }
+        Relationships: []
+      }
       email_send_log: {
         Row: {
           created_at: string
