@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useAuth } from '@/services/auth';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Settings, CheckCircle2, XCircle, AlertCircle, ExternalLink, LogOut } from 'lucide-react';
+import { Settings, CheckCircle2, XCircle, AlertCircle, ExternalLink, LogOut, LogIn } from 'lucide-react';
 import { toast } from 'sonner';
 
 const UserMenu = () => {
