@@ -45,49 +45,9 @@ export interface PriceCheckResponse {
   fastSale24hPrice?: number | null;
 }
 
-export interface SearchDiagnostics {
-  stage: 0 | 1 | 2 | 3 | 4;
-  candidateCount: number;
-  effectiveSupport: number;
-  droppedAffixes: string[];
-  degradationReason?: string | null;
-}
-
-export interface ComparablesSummary {
-  anchorPrice?: number | null;
-  anchorLow?: number | null;
-  anchorHigh?: number | null;
-}
-
-export interface ValueDrivers {
-  positive: string[];
-  negative: string[];
-}
-
-export interface ScenarioPrices {
-  weakerRolls: number[];
-  strongerRolls?: number[];
-}
-
 // ========== ML Predict One ==========
 export interface MlPredictOneRequest {
   itemText: string;
-}
-
-export interface ShadowComparisonSide {
-  route: string | null;
-  price_p50: number | null;
-  confidence_percent: number | null;
-  interval_p10: number | null;
-  interval_p90: number | null;
-}
-
-export interface ShadowComparison {
-  candidateModelVersion: string | null;
-  incumbentModelVersion: string | null;
-  candidate: ShadowComparisonSide | null;
-  incumbent: ShadowComparisonSide | null;
-  deltaPercent: number | null;
 }
 
 export interface MlPredictOneResponse {
@@ -104,12 +64,6 @@ export interface MlPredictOneResponse {
   predictionSource?: string;
   estimateTrust?: string;
   estimateWarning?: string | null;
-  servingModelVersion?: string | null;
-  shadowComparison?: ShadowComparison | null;
-  searchDiagnostics?: SearchDiagnostics;
-  comparablesSummary?: ComparablesSummary;
-  valueDrivers?: ValueDrivers;
-  scenarioPrices?: ScenarioPrices;
 }
 
 // ========== Search History Analytics ==========
