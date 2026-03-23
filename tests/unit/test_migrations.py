@@ -512,3 +512,20 @@ def test_scanner_opportunity_analytics_migration_adds_decision_storage() -> None
     assert (
         "GRANT SELECT ON poe_trade.scanner_candidate_decisions TO poe_api_reader" in sql
     )
+
+
+def test_single_solution_cleanup_migration_drops_legacy_ml_tables() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0058_ml_single_solution_cleanup.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "DROP TABLE IF EXISTS poe_trade.ml_price_dataset_v1" in sql
+    assert "DROP TABLE IF EXISTS poe_trade.ml_price_dataset_v2" in sql
+    assert "DROP TABLE IF EXISTS poe_trade.ml_model_registry_v1" in sql
+    assert "DROP TABLE IF EXISTS poe_trade.ml_serving_profile_v1" in sql
+    assert "DROP TABLE IF EXISTS poe_trade.ml_train_runs" in sql

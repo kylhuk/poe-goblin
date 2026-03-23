@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import time
 from collections.abc import Sequence
 from datetime import datetime, timedelta
@@ -33,6 +32,24 @@ def _write_status(payload: dict[str, object]) -> None:
     _ = status_path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+
+
+def _write_stage(
+    *,
+    league: str,
+    stage: str,
+    status: str,
+    details: dict[str, object] | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "league": league,
+        "stage": stage,
+        "status": status,
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+    }
+    if details:
+        payload["details"] = details
+    _write_status(payload)
 
 
 def _query_rows(client: ClickHouseClient, query: str) -> list[dict[str, object]]:
@@ -132,8 +149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog=SERVICE_NAME, description="Run autonomous ML trainer service"
     )
     _ = parser.add_argument("--league", default=None)
-    _ = parser.add_argument("--dataset-table", default="poe_trade.ml_price_dataset_v2")
-    _ = parser.add_argument("--model-dir", default="artifacts/ml/mirage_v2")
+    _ = parser.add_argument("--model-dir", default="artifacts/ml/mirage_v3")
     _ = parser.add_argument("--once", action="store_true")
     _ = parser.add_argument("--interval-seconds", type=int, default=None)
     args = parser.parse_args(argv)
@@ -143,16 +159,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not cfg.ml_automation_enabled:
         logging.getLogger(__name__).info("%s disabled", SERVICE_NAME)
         return 0
-    workflows._ensure_non_legacy_dataset_table(str(args.dataset_table))
     workflows._ensure_non_legacy_model_dir(str(args.model_dir))
     league = args.league or cfg.ml_automation_league
     interval = args.interval_seconds or cfg.ml_automation_interval_seconds
-    v3_enabled = str(os.getenv("POE_ML_V3_TRAINER_ENABLED", "0")).strip() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
     client = ClickHouseClient.from_env(cfg.clickhouse_url)
     try:
         workflows.warmup_active_models(client, league=league)
@@ -162,32 +171,55 @@ def main(argv: Sequence[str] | None = None) -> int:
             league,
             exc,
         )
-    try:
-        rollout = workflows.rollout_controls(client, league=league)
-    except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "ml trainer rollout read failed for league=%s: %s",
-            league,
-            exc,
-        )
-        rollout = {}
-
     while True:
-        if v3_enabled:
+        try:
+            _write_stage(
+                league=league, stage="refresh_training_examples", status="running"
+            )
             data_refresh = _refresh_v3_training_examples(client, league=league)
+            _write_stage(
+                league=league,
+                stage="refresh_training_examples",
+                status="completed",
+                details={"replayed_days": data_refresh.get("replayed_days")},
+            )
+
+            _write_stage(league=league, stage="train_models", status="running")
             v3_result = v3_train.train_all_routes_v3(
                 client,
                 league=league,
                 model_dir=str(args.model_dir),
             )
+            _write_stage(
+                league=league,
+                stage="train_models",
+                status="completed",
+                details={
+                    "run_id": v3_result.get("run_id"),
+                    "trained_count": v3_result.get("trained_count"),
+                },
+            )
+
             eval_result: dict[str, object] | None = None
             run_id = str(v3_result.get("run_id") or "")
             eval_prediction_rows = int(v3_result.get("eval_prediction_rows") or 0)
             if run_id and eval_prediction_rows > 0:
+                _write_stage(
+                    league=league,
+                    stage="evaluate_models",
+                    status="running",
+                    details={"run_id": run_id, "rows": eval_prediction_rows},
+                )
                 eval_result = v3_eval.evaluate_run(
                     client,
                     league=league,
                     run_id=run_id,
+                )
+                _write_stage(
+                    league=league,
+                    stage="evaluate_models",
+                    status="completed",
+                    details={"run_id": run_id},
                 )
             result = {
                 "status": "completed",
@@ -197,34 +229,36 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "data_refresh": data_refresh,
                 "evaluation": eval_result,
             }
-        else:
-            result = workflows.train_loop(
-                client,
-                league=league,
-                dataset_table=str(args.dataset_table),
-                model_dir=str(args.model_dir),
-                max_iterations=cfg.ml_automation_max_iterations,
-                max_wall_clock_seconds=cfg.ml_automation_max_wall_clock_seconds,
-                no_improvement_patience=cfg.ml_automation_no_improvement_patience,
-                min_mdape_improvement=cfg.ml_automation_min_mdape_improvement,
-                resume=False,
+            _write_status(
+                {
+                    "league": league,
+                    "stage": "train_cycle",
+                    "status": str(result.get("status") or "completed"),
+                    "updated_at": datetime.utcnow().isoformat() + "Z",
+                    "result": result,
+                }
             )
-        try:
-            rollout = workflows.rollout_controls(client, league=league)
+            logging.getLogger(__name__).info(
+                "ml trainer cycle status=%s stop_reason=%s",
+                result.get("status"),
+                result.get("stop_reason"),
+            )
+            if args.once:
+                return 0
         except Exception as exc:
-            logging.getLogger(__name__).warning(
-                "ml trainer rollout refresh failed for league=%s: %s",
+            _write_stage(
+                league=league,
+                stage="train_cycle",
+                status="failed",
+                details={"error": str(exc)},
+            )
+            logging.getLogger(__name__).exception(
+                "ml trainer cycle failed for league=%s: %s",
                 league,
                 exc,
             )
-        _write_status({"league": league, "result": result, "rollout": rollout})
-        logging.getLogger(__name__).info(
-            "ml trainer cycle status=%s stop_reason=%s",
-            result.get("status"),
-            result.get("stop_reason"),
-        )
-        if args.once:
-            return 0
+            if args.once:
+                return 1
         time.sleep(max(interval, 1))
 
 

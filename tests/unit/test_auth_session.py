@@ -39,6 +39,7 @@ def test_save_and_load_credential_state_round_trip(tmp_path: Path) -> None:
     saved = save_credential_state(
         settings,
         account_name="qa-exile",
+        cf_clearance="cf-clearance-123",
         status="token_present",
     )
     loaded = load_credential_state(settings)
@@ -56,6 +57,7 @@ def test_load_credential_state_defaults_when_file_is_missing(tmp_path: Path) -> 
 
     assert loaded["account_name"] == ""
     assert loaded["poe_session_id"] == ""
+    assert loaded["cf_clearance"] == ""
     assert loaded["status"] == "unknown"
     assert isinstance(loaded["updated_at"], str)
 
@@ -66,6 +68,7 @@ def test_clear_credential_state_resets_sensitive_fields(tmp_path: Path) -> None:
         settings,
         account_name="qa-exile",
         poe_session_id="POESESSID-123",
+        cf_clearance="cf-clearance-123",
         status="bootstrap_connected",
     )
 
@@ -74,6 +77,7 @@ def test_clear_credential_state_resets_sensitive_fields(tmp_path: Path) -> None:
     assert cleared["status"] == "logged_out"
     assert cleared["account_name"] == ""
     assert cleared["poe_session_id"] == ""
+    assert cleared["cf_clearance"] == ""
     assert load_credential_state(settings) == cleared
 
 

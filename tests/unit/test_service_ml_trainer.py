@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
+from poe_trade.db import ClickHouseClient
 from poe_trade.services import ml_trainer
 
 
-def test_ml_trainer_persists_rollout_controls_in_status(monkeypatch) -> None:
+def test_ml_trainer_persists_runtime_stage_in_status(monkeypatch) -> None:
     status_path = Path(".sisyphus/state/qa/ml-trainer-last-run.json")
     if status_path.exists():
         status_path.unlink()
@@ -23,7 +25,6 @@ def test_ml_trainer_persists_rollout_controls_in_status(monkeypatch) -> None:
         ml_automation_min_mdape_improvement=0.005,
     )
     monkeypatch.setattr(ml_trainer.config_settings, "get_settings", lambda: cfg)
-    monkeypatch.setenv("POE_ML_V3_TRAINER_ENABLED", "0")
     monkeypatch.setattr(
         ml_trainer.ClickHouseClient,
         "from_env",
@@ -35,46 +36,36 @@ def test_ml_trainer_persists_rollout_controls_in_status(monkeypatch) -> None:
         lambda *_args, **_kwargs: {"lastAttemptAt": None, "routes": {}},
     )
     monkeypatch.setattr(
-        ml_trainer.workflows,
-        "train_loop",
+        ml_trainer,
+        "_refresh_v3_training_examples",
         lambda *_args, **_kwargs: {
-            "status": "completed",
-            "stop_reason": "hold_no_material_improvement",
-            "active_model_version": "mirage-v1",
+            "latest_source_at": None,
+            "latest_training_at": None,
+            "replayed_days": [],
         },
     )
-    calls: list[str] = []
-
-    def _rollout_controls(_client, *, league):
-        calls.append(league)
-        return {
-            "league": league,
-            "shadow_mode": True,
-            "cutover_enabled": False,
-            "candidate_model_version": "mirage-v2",
-            "incumbent_model_version": "mirage-v1",
-            "effective_serving_model_version": "mirage-v1",
-            "updated_at": "2026-03-19 12:06:00",
-            "last_action": "rollback_to_incumbent",
-        }
-
-    monkeypatch.setattr(ml_trainer.workflows, "rollout_controls", _rollout_controls)
-
+    monkeypatch.setattr(
+        ml_trainer.v3_train,
+        "train_all_routes_v3",
+        lambda *_args, **_kwargs: {
+            "run_id": "run-1",
+            "trained_count": 1,
+            "eval_prediction_rows": 0,
+            "routes": ["sparse_retrieval"],
+        },
+    )
     result = ml_trainer.main(["--once", "--league", "Mirage"])
 
     assert result == 0
     assert status_path.exists()
     payload = json.loads(status_path.read_text(encoding="utf-8"))
     assert payload["league"] == "Mirage"
-    assert payload["rollout"]["shadow_mode"] is True
-    assert payload["rollout"]["cutover_enabled"] is False
-    assert payload["rollout"]["candidate_model_version"] == "mirage-v2"
-    assert payload["rollout"]["incumbent_model_version"] == "mirage-v1"
-    assert payload["rollout"]["effective_serving_model_version"] == "mirage-v1"
-    assert calls == ["Mirage", "Mirage"]
+    assert payload["stage"] == "train_cycle"
+    assert payload["status"] == "completed"
+    assert payload["result"]["v3"]["run_id"] == "run-1"
 
 
-def test_ml_trainer_rejects_legacy_v1_dataset(monkeypatch) -> None:
+def test_ml_trainer_rejects_dataset_table_argument(monkeypatch) -> None:
     cfg = SimpleNamespace(
         clickhouse_url="http://ch",
         ml_automation_enabled=True,
@@ -95,17 +86,15 @@ def test_ml_trainer_rejects_legacy_v1_dataset(monkeypatch) -> None:
                 "Mirage",
                 "--dataset-table",
                 "poe_trade.ml_price_dataset_v1",
-                "--model-dir",
-                "artifacts/ml/mirage_v2",
             ]
         )
-    except ValueError as exc:
-        assert "v2 dataset table" in str(exc)
+    except SystemExit as exc:
+        assert exc.code == 2
     else:
-        raise AssertionError("expected ValueError for legacy v1 dataset table")
+        raise AssertionError("expected argparse error for removed --dataset-table")
 
 
-def test_ml_trainer_uses_v3_training_when_enabled(monkeypatch) -> None:
+def test_ml_trainer_uses_v3_training(monkeypatch) -> None:
     cfg = SimpleNamespace(
         clickhouse_url="http://ch",
         ml_automation_enabled=True,
@@ -127,7 +116,6 @@ def test_ml_trainer_uses_v3_training_when_enabled(monkeypatch) -> None:
         "warmup_active_models",
         lambda *_args, **_kwargs: {"lastAttemptAt": None, "routes": {}},
     )
-    monkeypatch.setenv("POE_ML_V3_TRAINER_ENABLED", "1")
     monkeypatch.setattr(
         ml_trainer,
         "_refresh_v3_training_examples",
@@ -187,7 +175,10 @@ def test_refresh_v3_training_examples_replays_missing_days() -> None:
     original = ml_trainer.v3_backfill.backfill_range
     ml_trainer.v3_backfill.backfill_range = _backfill_range
     try:
-        payload = ml_trainer._refresh_v3_training_examples(_Client(), league="Mirage")
+        payload = ml_trainer._refresh_v3_training_examples(
+            cast(ClickHouseClient, _Client()),
+            league="Mirage",
+        )
     finally:
         ml_trainer.v3_backfill.backfill_range = original
 

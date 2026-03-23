@@ -101,12 +101,15 @@ def load_credential_state(settings: Settings) -> dict[str, Any]:
     payload = _load_json(credential_state_path(settings))
     account_name = payload.get("account_name")
     poe_session_id = payload.get("poe_session_id")
+    cf_clearance = payload.get("cf_clearance")
     status = payload.get("status")
     updated_at = payload.get("updated_at")
     if not isinstance(account_name, str):
         account_name = ""
     if not isinstance(poe_session_id, str):
         poe_session_id = ""
+    if not isinstance(cf_clearance, str):
+        cf_clearance = ""
     if not isinstance(status, str):
         status = "unknown"
     if not isinstance(updated_at, str):
@@ -114,6 +117,7 @@ def load_credential_state(settings: Settings) -> dict[str, Any]:
     return {
         "account_name": account_name,
         "poe_session_id": poe_session_id,
+        "cf_clearance": cf_clearance,
         "status": status,
         "updated_at": updated_at,
     }
@@ -125,10 +129,12 @@ def save_credential_state(
     account_name: str,
     status: str,
     poe_session_id: str = "",
+    cf_clearance: str = "",
 ) -> dict[str, Any]:
     payload = {
         "account_name": account_name,
         "poe_session_id": poe_session_id.strip(),
+        "cf_clearance": cf_clearance.strip(),
         "status": status,
         "updated_at": _iso(_now()),
     }
@@ -141,8 +147,19 @@ def clear_credential_state(settings: Settings) -> dict[str, Any]:
         settings,
         account_name="",
         poe_session_id="",
+        cf_clearance="",
         status="logged_out",
     )
+
+
+def build_private_stash_cookie_header(
+    *, poe_session_id: str, cf_clearance: str = ""
+) -> str:
+    cookies = [f"POESESSID={poe_session_id.strip()}"]
+    clearance = cf_clearance.strip()
+    if clearance:
+        cookies.append(f"cf_clearance={clearance}")
+    return "; ".join(cookies)
 
 
 def resolve_account_name(settings: Settings, *, poe_session_id: str) -> str:

@@ -8,7 +8,10 @@ from functools import partial
 from poe_trade.api.ml import fetch_predict_one
 from poe_trade.stash_scan import serialize_stash_item_to_clipboard
 
-from poe_trade.api.auth_session import load_credential_state
+from poe_trade.api.auth_session import (
+    build_private_stash_cookie_header,
+    load_credential_state,
+)
 from poe_trade.config import settings as config_settings
 from poe_trade.db import ClickHouseClient
 from poe_trade.ingestion.account_stash_harvester import AccountStashHarvester
@@ -64,6 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     credential_state = load_credential_state(cfg)
     poe_session_id = str(credential_state.get("poe_session_id") or "").strip()
+    cf_clearance = str(credential_state.get("cf_clearance") or "").strip()
     account_name = str(credential_state.get("account_name") or "").strip()
     if not poe_session_id:
         logging.getLogger(__name__).info(
@@ -90,7 +94,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         status,
         service_name=SERVICE_NAME,
         account_name=account_name,
-        request_headers={"Cookie": f"POESESSID={poe_session_id}"},
+        request_headers={
+            "Cookie": build_private_stash_cookie_header(
+                poe_session_id=poe_session_id,
+                cf_clearance=cf_clearance,
+            )
+        },
     )
     if args.scan_once:
         harvester.run_private_scan(

@@ -2,6 +2,8 @@ import json
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
 from poe_trade.ml import cli
 from poe_trade.ml import workflows
 
@@ -136,130 +138,162 @@ def test_audit_data_rejects_unvalidated_league(monkeypatch, capsys):
     assert "not yet validated" in capsys.readouterr().err
 
 
-def test_train_loop_forwards_bounded_controls(monkeypatch, capsys):
-    monkeypatch.setattr(
-        cli.settings,
-        "get_settings",
-        lambda: SimpleNamespace(clickhouse_url="http://clickhouse"),
-    )
-
-    class _Client:
-        pass
-
-    monkeypatch.setattr(
-        cli.ClickHouseClient,
-        "from_env",
-        lambda _url: _Client(),
-    )
-
-    class _RuntimeProfile:
-        machine = "linux-x86_64"
-        cpu_cores = 12
-        total_ram_gb = 16.0
-        available_ram_gb = 8.0
-        gpu_backend_available = False
-        backend_availability = {"nvidia_smi": False, "rocm": False}
-        chosen_backend = "cpu"
-        default_workers = 6
-        memory_budget_gb = 4.0
-
-    monkeypatch.setattr(cli, "detect_runtime_profile", lambda: _RuntimeProfile())
-    monkeypatch.setattr(cli, "persist_runtime_profile", lambda _profile: None)
-
-    seen: dict[str, object] = {}
-
-    def _fake_train_loop(
-        _client,
-        *,
-        league,
-        dataset_table,
-        model_dir,
-        max_iterations,
-        max_wall_clock_seconds,
-        no_improvement_patience,
-        min_mdape_improvement,
-        resume,
-    ):
-        seen.update(
-            {
-                "league": league,
-                "dataset_table": dataset_table,
-                "model_dir": model_dir,
-                "max_iterations": max_iterations,
-                "max_wall_clock_seconds": max_wall_clock_seconds,
-                "no_improvement_patience": no_improvement_patience,
-                "min_mdape_improvement": min_mdape_improvement,
-                "resume": resume,
-            }
-        )
-        return {"status": "stopped_budget", "stop_reason": "iteration_budget_exhausted"}
-
-    monkeypatch.setattr(cli, "train_loop", _fake_train_loop)
-
-    result = cli.main(
-        [
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("normalize-prices", ["--league", "Mirage"]),
+        ("dataset", ["build", "--league", "Mirage", "--as-of", "2026-03-20"]),
+        (
+            "route-preview",
+            ["--league", "Mirage", "--dataset-table", "poe_trade.ml_price_dataset_v2"],
+        ),
+        (
+            "build-comps",
+            [
+                "--league",
+                "Mirage",
+                "--dataset-table",
+                "poe_trade.ml_price_dataset_v2",
+                "--output-table",
+                "poe_trade.ml_comps_v1",
+            ],
+        ),
+        (
+            "train-route",
+            [
+                "--route",
+                "sparse_retrieval",
+                "--league",
+                "Mirage",
+                "--dataset-table",
+                "poe_trade.ml_price_dataset_v2",
+                "--comps-table",
+                "poe_trade.ml_comps_v1",
+                "--model-dir",
+                "artifacts/ml/mirage_v2",
+            ],
+        ),
+        (
+            "evaluate-route",
+            [
+                "--route",
+                "sparse_retrieval",
+                "--league",
+                "Mirage",
+                "--dataset-table",
+                "poe_trade.ml_price_dataset_v2",
+                "--comps-table",
+                "poe_trade.ml_comps_v1",
+                "--model-dir",
+                "artifacts/ml/mirage_v2",
+            ],
+        ),
+        (
+            "train",
+            [
+                "--league",
+                "Mirage",
+                "--dataset-table",
+                "poe_trade.ml_price_dataset_v2",
+                "--model-dir",
+                "artifacts/ml/mirage_v2",
+            ],
+        ),
+        (
+            "train-saleability",
+            [
+                "--league",
+                "Mirage",
+                "--dataset-table",
+                "poe_trade.ml_price_dataset_v2",
+                "--model-dir",
+                "artifacts/ml/mirage_v2",
+            ],
+        ),
+        (
+            "evaluate-saleability",
+            [
+                "--league",
+                "Mirage",
+                "--dataset-table",
+                "poe_trade.ml_price_dataset_v2",
+                "--model-dir",
+                "artifacts/ml/mirage_v2",
+            ],
+        ),
+        (
+            "evaluate",
+            [
+                "--league",
+                "Mirage",
+                "--dataset-table",
+                "poe_trade.ml_price_dataset_v2",
+                "--model-dir",
+                "artifacts/ml/mirage_v2",
+            ],
+        ),
+        (
             "train-loop",
-            "--league",
-            "Mirage",
-            "--dataset-table",
-            "poe_trade.ml_price_dataset_v2",
-            "--model-dir",
-            "artifacts/ml/mirage_v2",
-            "--max-iterations",
-            "2",
-            "--max-wall-clock-seconds",
-            "1800",
-            "--no-improvement-patience",
-            "2",
-            "--min-mdape-improvement",
-            "0.005",
-            "--resume",
-        ]
-    )
-
-    assert result == 0
-    assert seen["max_iterations"] == 2
-    assert seen["max_wall_clock_seconds"] == 1800
-    assert seen["no_improvement_patience"] == 2
-    assert seen["min_mdape_improvement"] == 0.005
-    assert seen["resume"] is True
-    assert "iteration_budget_exhausted" in capsys.readouterr().out
-
-
-def test_train_loop_rejects_legacy_v1_dataset(monkeypatch, capsys):
-    monkeypatch.setattr(
-        cli.settings,
-        "get_settings",
-        lambda: SimpleNamespace(clickhouse_url="http://clickhouse"),
-    )
-
-    class _Client:
-        pass
-
-    monkeypatch.setattr(
-        cli.ClickHouseClient,
-        "from_env",
-        lambda _url: _Client(),
-    )
-    monkeypatch.setattr(
-        cli, "detect_runtime_profile", lambda: cast(object, SimpleNamespace())
-    )
-    monkeypatch.setattr(cli, "persist_runtime_profile", lambda _profile: None)
-
-    result = cli.main(
-        [
-            "train-loop",
-            "--league",
-            "Mirage",
-            "--dataset-table",
-            "poe_trade.ml_price_dataset_v1",
-            "--model-dir",
-            "artifacts/ml/mirage_v2",
-        ]
-    )
-
-    assert result == 2
-    assert "v2 dataset table" in capsys.readouterr().err
+            [
+                "--league",
+                "Mirage",
+                "--dataset-table",
+                "poe_trade.ml_price_dataset_v2",
+                "--model-dir",
+                "artifacts/ml/mirage_v2",
+                "--max-iterations",
+                "2",
+                "--max-wall-clock-seconds",
+                "1800",
+                "--no-improvement-patience",
+                "2",
+                "--min-mdape-improvement",
+                "0.005",
+                "--resume",
+            ],
+        ),
+        (
+            "predict-one",
+            [
+                "--league",
+                "Mirage",
+                "--clipboard",
+            ],
+        ),
+        (
+            "predict-batch",
+            [
+                "--league",
+                "Mirage",
+                "--model-dir",
+                "artifacts/ml/mirage_v2",
+                "--source",
+                "dataset",
+                "--dataset-table",
+                "poe_trade.ml_price_dataset_v2",
+            ],
+        ),
+    ],
+    ids=[
+        "normalize-prices",
+        "dataset build",
+        "route-preview",
+        "build-comps",
+        "train-route",
+        "evaluate-route",
+        "train",
+        "train-saleability",
+        "evaluate-saleability",
+        "evaluate",
+        "train-loop",
+        "predict-one",
+        "predict-batch",
+    ],
+)
+def test_legacy_ml_single_item_and_dataset_commands_removed_from_cli(argv):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main([argv[0]] + argv[1])
+    assert exc_info.value.code == 2
 
 
 def test_report_includes_manifest_and_baseline_benchmark_metadata(

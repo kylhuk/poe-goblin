@@ -18,6 +18,7 @@ from poe_trade.db import ClickHouseClient
 from .auth import cors_headers, parse_bearer_token, validate_bearer_token
 from .auth_session import (
     AccountResolutionError,
+    build_private_stash_cookie_header,
     clear_credential_state,
     clear_session,
     create_session,
@@ -33,9 +34,7 @@ from .ml import (
     fetch_automation_history,
     fetch_automation_status,
     fetch_predict_one,
-    fetch_rollout_controls,
     fetch_status,
-    update_rollout_controls,
 )
 from poe_trade.ml import workflows
 from poe_trade.ingestion.account_stash_harvester import AccountStashHarvester
@@ -136,6 +135,7 @@ def start_private_stash_scan(
 
         credential_state = load_credential_state(settings)
         poe_session_id = str(credential_state.get("poe_session_id") or "").strip()
+        cf_clearance = str(credential_state.get("cf_clearance") or "").strip()
         credential_account = str(credential_state.get("account_name") or "").strip()
         if not poe_session_id or credential_account != account_name:
             raise ApiError(
@@ -179,7 +179,12 @@ def start_private_stash_scan(
             reporter,
             service_name="account_stash_harvester",
             account_name=account_name,
-            request_headers={"Cookie": f"POESESSID={poe_session_id}"},
+            request_headers={
+                "Cookie": build_private_stash_cookie_header(
+                    poe_session_id=poe_session_id,
+                    cf_clearance=cf_clearance,
+                )
+            },
         )
 
         scan_id = uuid.uuid4().hex
@@ -331,11 +336,6 @@ class ApiApp:
             "/api/v1/ml/leagues/{league}/predict-one",
             ("POST", "OPTIONS"),
             self._ml_predict_one,
-        )
-        self.router.add(
-            "/api/v1/ml/leagues/{league}/rollout",
-            ("GET", "POST", "OPTIONS"),
-            self._ml_rollout,
         )
         self.router.add(
             "/api/v1/ml/leagues/{league}/automation/status",
@@ -1136,6 +1136,20 @@ class ApiApp:
             ),
             None,
         )
+        cf_clearance = next(
+            (
+                value
+                for key in (
+                    "cf_clearance",
+                    "cfClearance",
+                    "CF_CLEARANCE",
+                    "cfclearance",
+                )
+                for value in [body.get(key)]
+                if isinstance(value, str) and value.strip()
+            ),
+            "",
+        )
         if not isinstance(poe_session_id, str) or not poe_session_id.strip():
             raise ApiError(
                 status=400,
@@ -1166,6 +1180,7 @@ class ApiApp:
             self.settings,
             account_name=account_name,
             poe_session_id=poe_session_id,
+            cf_clearance=cf_clearance,
             status="bootstrap_connected",
         )
         session = create_session(self.settings, account_name=account_name)
@@ -1249,70 +1264,6 @@ class ApiApp:
         try:
             payload = fetch_predict_one(
                 self.client, league=league, request_payload=body
-            )
-        except ValueError:
-            raise ApiError(
-                status=400,
-                code="invalid_input",
-                message="invalid input",
-                headers=cors,
-            ) from None
-        except BackendUnavailable:
-            raise ApiError(
-                status=503,
-                code="backend_unavailable",
-                message="backend unavailable",
-                headers=cors,
-            ) from None
-        return json_response(payload)
-
-    def _ml_rollout(self, context: Mapping[str, object]) -> Response:
-        league = str(context.get("league") or "")
-        cors = _cors_from_context(context)
-        try:
-            ensure_allowed_league(league, self.settings)
-        except ValueError:
-            raise ApiError(
-                status=400,
-                code="league_not_allowed",
-                message="league is not allowed",
-                headers=cors,
-            ) from None
-
-        method = str(context.get("method") or "GET")
-        if method == "GET":
-            try:
-                return json_response(fetch_rollout_controls(self.client, league=league))
-            except ValueError:
-                raise ApiError(
-                    status=400,
-                    code="invalid_input",
-                    message="invalid input",
-                    headers=cors,
-                ) from None
-            except BackendUnavailable:
-                raise ApiError(
-                    status=503,
-                    code="backend_unavailable",
-                    message="backend unavailable",
-                    headers=cors,
-                ) from None
-
-        try:
-            body = _read_json_body(
-                _headers_from_context(context),
-                _body_reader_from_context(context),
-                max_body_bytes=self.settings.api_max_body_bytes,
-            )
-        except ApiError as exc:
-            if not exc.headers:
-                exc.headers = dict(cors)
-            raise
-        try:
-            payload = update_rollout_controls(
-                self.client,
-                league=league,
-                request_payload=body,
             )
         except ValueError:
             raise ApiError(

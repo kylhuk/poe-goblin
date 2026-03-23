@@ -333,9 +333,7 @@ def _latest_scanner_row_count(client: ClickHouseClient) -> int | None:
 
 
 def _latest_ml_train_iso(client: ClickHouseClient) -> str | None:
-    query = (
-        "SELECT max(updated_at) AS ts FROM poe_trade.ml_train_runs FORMAT JSONEachRow"
-    )
+    query = "SELECT max(recorded_at) AS ts FROM poe_trade.ml_v3_eval_runs FORMAT JSONEachRow"
     try:
         payload = client.execute(query).strip()
     except ClickHouseClientError:
@@ -350,7 +348,7 @@ def _latest_ml_train_iso(client: ClickHouseClient) -> str | None:
 
 
 def _latest_ml_train_count(client: ClickHouseClient) -> int | None:
-    query = "SELECT count() AS rows FROM poe_trade.ml_train_runs FORMAT JSONEachRow"
+    query = "SELECT count() AS rows FROM poe_trade.ml_v3_eval_runs FORMAT JSONEachRow"
     try:
         payload = client.execute(query).strip()
     except ClickHouseClientError:

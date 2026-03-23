@@ -7,6 +7,7 @@ SNAPSHOTS_TABLE = "poe_trade.silver_v3_stash_snapshots"
 EVENTS_TABLE = "poe_trade.silver_v3_item_events"
 SALE_LABELS_TABLE = "poe_trade.ml_v3_sale_proxy_labels"
 TRAINING_TABLE = "poe_trade.ml_v3_training_examples"
+RETRIEVAL_CANDIDATES_TABLE = "poe_trade.ml_v3_retrieval_candidates"
 
 
 def _quote(value: str) -> str:
@@ -197,5 +198,37 @@ def build_training_examples_insert_query(*, league: str, day: date) -> str:
             f"AND toDate(obs.observed_at) = toDate({day_sql})",
             "AND obs.parsed_amount IS NOT NULL",
             "AND obs.parsed_amount > 0",
+        ]
+    )
+
+
+def build_retrieval_candidate_query(
+    *,
+    league: str,
+    route: str,
+    target_identity_key: str | None = None,
+    limit: int = 64,
+) -> str:
+    conditions: list[str] = [
+        f"WHERE league = {_quote(league)}",
+        f"AND route = {_quote(route)}",
+    ]
+    if target_identity_key:
+        conditions.append(f"AND target_identity_key = {_quote(target_identity_key)}")
+    return " ".join(
+        [
+            f"SELECT",
+            "candidate_identity_key AS candidate_identity_key,",
+            "candidate_base_type AS candidate_base_type,",
+            "candidate_rarity AS candidate_rarity,",
+            "candidate_price_chaos AS candidate_price_chaos,",
+            "distance_score AS distance_score,",
+            "support_rank AS support_rank,",
+            "as_of_ts AS as_of_ts",
+            f"FROM {RETRIEVAL_CANDIDATES_TABLE}",
+            *conditions,
+            "ORDER BY distance_score ASC, support_rank ASC",
+            f"LIMIT {max(1, int(limit))}",
+            "FORMAT JSONEachRow",
         ]
     )

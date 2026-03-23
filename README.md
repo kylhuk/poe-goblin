@@ -20,23 +20,14 @@
 - `docker compose up --detach account_stash_harvester` to start the optional, credential-gated private stash sync.
 - Refer to `docs/ops-runbook.md` for queue-based telemetry, checkpoint history, and failure patterns.
 
-## ML Quick Start (Mirage)
-`ml_trainer` runs by default in the background to handle autonomous training. For manual control or one-shot jobs:
-1. `.venv/bin/poe-ml train-loop --league Mirage --dataset-table poe_trade.ml_price_dataset_v2 --model-dir artifacts/ml/mirage_v2 --max-iterations 2 --max-wall-clock-seconds 1800 --no-improvement-patience 2 --min-mdape-improvement 0.005`
-2. `.venv/bin/poe-ml status --league Mirage --run latest`
-3. `.venv/bin/poe-ml report --league Mirage --model-dir artifacts/ml/mirage_v2 --output artifacts/ml/mirage_v2/latest-report.json`
-4. `.venv/bin/poe-ml predict-one --league Mirage --input-format poe-clipboard --stdin < tests/fixtures/ml/sample_clipboard_item.txt`
-
-## ML v3 Quick Start (ClickHouse-first)
-Use the v3 commands to replay raw stash history into lifecycle events and training examples, then train/serve dual outputs (`fair_value_p50`, `fast_sale_24h_price`):
+## ML Quick Start (Single Pricing System)
+Use the single ClickHouse-first pricing pipeline to replay raw stash history into lifecycle events and training examples, then train/serve dual outputs (`fair_value_p50`, `fast_sale_24h_price`):
 
 1. `.venv/bin/poe-ml v3-backfill --league Mirage --start-day 2026-03-01 --end-day 2026-03-03 --max-bytes 13500000000`
 2. `.venv/bin/poe-ml v3-train --league Mirage --model-dir artifacts/ml/mirage_v3`
 3. `.venv/bin/poe-ml v3-predict-one --league Mirage --stdin --model-dir artifacts/ml/mirage_v3 < tests/fixtures/ml/sample_clipboard_item.txt`
 
-Optional cutover flags:
-- `POE_ML_V3_SERVING_ENABLED=1` enables v3 path in `/api/v1/ml/leagues/{league}/predict-one`.
-- `POE_ML_V3_TRAINER_ENABLED=1` makes `ml_trainer` run v3 route training loops.
+`ml_trainer` now always runs the single pricing pipeline and writes runtime stage updates to `.sisyphus/state/qa/ml-trainer-last-run.json` for API telemetry.
 
 Storage constraint notes:
 - Keep replay bounded by day partitions and monitor `poe-ml v3-disk-usage` between batches.
@@ -56,7 +47,7 @@ The `poeninja_snapshot` service automatically fetches PoeNinja currency data and
 **What it does in steady state:**
 1. Snapshots PoeNinja currency overview data into `poe_trade.raw_poeninja_currency_overview`
 2. Writes service status for operators and automation
-3. Leaves downstream FX / labels / dataset derivation to ClickHouse-side `v2` objects
+3. Leaves downstream derivation to the single current pricing pipeline
 
 **What it does not do by default:**
 - It does not rebuild the full ML dataset pipeline on every cycle.
@@ -69,14 +60,14 @@ The `poeninja_snapshot` service automatically fetches PoeNinja currency data and
 - `POE_ML_DATASET_REBUILD_INTERVAL_SECONDS` (default `3600`) - rebuild interval in seconds (60 min); runtime floor is 1800 seconds
 
 **Manual backfill mode:**
-- `poe-ledger-cli service --name poeninja_snapshot -- --once --league Mirage --full-rebuild-backfill` runs the legacy full rebuild path explicitly after snapshot ingest.
-- Use this only for bounded backfill / repair work while the incremental `v2` pipeline is being cut over.
+- `poe-ledger-cli service --name poeninja_snapshot -- --once --league Mirage --full-rebuild-backfill` runs a bounded historical rebuild after snapshot ingest.
+- Use this only for bounded backfill / repair work feeding the current pricing pipeline.
 
 **Troubleshooting:**
 - Check logs: `docker compose logs poeninja_snapshot`
 - Verify FX data: `docker compose exec clickhouse clickhouse-client --query "SELECT count() FROM poe_trade.raw_poeninja_currency_overview WHERE league='Mirage'"`
 - Verify incremental FX rows: `docker compose exec clickhouse clickhouse-client --query "SELECT count() FROM poe_trade.ml_fx_hour_v2 WHERE league='Mirage'"`
-- Verify incremental dataset rows: `docker compose exec clickhouse clickhouse-client --query "SELECT count() FROM poe_trade.ml_price_dataset_v2 WHERE league='Mirage'"`
+- Verify training example rows: `docker compose exec clickhouse clickhouse-client --query "SELECT count() FROM poe_trade.ml_v3_training_examples WHERE league='Mirage'"`
 
 ## Protected API Foundation
 The API service is started by default with `make up` and exposes authenticated ML, Ops read models, and guarded service actions.
@@ -139,7 +130,7 @@ Current non-goals:
 - `make ci-deterministic` runs the default local/CI deterministic suite: task-14 API contract regressions, full backend unit tests, frontend unit/build/scenario-inventory checks, CLI smoke checks, and QA compose config validation.
 - `make ci-deterministic` now also enforces the ML deterministic evidence pack by running `scripts/verify_ml_deterministic_pack.py` and writing `.sisyphus/evidence/task-12-deterministic-pack.log`.
 - Evidence verification now checks both artifact presence and minimal JSON shape for required files to prevent false-positive passes.
-- Required ML artifacts for the deterministic evidence pack are: `.sisyphus/evidence/task-1-baseline.json`, `.sisyphus/evidence/task-10-promotion-gates.json`, `.sisyphus/evidence/task-11-rollout-cutover.json`, and `.sisyphus/evidence/task-11-rollout-rollback.json`.
+- Required ML artifacts for the deterministic evidence pack are: `.sisyphus/evidence/task-1-baseline.json`, `.sisyphus/evidence/task-10-promotion-gates.json`, and the current trainer/evaluation evidence emitted by the single pricing pipeline.
 - Missing artifacts cause a non-zero exit with an explicit `missing required artifact(s)` error and a detailed JSON log at `.sisyphus/evidence/task-12-deterministic-pack.log`.
 - Browser Playwright coverage is integrated into the deterministic gate; run `make ci-deterministic` to verify frontend scenarios against the QA stack.
 
@@ -153,11 +144,10 @@ Current non-goals:
 - `.venv/bin/python -m poe_trade.cli research backtest --strategy bulk_essence --league Mirage --days 14` prints `run_id\tstrategy_id\tleague\tlookback_days\tstatus\topportunity_count\texpected_profit_chaos\texpected_roi\tconfidence\tsummary` with explicit `completed`, `no_data`, `no_opportunities`, or `failed` status.
 - `.venv/bin/python -m poe_trade.cli research backtest-all --league Mirage --days 14 --enabled-only` prints one summary row per enabled strategy using the same canonical header.
 - `make backtest-all BACKTEST_LEAGUE=Mirage BACKTEST_DAYS=14` runs one command that backtests every discovered strategy pack (omit `BACKTEST_FLAGS` for real writes, or add `BACKTEST_FLAGS=--dry-run` for a safe preflight).
-- `.venv/bin/poe-ml train-loop --league Mirage --dataset-table poe_trade.ml_price_dataset_v2 --model-dir artifacts/ml/mirage_v2 --max-iterations 2 --max-wall-clock-seconds 1800 --no-improvement-patience 2 --min-mdape-improvement 0.005` runs a bounded rebuild/train/evaluate loop and returns explicit stop reason.
-- `.venv/bin/poe-ml status --league Mirage --run latest` prints candidate-vs-incumbent verdict, deltas, stop reason, route hotspots, and active model version.
-- `.venv/bin/poe-ml report --league Mirage --model-dir artifacts/ml/mirage_v2 --output artifacts/ml/mirage_v2/latest-report.json` writes route metrics, hotspot summaries, outlier cleaning summary, and low-confidence reasons.
-- `.venv/bin/poe-ml predict-one --league Mirage --input-format poe-clipboard --stdin < tests/fixtures/ml/sample_clipboard_item.txt` prints routed interval pricing with confidence and sale probability percentages.
-- `PYTHONPATH=. .venv/bin/python scripts/evaluate_single_item_algorithms.py --league Mirage --dataset-table poe_trade.ml_price_dataset_v2 --limit 400 --league-reset-start 2026-03-01T00:00:00Z --output .sisyphus/evidence/accuracy-scorecard.json` runs a fair ml/anchor/hybrid single-item scorecard and records the serving recommendation.
+- `.venv/bin/poe-ml v3-backfill --league Mirage --start-day 2026-03-01 --end-day 2026-03-03 --max-bytes 13500000000` rebuilds training examples from raw stash lifecycle history.
+- `.venv/bin/poe-ml v3-train --league Mirage --model-dir artifacts/ml/mirage_v3` trains the single pricing system artifacts.
+- `.venv/bin/poe-ml v3-evaluate --league Mirage --run-id <run-id>` records evaluation metrics for one training run.
+- `.venv/bin/poe-ml v3-predict-one --league Mirage --stdin --model-dir artifacts/ml/mirage_v3 < tests/fixtures/ml/sample_clipboard_item.txt` prints the current prediction contract.
 - `.venv/bin/python -m poe_trade.cli scan once --league Mirage --dry-run` and `.venv/bin/python -m poe_trade.cli scan watch --league Mirage --max-runs 2 --dry-run` exercise the recommendation pipeline.
 - `.venv/bin/python -m poe_trade.cli scan plan --league Mirage --limit 20` runs one scan and prints actionable `strategy_id`, `search_hint`, `buy_plan`, `max_buy`, `exit_plan`, and confidence fields for quick execution.
 - `.venv/bin/python -m poe_trade.cli journal buy ...` (CLI-only), `.venv/bin/python -m poe_trade.cli alerts list` (diagnostics/messages), and `.venv/bin/python -m poe_trade.cli report daily --league Mirage` cover the manual truth loop and operator reports.

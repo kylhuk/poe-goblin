@@ -211,6 +211,7 @@ def test_contract_exact_top_level_keys() -> None:
         "routes",
         "non_goals",
     }
+    assert "ml_rollout" not in body["routes"]
 
 
 def test_unknown_route_uses_shared_error_code() -> None:
@@ -312,8 +313,8 @@ def test_status_backend_failure_sanitized(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_predict_one_returns_stable_dto(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        api_ml.workflows,
-        "predict_one",
+        api_ml.v3_serve,
+        "predict_one_v3",
         lambda _client, league, clipboard_text: {
             "league": league,
             "route": "structured_boosted",
@@ -325,6 +326,14 @@ def test_predict_one_returns_stable_dto(monkeypatch: pytest.MonkeyPatch) -> None
             "price_recommendation_eligible": True,
             "fallback_reason": "",
             "internal_only": "ignore",
+            "retrieval_stage": 3,
+            "retrieval_candidate_count": 12,
+            "retrieval_effective_support": 7,
+            "retrieval_dropped_affixes": ["crafted", "synthetic"],
+            "retrieval_degradation_reason": None,
+            "retrieval_anchor_price": 9.75,
+            "retrieval_anchor_low": 9.2,
+            "retrieval_anchor_high": 11.3,
         },
     )
     app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
@@ -360,16 +369,68 @@ def test_predict_one_returns_stable_dto(monkeypatch: pytest.MonkeyPatch) -> None
         "prediction_source",
         "estimate_trust",
         "estimate_warning",
+        "retrievalStage",
+        "retrievalCandidateCount",
+        "retrievalEffectiveSupport",
+        "retrievalDroppedAffixes",
+        "retrievalDegradationReason",
+        "retrievalAnchorPrice",
+        "retrievalAnchorLow",
+        "retrievalAnchorHigh",
+        "retrieval_stage",
+        "retrieval_candidate_count",
+        "retrieval_effective_support",
+        "retrieval_dropped_affixes",
+        "retrieval_degradation_reason",
+        "retrieval_anchor_price",
+        "retrieval_anchor_low",
+        "retrieval_anchor_high",
     }
     assert expected_keys.issubset(set(result))
+
+    assert result["retrievalStage"] == 3
+    assert result["retrieval_candidate_count"] == 12
+    assert result["retrieval_effective_support"] == 7
+    assert result["retrieval_dropped_affixes"] == ["crafted", "synthetic"]
+
+
+def test_predict_one_normalize_retrieval_aliases_are_bidirectional() -> None:
+    payload = api_ml.normalize_predict_one_payload(
+        league="Mirage",
+        payload={
+            "route": "sparse_retrieval",
+            "price_p50": 10.0,
+            "price_p10": 9.0,
+            "price_p90": 12.0,
+            "confidence": 0.81,
+            "sale_probability_percent": 54.0,
+            "price_recommendation_eligible": True,
+            "ml_predicted": True,
+            "prediction_source": "v3_model",
+            "fallback_reason": "",
+            "retrievalStage": 4,
+            "retrievalCandidateCount": 25,
+            "retrievalEffectiveSupport": 18,
+            "retrievalDroppedAffixes": ["fractured"],
+            "retrievalDegradationReason": "fallback_to_similar_route",
+            "retrievalAnchorPrice": 42.0,
+            "retrievalAnchorLow": 38.0,
+            "retrievalAnchorHigh": 56.0,
+        },
+    )
+
+    assert payload["retrieval_stage"] == 4
+    assert payload["retrievalCandidateCount"] == 25
+    assert payload["retrieval_anchor_price"] == 42.0
+    assert payload["retrieval_degradation_reason"] == "fallback_to_similar_route"
 
 
 def test_predict_one_static_fallback_is_explicitly_marked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        api_ml.workflows,
-        "predict_one",
+        api_ml.v3_serve,
+        "predict_one_v3",
         lambda _client, league, clipboard_text: {
             "league": league,
             "route": "sparse_retrieval",
@@ -403,18 +464,14 @@ def test_predict_one_static_fallback_is_explicitly_marked(
     assert isinstance(result["estimateWarning"], str)
 
 
-def test_predict_one_returns_backend_unavailable_for_invalid_active_model(
+def test_predict_one_returns_backend_unavailable_for_v3_backend_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        api_ml.workflows,
-        "predict_one",
+        api_ml.v3_serve,
+        "predict_one_v3",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            workflows.ActiveModelUnavailableError(
-                league="Mirage",
-                route="structured_boosted",
-                reason="bundle_missing",
-            )
+            ClickHouseClientError("bundle lookup failed")
         ),
     )
     app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
@@ -435,202 +492,18 @@ def test_predict_one_returns_backend_unavailable_for_invalid_active_model(
     assert exc.value.code == "backend_unavailable"
 
 
-def test_predict_one_shadow_mode_emits_side_by_side_without_cutover(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        api_ml.workflows,
-        "rollout_controls",
-        lambda _client, *, league: {
-            "league": league,
-            "shadow_mode": True,
-            "cutover_enabled": False,
-            "candidate_model_version": "mirage-v2",
-            "incumbent_model_version": "mirage-v1",
-            "effective_serving_model_version": "mirage-v1",
-            "last_action": "default",
-            "updated_at": "2026-03-19 12:00:00",
-        },
-    )
-
-    def _predict(_client, league, clipboard_text, model_version=None):
-        _ = clipboard_text
-        is_candidate = model_version == "mirage-v2"
-        return {
-            "league": league,
-            "route": "structured_boosted",
-            "price_p10": 8.0 if is_candidate else 7.0,
-            "price_p50": 11.0 if is_candidate else 10.0,
-            "price_p90": 13.0 if is_candidate else 12.0,
-            "confidence_percent": 68.0 if is_candidate else 64.0,
-            "sale_probability_percent": 61.0 if is_candidate else 59.0,
-            "price_recommendation_eligible": True,
-            "fallback_reason": "",
-        }
-
-    monkeypatch.setattr(api_ml.workflows, "predict_one", _predict)
-
+def test_ml_rollout_route_removed() -> None:
     app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
-    payload = {
-        "input_format": "poe-clipboard",
-        "payload": "item payload",
-        "output_mode": "json",
-    }
-    body = json.dumps(payload).encode("utf-8")
-    response = app.handle(
-        method="POST",
-        raw_path="/api/v1/ml/leagues/Mirage/predict-one",
-        headers={**_auth_headers(), "Content-Length": str(len(body))},
-        body_reader=BytesIO(body),
-    )
-
-    result = json.loads(response.body.decode("utf-8"))
-    assert response.status == 200
-    assert result["price_p50"] == 10.0
-    assert result["servingModelVersion"] == "mirage-v1"
-    assert result["rollout"]["shadowMode"] is True
-    assert result["rollout"]["cutoverEnabled"] is False
-    assert result["shadowComparison"]["candidate"]["price_p50"] == 11.0
-    assert result["shadowComparison"]["incumbent"]["price_p50"] == 10.0
-
-
-def test_predict_one_cutover_serves_candidate_with_incumbent_shadow(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        api_ml.workflows,
-        "rollout_controls",
-        lambda _client, *, league: {
-            "league": league,
-            "shadow_mode": True,
-            "cutover_enabled": True,
-            "candidate_model_version": "mirage-v2",
-            "incumbent_model_version": "mirage-v1",
-            "effective_serving_model_version": "mirage-v2",
-            "last_action": "enable_cutover",
-            "updated_at": "2026-03-19 12:05:00",
-        },
-    )
-
-    def _predict(_client, league, clipboard_text, model_version=None):
-        _ = clipboard_text
-        is_candidate = model_version == "mirage-v2"
-        return {
-            "league": league,
-            "route": "structured_boosted",
-            "price_p10": 9.0 if is_candidate else 7.0,
-            "price_p50": 12.0 if is_candidate else 10.0,
-            "price_p90": 14.0 if is_candidate else 12.0,
-            "confidence_percent": 70.0 if is_candidate else 64.0,
-            "sale_probability_percent": 63.0 if is_candidate else 59.0,
-            "price_recommendation_eligible": True,
-            "fallback_reason": "",
-        }
-
-    monkeypatch.setattr(api_ml.workflows, "predict_one", _predict)
-
-    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
-    payload = {
-        "input_format": "poe-clipboard",
-        "payload": "item payload",
-        "output_mode": "json",
-    }
-    body = json.dumps(payload).encode("utf-8")
-    response = app.handle(
-        method="POST",
-        raw_path="/api/v1/ml/leagues/Mirage/predict-one",
-        headers={**_auth_headers(), "Content-Length": str(len(body))},
-        body_reader=BytesIO(body),
-    )
-
-    result = json.loads(response.body.decode("utf-8"))
-    assert response.status == 200
-    assert result["price_p50"] == 12.0
-    assert result["servingModelVersion"] == "mirage-v2"
-    assert result["rollout"]["cutoverEnabled"] is True
-    assert result["shadowComparison"]["candidate"]["price_p50"] == 12.0
-    assert result["shadowComparison"]["incumbent"]["price_p50"] == 10.0
-
-
-def test_ml_rollout_route_supports_get_and_rollback_update(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "poe_trade.api.app.fetch_rollout_controls",
-        lambda _client, *, league: {
-            "league": league,
-            "shadowMode": True,
-            "cutoverEnabled": True,
-            "candidateModelVersion": "mirage-v2",
-            "incumbentModelVersion": "mirage-v1",
-            "effectiveServingModelVersion": "mirage-v2",
-            "lastAction": "enable_cutover",
-            "updatedAt": "2026-03-19T12:05:00Z",
-        },
-    )
-    seen: dict[str, object] = {}
-
-    def _update(_client, *, league, request_payload):
-        seen["league"] = league
-        seen["request_payload"] = request_payload
-        return {
-            "league": league,
-            "shadowMode": True,
-            "cutoverEnabled": False,
-            "candidateModelVersion": "mirage-v2",
-            "incumbentModelVersion": "mirage-v1",
-            "effectiveServingModelVersion": "mirage-v1",
-            "lastAction": "rollback_to_incumbent",
-            "updatedAt": "2026-03-19T12:06:00Z",
-        }
-
-    monkeypatch.setattr("poe_trade.api.app.update_rollout_controls", _update)
-
-    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
-
-    get_response = app.handle(
-        method="GET",
-        raw_path="/api/v1/ml/leagues/Mirage/rollout",
-        headers=_auth_headers(),
-        body_reader=BytesIO(b""),
-    )
-    get_body = json.loads(get_response.body.decode("utf-8"))
-    assert get_response.status == 200
-    assert get_body["cutoverEnabled"] is True
-
-    post_payload = {"rollbackToIncumbent": True}
-    post_body = json.dumps(post_payload).encode("utf-8")
-    post_response = app.handle(
-        method="POST",
-        raw_path="/api/v1/ml/leagues/Mirage/rollout",
-        headers={**_auth_headers(), "Content-Length": str(len(post_body))},
-        body_reader=BytesIO(post_body),
-    )
-    post_result = json.loads(post_response.body.decode("utf-8"))
-
-    assert post_response.status == 200
-    assert seen["league"] == "Mirage"
-    assert seen["request_payload"] == post_payload
-    assert post_result["cutoverEnabled"] is False
-    assert post_result["effectiveServingModelVersion"] == "mirage-v1"
-    assert post_result["lastAction"] == "rollback_to_incumbent"
-
-
-def test_ml_rollout_rejects_non_boolean_rollback_flag() -> None:
-    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
-    post_payload = {"rollbackToIncumbent": "false"}
-    post_body = json.dumps(post_payload).encode("utf-8")
-
-    with pytest.raises(ApiError) as exc:
+    with pytest.raises(ApiError, match="route not found") as exc:
         app.handle(
-            method="POST",
+            method="GET",
             raw_path="/api/v1/ml/leagues/Mirage/rollout",
-            headers={**_auth_headers(), "Content-Length": str(len(post_body))},
-            body_reader=BytesIO(post_body),
+            headers=_auth_headers(),
+            body_reader=BytesIO(b""),
         )
 
-    assert exc.value.status == 400
-    assert exc.value.code == "invalid_input"
+    assert exc.value.status == 404
+    assert exc.value.code == "route_not_found"
 
 
 def test_predict_one_warm_path_caches_registry_and_profile_lookups(
@@ -780,7 +653,7 @@ def test_predict_one_backend_failure_sanitized(
     def _raise(_client, league, clipboard_text):
         raise ClickHouseClientError("sensitive backend detail")
 
-    monkeypatch.setattr(api_ml.workflows, "predict_one", _raise)
+    monkeypatch.setattr(api_ml.v3_serve, "predict_one_v3", _raise)
     app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
     payload = {
         "input_format": "poe-clipboard",
@@ -799,16 +672,13 @@ def test_predict_one_backend_failure_sanitized(
     assert exc.value.code == "backend_unavailable"
 
 
-def test_fetch_predict_one_feature_schema_mismatch_bubbles_value_error(
+def test_fetch_predict_one_invalid_clipboard_bubbles_value_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _raise(_client, league, clipboard_text):
-        raise api_ml.workflows.FeatureSchemaMismatchError(
-            "predict feature schema mismatch"
-        )
-
-    monkeypatch.setattr(api_ml.workflows, "predict_one", _raise)
-    with pytest.raises(api_ml.workflows.FeatureSchemaMismatchError, match="schema"):
+    monkeypatch.setattr(
+        api_ml, "validate_predict_one_request", lambda _payload: "not a clipboard"
+    )
+    with pytest.raises(ValueError, match="invalid clipboard text"):
         api_ml.fetch_predict_one(
             ClickHouseClient(endpoint="http://ch"),
             league="Mirage",
@@ -967,12 +837,43 @@ def test_fetch_automation_history_v3_does_not_fabricate_eval_history(
     )
 
     assert payload["history"] == []
+    assert "charts" in payload
+    assert payload["charts"]["mdapeHistory"] == []
+    assert "mode" not in payload
     assert payload["summary"]["latestAvgMdape"] is None
     assert payload["summary"]["latestAvgIntervalCoverage"] is None
     assert payload["observability"]["evaluationAvailable"] is False
     assert (
         payload["observability"]["latestTrainingAsOf"] == "2026-03-20T11:57:36.615000Z"
     )
+
+
+def test_fetch_automation_status_does_not_include_mode_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        api_ml,
+        "fetch_status",
+        lambda _client, *, league: {
+            "league": league,
+            "status": "completed",
+            "run": {"run_id": "run-1"},
+            "promotion_verdict": "hold",
+            "active_model_version": None,
+            "route_hotspots": [],
+        },
+    )
+    monkeypatch.setattr(api_ml, "_query_rows", lambda _client, _query: [])
+    monkeypatch.setattr(workflows, "_query_rows", lambda _client, _query: [])
+    monkeypatch.setattr(workflows, "_ensure_train_runs_table", lambda _client: None)
+
+    payload = api_ml.fetch_automation_status(
+        ClickHouseClient(endpoint="http://ch"),
+        league="Mirage",
+    )
+
+    assert payload["status"] == "completed"
+    assert "mode" not in payload
 
 
 def test_ml_automation_status_backend_failure_sanitized(
@@ -1049,7 +950,49 @@ def test_explicit_ops_analytics_routes_resolve(monkeypatch: pytest.MonkeyPatch) 
 def test_fetch_predict_one_uses_v3_serving_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("POE_ML_V3_SERVING_ENABLED", "1")
+    monkeypatch.setattr(
+        api_ml, "validate_predict_one_request", lambda _payload: "dummy"
+    )
+    monkeypatch.setattr(
+        api_ml.v3_serve,
+        "predict_one_v3",
+        lambda *_args, **_kwargs: {
+            "route": "sparse_retrieval",
+            "price_p10": 10.0,
+            "price_p50": 12.0,
+            "price_p90": 15.0,
+            "fast_sale_24h_price": 11.0,
+            "sale_probability_percent": 62.0,
+            "sale_probability_24h": 0.62,
+            "confidence_percent": 75.0,
+            "confidence": 0.75,
+            "prediction_source": "v3_model",
+            "fallback_reason": "",
+            "ml_predicted": True,
+            "price_recommendation_eligible": True,
+            "predictedValue": 12.0,
+        },
+    )
+
+    payload = api_ml.fetch_predict_one(
+        ClickHouseClient(endpoint="http://ch"),
+        league="Mirage",
+        request_payload={
+            "input_format": "poe-clipboard",
+            "payload": "dummy",
+            "output_mode": "json",
+        },
+    )
+
+    assert payload["predictionSource"] == "v3_model"
+    assert payload["price_p50"] == 12.0
+    assert payload["saleProbabilityPercent"] == 62.0
+
+
+def test_fetch_predict_one_uses_v3_serving_without_feature_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("POE_ML_V3_SERVING_ENABLED", raising=False)
     monkeypatch.setattr(
         api_ml, "validate_predict_one_request", lambda _payload: "dummy"
     )

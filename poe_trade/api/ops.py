@@ -957,9 +957,9 @@ def analytics_search_suggestions(
                 f"{label_expr} AS item_name,",
                 f"{kind_expr} AS item_kind,",
                 "count() AS match_count",
-                "FROM poe_trade.ml_price_dataset_v1",
-                "WHERE normalized_price_chaos IS NOT NULL",
-                "AND normalized_price_chaos > 0",
+                "FROM poe_trade.ml_v3_training_examples",
+                "WHERE target_price_chaos IS NOT NULL",
+                "AND target_price_chaos > 0",
                 f"AND positionCaseInsensitiveUTF8({label_expr}, {_quote_sql_string(compact_query)}) > 0",
                 "GROUP BY item_name, item_kind",
                 "ORDER BY match_count DESC, item_name ASC",
@@ -1045,7 +1045,7 @@ def analytics_search_history(
         " ".join(
             [
                 "SELECT league",
-                "FROM poe_trade.ml_price_dataset_v1",
+                "FROM poe_trade.ml_v3_training_examples",
                 league_where,
                 "GROUP BY league",
                 "ORDER BY league ASC FORMAT JSONEachRow",
@@ -1057,11 +1057,11 @@ def analytics_search_history(
         " ".join(
             [
                 "SELECT",
-                "min(normalized_price_chaos) AS min_price,",
-                "max(normalized_price_chaos) AS max_price,",
+                "min(target_price_chaos) AS min_price,",
+                "max(target_price_chaos) AS max_price,",
                 "min(as_of_ts) AS min_added_on,",
                 "max(as_of_ts) AS max_added_on",
-                "FROM poe_trade.ml_price_dataset_v1",
+                "FROM poe_trade.ml_v3_training_examples",
                 ranges_where,
                 "FORMAT JSONEachRow",
             ]
@@ -1079,10 +1079,10 @@ def analytics_search_history(
         " ".join(
             [
                 "SELECT",
-                f"floor(normalized_price_chaos / {price_bucket}) * {price_bucket} AS bucket_start,",
-                f"floor(normalized_price_chaos / {price_bucket}) * {price_bucket} + {price_bucket} AS bucket_end,",
+                f"floor(target_price_chaos / {price_bucket}) * {price_bucket} AS bucket_start,",
+                f"floor(target_price_chaos / {price_bucket}) * {price_bucket} + {price_bucket} AS bucket_end,",
                 "count() AS count",
-                "FROM poe_trade.ml_price_dataset_v1",
+                "FROM poe_trade.ml_v3_training_examples",
                 price_hist_where,
                 "GROUP BY bucket_start, bucket_end",
                 "ORDER BY bucket_start ASC FORMAT JSONEachRow",
@@ -1099,7 +1099,7 @@ def analytics_search_history(
                 f"toDateTime(intDiv(toUInt32(toUnixTimestamp(as_of_ts)), {time_bucket_seconds}) * {time_bucket_seconds}, 'UTC') AS bucket_start,",
                 f"toDateTime(intDiv(toUInt32(toUnixTimestamp(as_of_ts)), {time_bucket_seconds}) * {time_bucket_seconds} + {time_bucket_seconds}, 'UTC') AS bucket_end,",
                 "count() AS count",
-                "FROM poe_trade.ml_price_dataset_v1",
+                "FROM poe_trade.ml_v3_training_examples",
                 time_hist_where,
                 "GROUP BY bucket_start, bucket_end",
                 "ORDER BY bucket_start ASC FORMAT JSONEachRow",
@@ -1115,9 +1115,9 @@ def analytics_search_history(
                 "SELECT",
                 f"{label_expr} AS item_name,",
                 "league,",
-                "normalized_price_chaos AS listed_price,",
+                "target_price_chaos AS listed_price,",
                 "as_of_ts AS added_on",
-                "FROM poe_trade.ml_price_dataset_v1",
+                "FROM poe_trade.ml_v3_training_examples",
                 rows_where,
                 f"ORDER BY {_history_order_sql(sort, order)}",
                 f"LIMIT {query_limit} FORMAT JSONEachRow",
@@ -1216,11 +1216,11 @@ def analytics_pricing_outliers(
                 "ifNull(d.rarity, '') AS rarity,",
                 "d.item_id AS item_id,",
                 "d.as_of_ts AS as_of_ts,",
-                "toFloat64(d.normalized_price_chaos) AS listed_price",
-                "FROM poe_trade.ml_price_dataset_v1 AS d",
+                "toFloat64(d.target_price_chaos) AS listed_price",
+                "FROM poe_trade.ml_v3_training_examples AS d",
                 f"WHERE {league_clause}",
-                "AND d.normalized_price_chaos IS NOT NULL",
-                "AND d.normalized_price_chaos > 0",
+                "AND d.target_price_chaos IS NOT NULL",
+                "AND d.target_price_chaos > 0",
                 "),",
                 "item_thresholds AS (",
                 "SELECT item_name, base_type, rarity,",
@@ -1296,11 +1296,11 @@ def analytics_pricing_outliers(
                 "d.base_type AS base_type,",
                 "ifNull(d.rarity, '') AS rarity,",
                 "d.as_of_ts AS as_of_ts,",
-                "toFloat64(d.normalized_price_chaos) AS listed_price",
-                "FROM poe_trade.ml_price_dataset_v1 AS d",
+                "toFloat64(d.target_price_chaos) AS listed_price",
+                "FROM poe_trade.ml_v3_training_examples AS d",
                 f"WHERE {league_clause}",
-                "AND d.normalized_price_chaos IS NOT NULL",
-                "AND d.normalized_price_chaos > 0",
+                "AND d.target_price_chaos IS NOT NULL",
+                "AND d.target_price_chaos > 0",
                 "),",
                 "item_thresholds AS (",
                 "SELECT item_name, base_type, rarity,",
@@ -1363,8 +1363,8 @@ def _price_check_comparables(
         return []
     clauses = [
         f"league = {_quote_sql_string(league)}",
-        "normalized_price_chaos IS NOT NULL",
-        "normalized_price_chaos > 0",
+        "target_price_chaos IS NOT NULL",
+        "target_price_chaos > 0",
         f"base_type = {_quote_sql_string(base_type)}",
     ]
     rarity = str(parsed.get("rarity") or "").strip()
@@ -1381,9 +1381,9 @@ def _price_check_comparables(
                 "SELECT",
                 f"{label_expr} AS item_name,",
                 "league,",
-                "normalized_price_chaos AS listed_price,",
+                "target_price_chaos AS listed_price,",
                 "as_of_ts AS added_on",
-                "FROM poe_trade.ml_price_dataset_v1",
+                "FROM poe_trade.ml_v3_training_examples",
                 "WHERE " + " AND ".join(clauses),
                 "ORDER BY as_of_ts DESC",
                 "LIMIT 8 FORMAT JSONEachRow",
@@ -1593,7 +1593,7 @@ def _history_where_clause(
     time_to: str | None,
 ) -> str:
     label_expr = _search_item_label_sql()
-    clauses = ["normalized_price_chaos IS NOT NULL", "normalized_price_chaos > 0"]
+    clauses = ["target_price_chaos IS NOT NULL", "target_price_chaos > 0"]
     compact_query = query.strip()
     if compact_query:
         clauses.append(
@@ -1603,9 +1603,9 @@ def _history_where_clause(
     if compact_league and compact_league.lower() != "all":
         clauses.append(f"league = {_quote_sql_string(compact_league)}")
     if price_min is not None:
-        clauses.append(f"normalized_price_chaos >= {price_min}")
+        clauses.append(f"target_price_chaos >= {price_min}")
     if price_max is not None:
-        clauses.append(f"normalized_price_chaos <= {price_max}")
+        clauses.append(f"target_price_chaos <= {price_max}")
     if time_from is not None:
         clauses.append(f"as_of_ts >= toDateTime({_quote_sql_string(time_from)}, 'UTC')")
     if time_to is not None:

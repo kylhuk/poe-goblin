@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS poe_trade.ml_price_dataset_v1;
+DROP TABLE IF EXISTS poe_trade.ml_price_dataset_v2;
+DROP TABLE IF EXISTS poe_trade.ml_price_labels_v1;
+DROP TABLE IF EXISTS poe_trade.ml_price_labels_v2;
+DROP TABLE IF EXISTS poe_trade.ml_comps_v1;
+DROP TABLE IF EXISTS poe_trade.ml_model_registry_v1;
+DROP TABLE IF EXISTS poe_trade.ml_serving_profile_v1;
+DROP TABLE IF EXISTS poe_trade.ml_eval_runs;
+DROP TABLE IF EXISTS poe_trade.ml_route_eval_v1;
+DROP TABLE IF EXISTS poe_trade.ml_price_predictions_v1;
+DROP TABLE IF EXISTS poe_trade.ml_train_runs;

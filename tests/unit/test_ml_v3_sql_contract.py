@@ -50,3 +50,27 @@ def test_build_training_examples_insert_query_uses_observations_and_labels() -> 
     assert f"FROM {sql.OBSERVATIONS_TABLE} AS obs" in query
     assert f"LEFT JOIN {sql.SALE_LABELS_TABLE} AS labels" in query
     assert "target_fast_sale_24h_price" in query
+
+
+def test_build_retrieval_candidate_query_filters_route_state() -> None:
+    query = sql.build_retrieval_candidate_query(
+        league="Mirage",
+        route="sparse_retrieval",
+        target_identity_key="rare|abyss_jewel|0",
+    )
+
+    assert f"FROM {sql.TRAINING_TABLE}" not in query
+    assert f"FROM {sql.RETRIEVAL_CANDIDATES_TABLE}" in query
+    assert "WHERE league = 'Mirage'" in query
+    assert "AND route = 'sparse_retrieval'" in query
+    assert "AND target_identity_key = 'rare|abyss_jewel|0'" in query
+    assert "as_of_ts AS as_of_ts" in query
+
+
+def test_build_retrieval_candidate_query_has_limit() -> None:
+    query = sql.build_retrieval_candidate_query(
+        league="Standard", route="cluster_jewel_retrieval", limit=5
+    )
+
+    assert "LIMIT 5" in query
+    assert ", FROM" not in query

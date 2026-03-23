@@ -162,7 +162,12 @@ def test_auth_session_bootstrap_sets_cookie_and_returns_connected(
 ) -> None:
     settings = _settings(auth_state_dir=str(tmp_path / "auth-state"))
     app = ApiApp(settings, clickhouse_client=ClickHouseClient(endpoint="http://ch"))
-    payload = json.dumps({"poeSessionId": "POESESSID-123"}).encode("utf-8")
+    payload = json.dumps(
+        {
+            "poeSessionId": "POESESSID-123",
+            "cf_clearance": "cf-clearance-123",
+        }
+    ).encode("utf-8")
 
     with mock.patch("poe_trade.api.app.resolve_account_name", return_value="qa-exile"):
         response = app.handle(
@@ -188,6 +193,7 @@ def test_auth_session_bootstrap_sets_cookie_and_returns_connected(
     assert credential_state["account_name"] == "qa-exile"
     assert credential_state["status"] == "bootstrap_connected"
     assert credential_state["poe_session_id"] == "POESESSID-123"
+    assert credential_state["cf_clearance"] == "cf-clearance-123"
 
 
 @pytest.mark.parametrize(

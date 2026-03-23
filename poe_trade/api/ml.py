@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
+from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,17 +16,7 @@ class BackendUnavailable(RuntimeError):
     pass
 
 
-_MIRAGE_ROLLOUT_LEAGUE = "Mirage"
 _AUTOMATION_DATASET_TABLE = "poe_trade.ml_v3_training_examples"
-
-
-def _v3_training_enabled() -> bool:
-    return str(os.getenv("POE_ML_V3_TRAINER_ENABLED", "0")).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 
 
 def _automation_tables() -> dict[str, str]:
@@ -36,13 +26,7 @@ def _automation_tables() -> dict[str, str]:
         "route_eval": "poe_trade.ml_v3_route_eval",
         "model_registry": "poe_trade.ml_v3_model_registry",
         "dataset": _AUTOMATION_DATASET_TABLE,
-        "is_v3": "1",
     }
-
-
-def _v3_serving_enabled() -> bool:
-    flag = str(os.getenv("POE_ML_V3_SERVING_ENABLED", "0")).strip().lower()
-    return flag in {"1", "true", "yes", "on"}
 
 
 def contract_payload(settings: Settings) -> dict[str, Any]:
@@ -55,7 +39,6 @@ def contract_payload(settings: Settings) -> dict[str, Any]:
             "ml_contract": "/api/v1/ml/contract",
             "ml_status": "/api/v1/ml/leagues/{league}/status",
             "ml_predict_one": "/api/v1/ml/leagues/{league}/predict-one",
-            "ml_rollout": "/api/v1/ml/leagues/{league}/rollout",
             "ml_automation_status": "/api/v1/ml/leagues/{league}/automation/status",
             "ml_automation_history": "/api/v1/ml/leagues/{league}/automation/history",
         },
@@ -91,152 +74,18 @@ def fetch_predict_one(
 ) -> dict[str, Any]:
     clipboard = validate_predict_one_request(request_payload)
     try:
-        if _v3_serving_enabled():
-            try:
-                v3_payload = v3_serve.predict_one_v3(
-                    client,
-                    league=league,
-                    clipboard_text=clipboard,
-                )
-                return normalize_predict_one_payload(league=league, payload=v3_payload)
-            except ValueError:
-                # fall through to legacy flow for invalid clipboard fixtures
-                pass
-
-        if league != _MIRAGE_ROLLOUT_LEAGUE:
-            raw = workflows.predict_one(client, league=league, clipboard_text=clipboard)
-            return normalize_predict_one_payload(league=league, payload=raw)
-
-        try:
-            rollout = workflows.rollout_controls(client, league=league)
-        except ClickHouseClientError:
-            rollout = {
-                "league": league,
-                "shadow_mode": False,
-                "cutover_enabled": False,
-                "candidate_model_version": None,
-                "incumbent_model_version": None,
-                "effective_serving_model_version": None,
-                "updated_at": None,
-                "last_action": "fallback_no_rollout_state",
-            }
-        serving_model_version = _opt_model_version(
-            rollout.get("effective_serving_model_version")
-        )
-        if serving_model_version:
-            serving_raw = workflows.predict_one(
-                client,
-                league=league,
-                clipboard_text=clipboard,
-                model_version=serving_model_version,
-            )
-        else:
-            serving_raw = workflows.predict_one(
-                client,
-                league=league,
-                clipboard_text=clipboard,
-            )
-        response = normalize_predict_one_payload(league=league, payload=serving_raw)
-        response["rollout"] = _rollout_payload(rollout)
-        response["servingModelVersion"] = serving_model_version
-
-        shadow_mode = bool(rollout.get("shadow_mode", False))
-        candidate_model_version = _opt_model_version(
-            rollout.get("candidate_model_version")
-        )
-        incumbent_model_version = _opt_model_version(
-            rollout.get("incumbent_model_version")
-        )
-        if (
-            shadow_mode
-            and candidate_model_version
-            and incumbent_model_version
-            and candidate_model_version != incumbent_model_version
-        ):
-            if serving_model_version == candidate_model_version:
-                candidate_raw = serving_raw
-            else:
-                candidate_raw = workflows.predict_one(
-                    client,
-                    league=league,
-                    clipboard_text=clipboard,
-                    model_version=candidate_model_version,
-                )
-            if serving_model_version == incumbent_model_version:
-                incumbent_raw = serving_raw
-            else:
-                incumbent_raw = workflows.predict_one(
-                    client,
-                    league=league,
-                    clipboard_text=clipboard,
-                    model_version=incumbent_model_version,
-                )
-            response["shadowComparison"] = {
-                "candidateModelVersion": candidate_model_version,
-                "incumbentModelVersion": incumbent_model_version,
-                "candidate": _shadow_prediction_payload(candidate_raw),
-                "incumbent": _shadow_prediction_payload(incumbent_raw),
-            }
-        return response
-    except ValueError:
-        raise
-    except workflows.ActiveModelUnavailableError as exc:
-        raise BackendUnavailable(f"predict backend unavailable: {exc.reason}") from exc
-    except ClickHouseClientError as exc:
-        raise BackendUnavailable("predict backend unavailable") from exc
-    except Exception as exc:
-        raise BackendUnavailable("predict backend unavailable") from exc
-
-
-def fetch_rollout_controls(client: ClickHouseClient, *, league: str) -> dict[str, Any]:
-    if league != _MIRAGE_ROLLOUT_LEAGUE:
-        raise ValueError("rollout controls are currently Mirage-only")
-    try:
-        payload = workflows.rollout_controls(client, league=league)
-    except ClickHouseClientError as exc:
-        raise BackendUnavailable("status backend unavailable") from exc
-    except Exception as exc:
-        raise BackendUnavailable("status backend unavailable") from exc
-    return _rollout_payload(payload)
-
-
-def update_rollout_controls(
-    client: ClickHouseClient,
-    *,
-    league: str,
-    request_payload: dict[str, Any],
-) -> dict[str, Any]:
-    if league != _MIRAGE_ROLLOUT_LEAGUE:
-        raise ValueError("rollout controls are currently Mirage-only")
-    allowed_keys = {"shadowMode", "cutoverEnabled", "rollbackToIncumbent"}
-    extra = set(request_payload) - allowed_keys
-    if extra:
-        raise ValueError("unexpected request field")
-    shadow_mode = _optional_bool(request_payload.get("shadowMode"), "shadowMode")
-    cutover_enabled = _optional_bool(
-        request_payload.get("cutoverEnabled"), "cutoverEnabled"
-    )
-    rollback_to_incumbent = _optional_bool(
-        request_payload.get("rollbackToIncumbent"),
-        "rollbackToIncumbent",
-    )
-    if rollback_to_incumbent is None:
-        rollback_to_incumbent = False
-    try:
-        payload = workflows.update_rollout_controls(
+        v3_payload = v3_serve.predict_one_v3(
             client,
             league=league,
-            shadow_mode=shadow_mode,
-            cutover_enabled=cutover_enabled,
-            rollback_to_incumbent=rollback_to_incumbent,
+            clipboard_text=clipboard,
         )
+        return normalize_predict_one_payload(league=league, payload=v3_payload)
     except ValueError:
         raise
     except ClickHouseClientError as exc:
-        raise BackendUnavailable("status backend unavailable") from exc
+        raise BackendUnavailable("predict backend unavailable") from exc
     except Exception as exc:
-        raise BackendUnavailable("status backend unavailable") from exc
-    return _rollout_payload(payload)
+        raise BackendUnavailable("predict backend unavailable") from exc
 
 
 def fetch_automation_status(client: ClickHouseClient, *, league: str) -> dict[str, Any]:
@@ -267,6 +116,7 @@ def fetch_automation_status(client: ClickHouseClient, *, league: str) -> dict[st
         "promotionVerdict": status_payload.get("promotion_verdict"),
         "routeHotspots": status_payload.get("route_hotspots") or [],
         "observability": observability,
+        "trainerRuntime": _read_trainer_runtime(league=league),
     }
 
 
@@ -279,36 +129,20 @@ def fetch_automation_history(
     route_eval_table = tables["route_eval"]
     model_registry_table = tables["model_registry"]
     dataset_table = tables["dataset"]
-    is_v3 = tables["is_v3"] == "1"
     run_rows = workflows.train_run_history(client, league=league, limit=limit)
-    if is_v3:
-        eval_rows = _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT run_id, avg(global_fair_value_mdape) AS avg_mdape, avg(1.0 - global_confidence_calibration_error) AS avg_cov, max(recorded_at) AS recorded_at",
-                    f"FROM {eval_table}",
-                    f"WHERE league = {_quote(league)}",
-                    "GROUP BY run_id",
-                    "ORDER BY recorded_at DESC",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
-    else:
-        eval_rows = _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT run_id, avg(mdape) AS avg_mdape, avg(interval_80_coverage) AS avg_cov, max(recorded_at) AS recorded_at",
-                    f"FROM {eval_table}",
-                    f"WHERE league = {_quote(league)}",
-                    "GROUP BY run_id",
-                    "ORDER BY recorded_at DESC",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
+    eval_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT run_id, avg(global_fair_value_mdape) AS avg_mdape, avg(1.0 - global_confidence_calibration_error) AS avg_cov, max(recorded_at) AS recorded_at",
+                f"FROM {eval_table}",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY run_id",
+                "ORDER BY recorded_at DESC",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
     promotion_rows = _query_rows(
         client,
         " ".join(
@@ -336,89 +170,45 @@ def fetch_automation_history(
             ]
         ),
     )
-    if is_v3:
-        route_rows = _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT route, sum(sample_count) AS sample_count, avg(fair_value_mdape) AS avg_mdape, avg(1.0 - confidence_calibration_error) AS avg_cov, avg(abstain_rate) AS avg_abstain_rate, max(recorded_at) AS recorded_at",
-                    f"FROM {route_eval_table}",
-                    f"WHERE league = {_quote(league)}",
-                    "GROUP BY route",
-                    "ORDER BY sample_count DESC, route ASC",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
-        route_run_rows = _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT run_id, route, sum(sample_count) AS sample_count, avg(fair_value_mdape) AS avg_mdape, avg(1.0 - confidence_calibration_error) AS avg_cov, max(recorded_at) AS recorded_at",
-                    f"FROM {route_eval_table}",
-                    f"WHERE league = {_quote(league)}",
-                    "GROUP BY run_id, route",
-                    "ORDER BY recorded_at DESC, route ASC",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
-    else:
-        route_rows = _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT route, sum(sample_count) AS sample_count, avg(mdape) AS avg_mdape, avg(interval_80_coverage) AS avg_cov, avg(abstain_rate) AS avg_abstain_rate, max(recorded_at) AS recorded_at",
-                    f"FROM {route_eval_table}",
-                    f"WHERE league = {_quote(league)}",
-                    "GROUP BY route",
-                    "ORDER BY sample_count DESC, route ASC",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
-        route_run_rows = _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT run_id, route, sum(sample_count) AS sample_count, avg(mdape) AS avg_mdape, avg(interval_80_coverage) AS avg_cov, max(recorded_at) AS recorded_at",
-                    f"FROM {route_eval_table}",
-                    f"WHERE league = {_quote(league)}",
-                    "GROUP BY run_id, route",
-                    "ORDER BY recorded_at DESC, route ASC",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
-    if is_v3:
-        dataset_route_rows = _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT route, count() AS rows",
-                    f"FROM {dataset_table}",
-                    f"WHERE league = {_quote(league)}",
-                    "GROUP BY route",
-                    "ORDER BY rows DESC, route ASC",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
-    else:
-        dataset_route_rows = _query_rows(
-            client,
-            " ".join(
-                [
-                    "WITH multiIf(category IN ('essence'), 'fallback_abstain', category IN ('fossil','scarab','logbook'), 'fungible_reference', ifNull(rarity, '') = 'Unique' AND multiIf(category = 'ring', 'ring', category = 'amulet', 'amulet', category = 'belt', 'belt', category = 'jewel', 'jewel', match(lowerUTF8(base_type), '(^|\\W)ring(\\W|$)'), 'ring', match(lowerUTF8(base_type), '(^|\\W)amulet(\\W|$)'), 'amulet', match(lowerUTF8(base_type), '(^|\\W)belt(\\W|$)'), 'belt', match(lowerUTF8(base_type), '(^|\\W)(cluster\\s+)?jewel(\\W|$)'), 'jewel', 'other') != 'other', 'structured_boosted_other', ifNull(rarity, '') = 'Unique', 'structured_boosted', category = 'cluster_jewel', 'cluster_jewel_retrieval', ifNull(rarity, '') = 'Rare', 'sparse_retrieval', 'fallback_abstain') AS route",
-                    "SELECT route, count() AS rows",
-                    f"FROM {dataset_table}",
-                    f"WHERE league = {_quote(league)}",
-                    "GROUP BY route",
-                    "ORDER BY rows DESC, route ASC",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
+    route_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT route, sum(sample_count) AS sample_count, avg(fair_value_mdape) AS avg_mdape, avg(1.0 - confidence_calibration_error) AS avg_cov, avg(abstain_rate) AS avg_abstain_rate, max(recorded_at) AS recorded_at",
+                f"FROM {route_eval_table}",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY route",
+                "ORDER BY sample_count DESC, route ASC",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    route_run_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT run_id, route, sum(sample_count) AS sample_count, avg(fair_value_mdape) AS avg_mdape, avg(1.0 - confidence_calibration_error) AS avg_cov, max(recorded_at) AS recorded_at",
+                f"FROM {route_eval_table}",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY run_id, route",
+                "ORDER BY recorded_at DESC, route ASC",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    dataset_route_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT route, count() AS rows",
+                f"FROM {dataset_table}",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY route",
+                "ORDER BY rows DESC, route ASC",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
     dataset_totals = _query_rows(
         client,
         " ".join(
@@ -430,34 +220,19 @@ def fetch_automation_history(
             ]
         ),
     )
-    if is_v3:
-        route_family_rows = _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT route, family, support_bucket, sum(sample_count) AS sample_count, avg(fair_value_mdape) AS avg_mdape, avg(1.0 - confidence_calibration_error) AS avg_cov, max(recorded_at) AS recorded_at",
-                    f"FROM {route_eval_table}",
-                    f"WHERE league = {_quote(league)}",
-                    "GROUP BY route, family, support_bucket",
-                    "ORDER BY route ASC, family ASC, support_bucket ASC",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
-    else:
-        route_family_rows = _query_rows(
-            client,
-            " ".join(
-                [
-                    "SELECT route, family, support_bucket, sum(sample_count) AS sample_count, avg(mdape) AS avg_mdape, avg(interval_80_coverage) AS avg_cov, max(recorded_at) AS recorded_at",
-                    f"FROM {route_eval_table}",
-                    f"WHERE league = {_quote(league)}",
-                    "GROUP BY route, family, support_bucket",
-                    "ORDER BY route ASC, family ASC, support_bucket ASC",
-                    "FORMAT JSONEachRow",
-                ]
-            ),
-        )
+    route_family_rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT route, family, support_bucket, sum(sample_count) AS sample_count, avg(fair_value_mdape) AS avg_mdape, avg(1.0 - confidence_calibration_error) AS avg_cov, max(recorded_at) AS recorded_at",
+                f"FROM {route_eval_table}",
+                f"WHERE league = {_quote(league)}",
+                "GROUP BY route, family, support_bucket",
+                "ORDER BY route ASC, family ASC, support_bucket ASC",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
 
     eval_by_run = {str(row.get("run_id") or ""): row for row in eval_rows}
     promotion_by_run = {
@@ -648,7 +423,6 @@ def fetch_automation_history(
 
     return {
         "league": league,
-        "mode": "v3" if is_v3 else "v2",
         "history": history,
         "summary": {
             "activeModelVersion": history[0].get("activeModelVersion")
@@ -668,6 +442,25 @@ def fetch_automation_history(
             "trendDirection": _trend_direction(mdape_delta),
         },
         "qualityTrend": quality_trend,
+        "charts": {
+            "mdapeHistory": [
+                {
+                    "runId": row.get("runId"),
+                    "updatedAt": row.get("updatedAt"),
+                    "value": row.get("avgMdape"),
+                }
+                for row in quality_trend
+            ],
+            "coverageHistory": [
+                {
+                    "runId": row.get("runId"),
+                    "updatedAt": row.get("updatedAt"),
+                    "value": row.get("avgIntervalCoverage"),
+                }
+                for row in quality_trend
+                if row.get("avgIntervalCoverage") is not None
+            ],
+        },
         "trainingCadence": _training_cadence_series(history),
         "routeMetrics": route_metrics,
         "modelMetrics": model_metrics,
@@ -771,6 +564,26 @@ def _safe_query_rows(client: ClickHouseClient, query: str) -> list[dict[str, Any
         return _query_rows(client, query)
     except ClickHouseClientError:
         return []
+
+
+def _read_trainer_runtime(*, league: str) -> dict[str, Any] | None:
+    status_path = Path(".sisyphus/state/qa/ml-trainer-last-run.json")
+    if not status_path.exists():
+        return None
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if _opt_str(payload.get("league")) not in {None, league}:
+        return None
+    return {
+        "stage": _opt_str(payload.get("stage")),
+        "status": _opt_str(payload.get("status")),
+        "updatedAt": _as_iso_utc(payload.get("updated_at")),
+        "details": _as_dict(payload.get("details")),
+    }
 
 
 def map_status_payload(*, league: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -889,6 +702,47 @@ def normalize_predict_one_payload(
     )
     currency = str(payload.get("currency") or "chaos")
 
+    retrieval_stage = (
+        payload.get("retrievalStage")
+        if "retrievalStage" in payload
+        else payload.get("retrieval_stage")
+    )
+    retrieval_candidate_count = (
+        payload.get("retrievalCandidateCount")
+        if "retrievalCandidateCount" in payload
+        else payload.get("retrieval_candidate_count")
+    )
+    retrieval_effective_support = (
+        payload.get("retrievalEffectiveSupport")
+        if "retrievalEffectiveSupport" in payload
+        else payload.get("retrieval_effective_support")
+    )
+    retrieval_dropped_affixes = (
+        payload.get("retrievalDroppedAffixes")
+        if "retrievalDroppedAffixes" in payload
+        else payload.get("retrieval_dropped_affixes")
+    )
+    retrieval_degradation_reason = (
+        payload.get("retrievalDegradationReason")
+        if "retrievalDegradationReason" in payload
+        else payload.get("retrieval_degradation_reason")
+    )
+    retrieval_anchor_price = (
+        payload.get("retrievalAnchorPrice")
+        if "retrievalAnchorPrice" in payload
+        else payload.get("retrieval_anchor_price")
+    )
+    retrieval_anchor_low = (
+        payload.get("retrievalAnchorLow")
+        if "retrievalAnchorLow" in payload
+        else payload.get("retrieval_anchor_low")
+    )
+    retrieval_anchor_high = (
+        payload.get("retrievalAnchorHigh")
+        if "retrievalAnchorHigh" in payload
+        else payload.get("retrieval_anchor_high")
+    )
+
     return {
         "league": league,
         "route": str(payload.get("route") or "fallback_abstain"),
@@ -906,6 +760,14 @@ def normalize_predict_one_payload(
         "predictionSource": prediction_source,
         "estimateTrust": estimate_trust,
         "estimateWarning": estimate_warning,
+        "retrievalStage": _opt_int(retrieval_stage),
+        "retrievalCandidateCount": _opt_int(retrieval_candidate_count),
+        "retrievalEffectiveSupport": _opt_int(retrieval_effective_support),
+        "retrievalDroppedAffixes": _as_list(retrieval_dropped_affixes),
+        "retrievalDegradationReason": _opt_str(retrieval_degradation_reason),
+        "retrievalAnchorPrice": _opt_float(retrieval_anchor_price),
+        "retrievalAnchorLow": _opt_float(retrieval_anchor_low),
+        "retrievalAnchorHigh": _opt_float(retrieval_anchor_high),
         # Backward-compatible fields for existing clients.
         "price_p10": price_p10,
         "price_p50": price_p50,
@@ -918,44 +780,14 @@ def normalize_predict_one_payload(
         "prediction_source": prediction_source,
         "estimate_trust": estimate_trust,
         "estimate_warning": estimate_warning,
-    }
-
-
-def _rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "league": _opt_str(payload.get("league")) or _MIRAGE_ROLLOUT_LEAGUE,
-        "shadowMode": bool(payload.get("shadow_mode", False)),
-        "cutoverEnabled": bool(payload.get("cutover_enabled", False)),
-        "candidateModelVersion": _opt_model_version(
-            payload.get("candidate_model_version")
-        ),
-        "incumbentModelVersion": _opt_model_version(
-            payload.get("incumbent_model_version")
-        ),
-        "effectiveServingModelVersion": _opt_model_version(
-            payload.get("effective_serving_model_version")
-        ),
-        "updatedAt": _as_iso_utc(payload.get("updated_at")),
-        "lastAction": _opt_str(payload.get("last_action")),
-    }
-
-
-def _optional_bool(value: Any, field_name: str) -> bool | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    raise ValueError(f"{field_name} must be a boolean")
-
-
-def _shadow_prediction_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "route": _opt_str(payload.get("route")) or "fallback_abstain",
-        "price_p10": _opt_float(payload.get("price_p10")),
-        "price_p50": _opt_float(payload.get("price_p50")),
-        "price_p90": _opt_float(payload.get("price_p90")),
-        "confidence_percent": _opt_float(payload.get("confidence_percent")),
-        "sale_probability_percent": _opt_float(payload.get("sale_probability_percent")),
+        "retrieval_stage": _opt_int(retrieval_stage),
+        "retrieval_candidate_count": _opt_int(retrieval_candidate_count),
+        "retrieval_effective_support": _opt_int(retrieval_effective_support),
+        "retrieval_dropped_affixes": _as_list(retrieval_dropped_affixes),
+        "retrieval_degradation_reason": _opt_str(retrieval_degradation_reason),
+        "retrieval_anchor_price": _opt_float(retrieval_anchor_price),
+        "retrieval_anchor_low": _opt_float(retrieval_anchor_low),
+        "retrieval_anchor_high": _opt_float(retrieval_anchor_high),
     }
 
 
@@ -970,6 +802,15 @@ def _opt_float(value: Any) -> float | None:
         return None
     try:
         return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _opt_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(float(value))
     except (TypeError, ValueError):
         return None
 

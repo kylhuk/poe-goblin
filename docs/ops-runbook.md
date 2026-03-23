@@ -40,8 +40,8 @@
 ## ML v3 replay and disk guardrails (15GB net)
 - Run partitioned replay only: `poe-ml v3-backfill --league Mirage --start-day 2026-03-01 --end-day 2026-03-01 --max-bytes 13500000000`.
 - Before each partition window, check budget headroom: `poe-ml v3-disk-usage`.
-- Enable v3 serving path in API only after backfill + train: `POE_ML_V3_SERVING_ENABLED=1`.
-- Enable v3 trainer loop in daemon only when ready: `POE_ML_V3_TRAINER_ENABLED=1`.
+- The API serves the single pricing path directly after backfill + training; no serving feature flag is required.
+- `ml_trainer` now always runs the single pricing pipeline; use the automation status/history APIs to watch stage progress and evaluation trends.
 - Raw retention contract: never drop `poe_trade.raw_*`; if replay data is wrong, rebuild derived `silver_v3_*` / `ml_v3_*` from raw.
 
 ## Mod-rollup governance (32GB shared host)

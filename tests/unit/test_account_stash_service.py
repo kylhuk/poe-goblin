@@ -64,6 +64,7 @@ def test_service_uses_server_credential_state_for_cookie_and_scope(monkeypatch) 
         lambda _cfg: {
             "account_name": "qa-exile",
             "poe_session_id": "POESESSID-123",
+            "cf_clearance": "cf-clearance-123",
             "status": "bootstrap_connected",
             "updated_at": "2026-03-14T00:00:00Z",
         },
@@ -100,7 +101,9 @@ def test_service_uses_server_credential_state_for_cookie_and_scope(monkeypatch) 
     assert created["kwargs"] == {
         "service_name": "account_stash_harvester",
         "account_name": "qa-exile",
-        "request_headers": {"Cookie": "POESESSID=POESESSID-123"},
+        "request_headers": {
+            "Cookie": "POESESSID=POESESSID-123; cf_clearance=cf-clearance-123"
+        },
     }
     assert created["run"] == {
         "realm": "pc",
@@ -111,7 +114,9 @@ def test_service_uses_server_credential_state_for_cookie_and_scope(monkeypatch) 
     }
 
 
-def test_service_scan_mode_uses_saved_cookie_and_calls_private_scan(monkeypatch) -> None:
+def test_service_scan_mode_uses_saved_cookie_and_calls_private_scan(
+    monkeypatch,
+) -> None:
     cfg = SimpleNamespace(
         enable_account_stash=True,
         rate_limit_max_retries=1,
@@ -133,6 +138,7 @@ def test_service_scan_mode_uses_saved_cookie_and_calls_private_scan(monkeypatch)
         lambda _cfg: {
             "account_name": "qa-exile",
             "poe_session_id": "POESESSID-123",
+            "cf_clearance": "cf-clearance-123",
             "status": "bootstrap_connected",
             "updated_at": "2026-03-14T00:00:00Z",
         },
@@ -173,7 +179,9 @@ def test_service_scan_mode_uses_saved_cookie_and_calls_private_scan(monkeypatch)
     assert created["kwargs"] == {
         "service_name": "account_stash_harvester",
         "account_name": "qa-exile",
-        "request_headers": {"Cookie": "POESESSID=POESESSID-123"},
+        "request_headers": {
+            "Cookie": "POESESSID=POESESSID-123; cf_clearance=cf-clearance-123"
+        },
     }
     assert created["scan"]["realm"] == "pc"
     assert created["scan"]["league"] == "Mirage"
