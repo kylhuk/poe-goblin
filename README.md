@@ -12,6 +12,12 @@
 6. `docker compose config` to validate the ClickHouse + ingestion topology.
 7. `make up` to start the core product stack (ClickHouse, schema_migrator, market_harvester, scanner_worker, ml_trainer, and api) in one command.
 
+## Docker dev workflow
+- `make up` = fast dev start, no `--build`
+- `make build` = explicit image refresh
+- `make rebuild` = refresh images, then restart the stack if needed
+- source edits in `poe_trade/` no longer force Docker rebuilds
+
 ## After Docker is running
 - `docker compose ps` to confirm the core services are healthy.
 - `docker compose logs --follow clickhouse schema_migrator market_harvester scanner_worker ml_trainer api` to tail the logs.

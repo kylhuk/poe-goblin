@@ -62,3 +62,17 @@ def test_dockerfile_uses_separate_runtime_dependency_manifest() -> None:
     assert dockerfile.index("COPY README.md ./") < dockerfile.index(
         "pip install --no-cache-dir --no-deps ."
     )
+
+
+def test_dockerignore_excludes_dev_noise() -> None:
+    dockerignore = repo_read(".dockerignore")
+    for entry in [".venv", "docs", "tests", "*.md", "!README.md"]:
+        assert entry in dockerignore
+
+
+def test_readme_documents_docker_dev_workflow() -> None:
+    readme = repo_read("README.md")
+    assert "`make up` = fast dev start, no `--build`" in readme
+    assert "`make build` = explicit image refresh" in readme
+    assert "`make rebuild` = refresh images, then restart the stack if needed" in readme
+    assert "source edits in `poe_trade/` no longer force Docker rebuilds" in readme
