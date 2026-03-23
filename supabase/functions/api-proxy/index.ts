@@ -24,7 +24,8 @@ Deno.serve(async (req) => {
   // Public endpoints that don't require auth (ML Price)
   const isPublicEndpoint =
     /^\/api\/v1\/ops\/leagues\/[^/]+\/price-check/.test(proxyPath) ||
-    /^\/api\/v1\/ml\/leagues\/[^/]+\/predict-one/.test(proxyPath);
+    /^\/api\/v1\/ml\/leagues\/[^/]+\/predict-one/.test(proxyPath) ||
+    /^\/api\/v1\/auth\//.test(proxyPath);
 
   // 1. Validate Supabase JWT (skip for public endpoints)
   const authHeader = req.headers.get("authorization");
