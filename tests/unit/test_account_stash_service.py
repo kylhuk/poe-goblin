@@ -20,17 +20,15 @@ def test_service_no_ops_without_temporary_credential(monkeypatch) -> None:
         "get_settings",
         lambda: SimpleNamespace(
             enable_account_stash=True,
-            account_stash_access_token="fallback-token",
         ),
     )
     monkeypatch.setattr(
         service,
-        "load_oauth_credential_state",
+        "load_credential_state",
         lambda _cfg: {
             "account_name": "",
-            "access_token": "",
-            "refresh_token": "",
-            "status": "disconnected",
+            "poe_session_id": "",
+            "status": "logged_out",
             "updated_at": "2026-03-14T00:00:00Z",
         },
     )
@@ -44,37 +42,7 @@ def test_service_no_ops_without_temporary_credential(monkeypatch) -> None:
     assert service.main([]) == 0
 
 
-def test_service_ignores_legacy_access_token_fallback(monkeypatch) -> None:
-    monkeypatch.setattr(
-        service.config_settings,
-        "get_settings",
-        lambda: SimpleNamespace(
-            enable_account_stash=True,
-            account_stash_access_token="fallback-token",
-        ),
-    )
-    monkeypatch.setattr(
-        service,
-        "load_oauth_credential_state",
-        lambda _cfg: {
-            "account_name": "qa-exile",
-            "access_token": "",
-            "refresh_token": "",
-            "status": "disconnected",
-            "updated_at": "2026-03-14T00:00:00Z",
-        },
-    )
-
-    class _UnexpectedClient:
-        def __init__(self, *_args, **_kwargs):
-            raise AssertionError("PoeClient should not be created during no-op")
-
-    monkeypatch.setattr(service, "PoeClient", _UnexpectedClient)
-
-    assert service.main([]) == 0
-
-
-def test_service_uses_oauth_state_for_bearer_token_and_scope(monkeypatch) -> None:
+def test_service_uses_server_credential_state_for_cookie_and_scope(monkeypatch) -> None:
     cfg = SimpleNamespace(
         enable_account_stash=True,
         rate_limit_max_retries=1,
@@ -92,22 +60,19 @@ def test_service_uses_oauth_state_for_bearer_token_and_scope(monkeypatch) -> Non
     monkeypatch.setattr(service.config_settings, "get_settings", lambda: cfg)
     monkeypatch.setattr(
         service,
-        "load_oauth_credential_state",
+        "load_credential_state",
         lambda _cfg: {
             "account_name": "qa-exile",
-            "access_token": "access-token-123",
-            "refresh_token": "refresh-token-123",
-            "status": "connected",
+            "poe_session_id": "POESESSID-123",
+            "cf_clearance": "cf-clearance-123",
+            "status": "bootstrap_connected",
             "updated_at": "2026-03-14T00:00:00Z",
         },
     )
 
     class _DummyClient:
         def __init__(self, *_args, **_kwargs):
-            self.bearer = None
-
-        def set_bearer_token(self, token):
-            self.bearer = token
+            return None
 
     class _DummyClickHouse:
         @classmethod
@@ -122,7 +87,6 @@ def test_service_uses_oauth_state_for_bearer_token_and_scope(monkeypatch) -> Non
 
     class _DummyHarvester:
         def __init__(self, _client, _clickhouse, _status, **kwargs):
-            created["client"] = _client
             created["kwargs"] = kwargs
 
         def run(self, **kwargs):
@@ -134,11 +98,12 @@ def test_service_uses_oauth_state_for_bearer_token_and_scope(monkeypatch) -> Non
     monkeypatch.setattr(service, "AccountStashHarvester", _DummyHarvester)
 
     assert service.main(["--once"]) == 0
-    assert created["client"].bearer == "access-token-123"
     assert created["kwargs"] == {
         "service_name": "account_stash_harvester",
         "account_name": "qa-exile",
-        "request_headers": {},
+        "request_headers": {
+            "Cookie": "POESESSID=POESESSID-123; cf_clearance=cf-clearance-123"
+        },
     }
     assert created["run"] == {
         "realm": "pc",
@@ -149,7 +114,7 @@ def test_service_uses_oauth_state_for_bearer_token_and_scope(monkeypatch) -> Non
     }
 
 
-def test_service_scan_mode_uses_saved_oauth_state_and_calls_private_scan(
+def test_service_scan_mode_uses_saved_cookie_and_calls_private_scan(
     monkeypatch,
 ) -> None:
     cfg = SimpleNamespace(
@@ -169,22 +134,19 @@ def test_service_scan_mode_uses_saved_oauth_state_and_calls_private_scan(
     monkeypatch.setattr(service.config_settings, "get_settings", lambda: cfg)
     monkeypatch.setattr(
         service,
-        "load_oauth_credential_state",
+        "load_credential_state",
         lambda _cfg: {
             "account_name": "qa-exile",
-            "access_token": "access-token-123",
-            "refresh_token": "refresh-token-123",
-            "status": "connected",
+            "poe_session_id": "POESESSID-123",
+            "cf_clearance": "cf-clearance-123",
+            "status": "bootstrap_connected",
             "updated_at": "2026-03-14T00:00:00Z",
         },
     )
 
     class _DummyClient:
         def __init__(self, *_args, **_kwargs):
-            self.bearer = None
-
-        def set_bearer_token(self, token):
-            self.bearer = token
+            return None
 
     class _DummyClickHouse:
         @classmethod
@@ -199,7 +161,6 @@ def test_service_scan_mode_uses_saved_oauth_state_and_calls_private_scan(
 
     class _DummyHarvester:
         def __init__(self, _client, _clickhouse, _status, **kwargs):
-            created["client"] = _client
             created["kwargs"] = kwargs
 
         def run(self, **kwargs):
@@ -215,11 +176,12 @@ def test_service_scan_mode_uses_saved_oauth_state_and_calls_private_scan(
     monkeypatch.setattr(service, "AccountStashHarvester", _DummyHarvester)
 
     assert service.main(["--scan-once"]) == 0
-    assert created["client"].bearer == "access-token-123"
     assert created["kwargs"] == {
         "service_name": "account_stash_harvester",
         "account_name": "qa-exile",
-        "request_headers": {},
+        "request_headers": {
+            "Cookie": "POESESSID=POESESSID-123; cf_clearance=cf-clearance-123"
+        },
     }
     assert created["scan"]["realm"] == "pc"
     assert created["scan"]["league"] == "Mirage"

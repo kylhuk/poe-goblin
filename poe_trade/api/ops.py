@@ -934,6 +934,16 @@ def price_check_payload(
         "estimateWarning": prediction.get("estimateWarning")
         if prediction.get("estimateWarning") is not None
         else prediction.get("estimate_warning"),
+        "searchDiagnostics": prediction.get("searchDiagnostics")
+        or prediction.get("search_diagnostics"),
+        "comparablesSummary": prediction.get("comparablesSummary")
+        or prediction.get("comparables_summary"),
+        "valueDrivers": prediction.get("valueDrivers")
+        or prediction.get("value_drivers"),
+        "scenarioPrices": prediction.get("scenarioPrices")
+        or prediction.get("scenario_prices"),
+        "shadowComparison": prediction.get("shadowComparison")
+        or prediction.get("shadow_comparison"),
     }
 
 

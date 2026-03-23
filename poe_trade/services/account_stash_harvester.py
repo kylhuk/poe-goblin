@@ -5,9 +5,13 @@ import logging
 from collections.abc import Sequence
 from functools import partial
 
+from poe_trade.api.ml import fetch_predict_one
 from poe_trade.stash_scan import serialize_stash_item_to_clipboard
 
-from poe_trade.api.auth_session import load_oauth_credential_state
+from poe_trade.api.auth_session import (
+    build_private_stash_cookie_header,
+    load_credential_state,
+)
 from poe_trade.config import settings as config_settings
 from poe_trade.db import ClickHouseClient
 from poe_trade.ingestion.account_stash_harvester import AccountStashHarvester
@@ -29,8 +33,6 @@ def _configure_logging() -> None:
 def _price_item(
     item: dict[str, object], *, clickhouse: ClickHouseClient, league: str
 ) -> dict[str, object]:
-    from poe_trade.api.ml import fetch_predict_one
-
     return fetch_predict_one(
         clickhouse,
         league=league,
@@ -63,14 +65,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "%s disabled via POE_ENABLE_ACCOUNT_STASH=false", SERVICE_NAME
         )
         return 0
-    oauth_state = load_oauth_credential_state(cfg)
-    account_name = str(oauth_state.get("account_name") or "").strip()
-    access_token = str(oauth_state.get("access_token") or "").strip()
-    if not account_name or not access_token:
+    credential_state = load_credential_state(cfg)
+    poe_session_id = str(credential_state.get("poe_session_id") or "").strip()
+    cf_clearance = str(credential_state.get("cf_clearance") or "").strip()
+    account_name = str(credential_state.get("account_name") or "").strip()
+    if not poe_session_id:
         logging.getLogger(__name__).info(
-            "%s no-op: oauth credential missing (status=%s)",
+            "%s no-op: temporary credential missing (status=%s)",
             SERVICE_NAME,
-            str(oauth_state.get("status") or "unknown"),
+            str(credential_state.get("status") or "unknown"),
         )
         return 0
 
@@ -83,7 +86,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     client = PoeClient(
         cfg.poe_api_base_url, policy, cfg.poe_user_agent, cfg.poe_request_timeout
     )
-    client.set_bearer_token(access_token)
     clickhouse = ClickHouseClient.from_env(cfg.clickhouse_url)
     status = StatusReporter(clickhouse, SERVICE_NAME)
     harvester = AccountStashHarvester(
@@ -92,7 +94,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         status,
         service_name=SERVICE_NAME,
         account_name=account_name,
-        request_headers={},
+        request_headers={
+            "Cookie": build_private_stash_cookie_header(
+                poe_session_id=poe_session_id,
+                cf_clearance=cf_clearance,
+            )
+        },
     )
     if args.scan_once:
         harvester.run_private_scan(

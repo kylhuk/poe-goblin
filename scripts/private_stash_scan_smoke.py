@@ -4,12 +4,14 @@ import argparse
 import json
 import os
 
-from poe_trade.api.auth_session import resolve_account_name
+from poe_trade.api.auth_session import resolve_account_name_from_access_token
 from poe_trade.config import settings as config_settings
 from poe_trade.ingestion.poe_client import PoeClient
 from poe_trade.ingestion.rate_limit import RateLimitPolicy
 
-_PRIVATE_STASH_ITEMS_URL = "https://www.pathofexile.com/character-window/get-stash-items"
+_PRIVATE_STASH_ITEMS_URL = (
+    "https://www.pathofexile.com/character-window/get-stash-items"
+)
 
 
 def main() -> int:
@@ -21,13 +23,13 @@ def main() -> int:
     parser.add_argument("--account-name")
     args = parser.parse_args()
 
-    poe_session_id = os.environ.get("POESESSID", "").strip()
-    if not poe_session_id:
-        raise SystemExit("POESESSID environment variable is required")
+    access_token = os.environ.get("POE_ACCOUNT_ACCESS_TOKEN", "").strip()
+    if not access_token:
+        raise SystemExit("POE_ACCOUNT_ACCESS_TOKEN environment variable is required")
 
     settings = config_settings.get_settings()
-    account_name = args.account_name or resolve_account_name(
-        settings, poe_session_id=poe_session_id
+    account_name = args.account_name or resolve_account_name_from_access_token(
+        settings, access_token=access_token
     )
     policy = RateLimitPolicy(
         settings.rate_limit_max_retries,
@@ -41,6 +43,7 @@ def main() -> int:
         settings.poe_user_agent,
         settings.poe_request_timeout,
     )
+    client.set_bearer_token(access_token)
     payload = client.request(
         "GET",
         _PRIVATE_STASH_ITEMS_URL,
@@ -51,7 +54,6 @@ def main() -> int:
             "tabs": "1",
             "tabIndex": "0",
         },
-        headers={"Cookie": f"POESESSID={poe_session_id}"},
     )
 
     raw_tabs = payload.get("tabs") if isinstance(payload, dict) else []

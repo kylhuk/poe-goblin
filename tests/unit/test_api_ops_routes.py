@@ -4,6 +4,7 @@ import json
 import os
 from io import BytesIO
 from threading import Event
+from typing import cast
 from unittest import mock
 
 import pytest
@@ -11,6 +12,7 @@ import pytest
 from poe_trade.api.app import ApiApp
 import poe_trade.api.app as api_app_module
 from poe_trade.api.ml import BackendUnavailable
+from poe_trade.api.ops import price_check_payload
 from poe_trade.api.responses import ApiError
 from poe_trade.api.service_control import ServiceControlError, ServiceSnapshot
 from poe_trade.config.settings import Settings
@@ -300,6 +302,51 @@ def test_stash_route_returns_scoped_rows_when_enabled(
     body = json.loads(response.body.decode("utf-8"))
     assert response.status == 200
     assert body["stashTabs"][0]["name"] == "Mirage:pc:qa-exile"
+
+
+def test_price_check_payload_includes_hybrid_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Client:
+        def execute(self, query: str) -> str:
+            if "FROM poe_trade.ml_v3_training_examples" in query:
+                return "[]\n"
+            return ""
+
+    monkeypatch.setattr(
+        "poe_trade.api.ops.fetch_predict_one",
+        lambda *_args, **_kwargs: {
+            "predictedValue": 100,
+            "fairValueP50": 100,
+            "fastSale24hPrice": 85,
+            "currency": "chaos",
+            "confidence": 0.61,
+            "searchDiagnostics": {
+                "stage": 2,
+                "candidateCount": 12,
+                "effectiveSupport": 8,
+                "droppedAffixes": [],
+            },
+            "comparablesSummary": {
+                "anchorPrice": 95,
+                "anchorLow": 90,
+                "anchorHigh": 105,
+            },
+            "valueDrivers": {"positive": ["life"], "negative": ["mana"]},
+            "scenarioPrices": {"weakerRolls": [88], "strongerRolls": [112]},
+        },
+    )
+
+    payload = price_check_payload(
+        cast(ClickHouseClient, _Client()),
+        league="Mirage",
+        item_text="Rarity: Rare",
+    )
+
+    assert payload["searchDiagnostics"]["stage"] == 2
+    assert payload["comparablesSummary"]["anchorPrice"] == 95
+    assert payload["valueDrivers"]["positive"] == ["life"]
+    assert payload["scenarioPrices"]["weakerRolls"] == [88]
 
 
 def test_stash_route_requires_connected_session_when_enabled(
