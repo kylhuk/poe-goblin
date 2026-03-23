@@ -187,6 +187,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshSession]);
 
   const login = useCallback(async () => {
+    if (popupRef.current && !popupRef.current.closed) {
+      popupRef.current.focus();
+      return;
+    }
+
+    // Open blank popup SYNCHRONOUSLY to preserve user-gesture context
+    const popup = window.open('about:blank', 'poe-oauth', getOAuthPopupFeatures());
+    if (!popup) {
+      toast.error('Popup blocked. Please allow popups and try again.');
+      return;
+    }
+
+    popupRef.current = popup;
+    toast.loading('Waiting for Path of Exile login…', { id: 'poe-oauth' });
+
     try {
       const res = await authProxyFetch('/login');
       if (!res.ok) throw new Error(`Login request failed (${res.status})`);
@@ -194,20 +209,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const authorizeUrl = data.authorizeUrl || data.authorize_url || data.url;
       if (!authorizeUrl) throw new Error('No authorize URL returned from backend');
 
-      if (popupRef.current && !popupRef.current.closed) {
-        popupRef.current.focus();
-        return;
-      }
-
-      const popup = window.open(authorizeUrl, 'poe-oauth', getOAuthPopupFeatures());
-      if (!popup) {
-        toast.error('Popup blocked. Please allow popups and try again.');
-        throw new Error('OAuth popup blocked');
-      }
-
-      popupRef.current = popup;
+      popup.location.href = authorizeUrl;
       popup.focus();
-      toast.loading('Waiting for Path of Exile login…', { id: 'poe-oauth' });
 
       if (popupPollRef.current !== null) {
         window.clearInterval(popupPollRef.current);
@@ -222,11 +225,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }, 500);
     } catch (err) {
+      popup.close();
+      popupRef.current = null;
       toast.dismiss('poe-oauth');
       logApiError({ path: '/api/v1/auth/login', errorCode: 'login_error', message: err instanceof Error ? err.message : 'Login failed' });
-      if (err instanceof Error && err.message !== 'OAuth popup blocked') {
-        toast.error(err.message);
-      }
+      toast.error(err instanceof Error ? err.message : 'Login failed');
     }
   }, []);
 
