@@ -279,7 +279,7 @@ describe('ml predict-one and price-check hybrid contract', () => {
     vi.unstubAllEnvs();
   });
 
-  test('normalizes hybrid search diagnostics and scenarios', async () => {
+  test('normalizes core prediction fields without non-spec extras', async () => {
     vi.stubEnv('VITE_SUPABASE_PROJECT_ID', 'project-id');
     getSessionMock.mockResolvedValue({ data: { session: { access_token: 'token-123' } } });
     const fetchMock = vi.fn(() => createResponse({
@@ -287,31 +287,13 @@ describe('ml predict-one and price-check hybrid contract', () => {
       currency: 'chaos',
       confidence: 0.61,
       interval: { p10: 90, p90: 120 },
-      searchDiagnostics: {
-        stage: 2,
-        candidateCount: 14,
-        effectiveSupport: 9,
-        droppedAffixes: ['explicit.light_radius'],
-      },
-      comparablesSummary: {
-        anchorPrice: 100,
-        anchorLow: 90,
-        anchorHigh: 120,
-      },
-      valueDrivers: {
-        positive: ['explicit.max_life'],
-        negative: [],
-      },
-      scenarioPrices: {
-        weakerRolls: [88],
-        strongerRolls: [126],
-      },
     }));
     vi.stubGlobal('fetch', fetchMock);
 
     const payload = await api.mlPredictOne({ itemText: 'Rarity: Rare' });
 
-    expect(payload.searchDiagnostics?.stage).toBe(2);
-    expect(payload.scenarioPrices?.weakerRolls).toEqual([88]);
+    expect(payload.predictedValue).toBe(101);
+    expect(payload.confidence).toBe(0.61);
+    expect(payload.interval).toEqual({ p10: 90, p90: 120 });
   });
 });
