@@ -234,6 +234,9 @@ def fetch_automation_history(
         ),
     )
 
+    if not run_rows:
+        run_rows = _history_from_eval_rows(eval_rows, limit=limit)
+
     eval_by_run = {str(row.get("run_id") or ""): row for row in eval_rows}
     promotion_by_run = {
         str(row.get("candidate_run_id") or ""): row for row in promotion_rows
@@ -879,7 +882,7 @@ def _count_runs_since(
     values = _history_datetimes(history)
     if not values:
         return 0
-    reference = anchor or values[-1]
+    reference = anchor or datetime.now(UTC)
     cutoff = reference.timestamp() - (days * 86400)
     return sum(1 for value in values if value.timestamp() >= cutoff)
 
@@ -907,6 +910,29 @@ def _training_cadence_series(history: list[dict[str, Any]]) -> list[dict[str, An
         day = str(iso)[:10]
         buckets[day] = buckets.get(day, 0) + 1
     return [{"date": day, "runs": buckets[day]} for day in sorted(buckets)]
+
+
+def _history_from_eval_rows(
+    rows: list[dict[str, Any]], *, limit: int
+) -> list[dict[str, Any]]:
+    history: list[dict[str, Any]] = []
+    for row in rows[:limit]:
+        run_id = _opt_str(row.get("run_id"))
+        if not run_id:
+            continue
+        history.append(
+            {
+                "run_id": run_id,
+                "status": "completed",
+                "stop_reason": "evaluation_only",
+                "active_model_version": None,
+                "tuning_config_id": None,
+                "eval_run_id": run_id,
+                "updated_at": row.get("recorded_at"),
+                "rows_processed": None,
+            }
+        )
+    return history
 
 
 def _trend_direction(mdape_delta: float | None) -> str:

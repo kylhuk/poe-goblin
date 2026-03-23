@@ -23,6 +23,17 @@ ERROR_CODES = {
     "service_action_invalid",
     "service_action_forbidden",
     "service_action_failed",
+    "invalid_state",
+    "missing_code",
+    "missing_code_verifier",
+    "oauth_access_denied",
+    "oauth_callback_failed",
+    "oauth_client_id_missing",
+    "oauth_redirect_uri_missing",
+    "oauth_token_unavailable",
+    "oauth_invalid_response",
+    "oauth_exchange_failed",
+    "oauth_missing_account_name",
     "internal_error",
 }
 

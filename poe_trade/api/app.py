@@ -18,14 +18,16 @@ from poe_trade.db import ClickHouseClient
 from .auth import cors_headers, parse_bearer_token, validate_bearer_token
 from .auth_session import (
     AccountResolutionError,
+    OAuthExchangeError,
+    authorize_redirect,
     build_private_stash_cookie_header,
-    clear_credential_state,
     clear_session,
+    clear_credential_state,
     create_session,
+    begin_login,
     get_session,
-    load_credential_state,
+    exchange_oauth_code,
     resolve_account_name,
-    save_credential_state,
 )
 from .ml import (
     BackendUnavailable,
@@ -1068,23 +1070,64 @@ class ApiApp:
         return account_name, league, realm
 
     def _auth_login(self, _context: Mapping[str, object]) -> Response:
-        raise ApiError(
-            status=501,
-            code="oauth_disabled",
-            message="OAuth login is temporarily disabled; use POESESSID login instead",
-        )
+        tx = begin_login(self.settings)
+        return json_response({"authorizeUrl": authorize_redirect(self.settings, tx)})
 
     def _auth_callback(self, context: Mapping[str, object]) -> Response:
-        _ = context
-        raise ApiError(
-            status=501,
-            code="oauth_disabled",
-            message="OAuth callback is temporarily disabled; use POESESSID login instead",
+        params = _query_params_from_context(context)
+        code = _first_query_param(params, "code", default="").strip()
+        state = _first_query_param(params, "state", default="").strip()
+        error = _first_query_param(params, "error", default="").strip()
+        error_description = _first_query_param(
+            params, "error_description", default=""
+        ).strip()
+
+        if error:
+            message = error_description or error
+            if error == "access_denied":
+                raise ApiError(status=401, code="oauth_access_denied", message=message)
+            raise ApiError(status=400, code="oauth_callback_failed", message=message)
+
+        if not code:
+            raise ApiError(status=400, code="invalid_input", message="code is required")
+        if not state:
+            raise ApiError(
+                status=400, code="invalid_input", message="state is required"
+            )
+
+        try:
+            exchange = exchange_oauth_code(self.settings, code=code, state=state)
+        except OAuthExchangeError as exc:
+            raise ApiError(status=exc.status, code=exc.code, message=str(exc)) from None
+
+        existing_session_id = _session_cookie_from_headers(
+            _headers_from_context(context),
+            cookie_name=self.settings.auth_cookie_name,
+        )
+        clear_session(self.settings, session_id=existing_session_id)
+        session = create_session(self.settings, account_name=exchange.account_name)
+        cookie = _session_set_cookie(
+            self.settings.auth_cookie_name,
+            str(session.get("session_id") or ""),
+            secure=self.settings.auth_cookie_secure,
+        )
+        return json_response(
+            {
+                "status": "connected",
+                "accountName": str(session.get("account_name") or ""),
+                "expiresAt": session.get("expires_at"),
+                "scope": session.get("scope") or [],
+            },
+            headers={"Set-Cookie": cookie},
         )
 
     def _auth_session(self, context: Mapping[str, object]) -> Response:
         if str(context.get("method") or "") == "POST":
-            return self._auth_session_bootstrap(context)
+            raise ApiError(
+                status=400,
+                code="invalid_input",
+                message="OAuth-only login; POESESSID bootstrap is not supported",
+            )
         session_id = _session_cookie_from_headers(
             _headers_from_context(context),
             cookie_name=self.settings.auth_cookie_name,
@@ -1113,90 +1156,6 @@ class ApiApp:
                 "expiresAt": session.get("expires_at"),
                 "scope": session.get("scope") or [],
             }
-        )
-
-    def _auth_session_bootstrap(self, context: Mapping[str, object]) -> Response:
-        cors = _cors_from_context(context)
-        try:
-            body = _read_json_body(
-                _headers_from_context(context),
-                _body_reader_from_context(context),
-                max_body_bytes=self.settings.api_max_body_bytes,
-            )
-        except ApiError as exc:
-            if not exc.headers:
-                exc.headers = dict(cors)
-            raise
-        poe_session_id = next(
-            (
-                value
-                for key in ("poeSessionId", "poeSESSID", "POESESSID", "poesessid")
-                for value in [body.get(key)]
-                if isinstance(value, str) and value.strip()
-            ),
-            None,
-        )
-        cf_clearance = next(
-            (
-                value
-                for key in (
-                    "cf_clearance",
-                    "cfClearance",
-                    "CF_CLEARANCE",
-                    "cfclearance",
-                )
-                for value in [body.get(key)]
-                if isinstance(value, str) and value.strip()
-            ),
-            "",
-        )
-        if not isinstance(poe_session_id, str) or not poe_session_id.strip():
-            raise ApiError(
-                status=400,
-                code="invalid_input",
-                message="poeSessionId is required",
-                headers=cors,
-            )
-        try:
-            account_name = resolve_account_name(
-                self.settings,
-                poe_session_id=poe_session_id,
-            )
-        except AccountResolutionError as exc:
-            raise ApiError(
-                status=exc.status,
-                code=exc.code,
-                message=str(exc),
-                headers=cors,
-            ) from None
-        except ValueError as exc:
-            raise ApiError(
-                status=400,
-                code="invalid_input",
-                message=str(exc),
-                headers=cors,
-            ) from None
-        _ = save_credential_state(
-            self.settings,
-            account_name=account_name,
-            poe_session_id=poe_session_id,
-            cf_clearance=cf_clearance,
-            status="bootstrap_connected",
-        )
-        session = create_session(self.settings, account_name=account_name)
-        cookie = _session_set_cookie(
-            self.settings.auth_cookie_name,
-            str(session.get("session_id") or ""),
-            secure=self.settings.auth_cookie_secure,
-        )
-        return json_response(
-            {
-                "status": "connected",
-                "accountName": str(session.get("account_name") or ""),
-                "expiresAt": session.get("expires_at"),
-                "scope": session.get("scope") or [],
-            },
-            headers={"Set-Cookie": cookie},
         )
 
     def _auth_logout(self, context: Mapping[str, object]) -> Response:

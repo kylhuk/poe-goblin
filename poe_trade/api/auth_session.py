@@ -254,7 +254,10 @@ def exchange_oauth_code(
             code="oauth_client_id_missing",
             status=500,
         )
-    if not settings.poe_account_redirect_uri.strip():
+    redirect_uri = str(
+        tx_state.get("redirect_uri") or _resolve_oauth_redirect_uri(settings)
+    ).strip()
+    if not redirect_uri:
         raise OAuthExchangeError(
             "missing oauth redirect uri",
             code="oauth_redirect_uri_missing",
@@ -265,7 +268,7 @@ def exchange_oauth_code(
         "client_id": settings.oauth_client_id,
         "grant_type": "authorization_code",
         "code": code.strip(),
-        "redirect_uri": settings.poe_account_redirect_uri,
+        "redirect_uri": redirect_uri,
         "scope": settings.poe_account_oauth_scope,
         "code_verifier": code_verifier,
     }
@@ -560,6 +563,7 @@ class LoginTransaction:
     state: str
     code_verifier: str
     code_challenge: str
+    redirect_uri: str
     created_at: str
     expires_at: str
 
@@ -570,12 +574,14 @@ def begin_login(settings: Settings) -> LoginTransaction:
     digest = hashlib.sha256(code_verifier.encode("utf-8")).digest()
     code_challenge = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
     state = secrets.token_urlsafe(24)
+    redirect_uri = _resolve_oauth_redirect_uri(settings)
     created = _now()
     expires = created + timedelta(minutes=10)
     tx = LoginTransaction(
         state=state,
         code_verifier=code_verifier,
         code_challenge=code_challenge,
+        redirect_uri=redirect_uri,
         created_at=_iso(created),
         expires_at=_iso(expires),
     )
@@ -585,6 +591,7 @@ def begin_login(settings: Settings) -> LoginTransaction:
             "state": tx.state,
             "code_verifier": tx.code_verifier,
             "code_challenge": tx.code_challenge,
+            "redirect_uri": tx.redirect_uri,
             "created_at": tx.created_at,
             "expires_at": tx.expires_at,
         },
@@ -661,13 +668,20 @@ def clear_session(settings: Settings, *, session_id: str | None) -> None:
         _save_json(_sessions_path(settings), sessions)
 
 
+def _resolve_oauth_redirect_uri(settings: Settings) -> str:
+    redirect_uri = settings.poe_account_redirect_uri.strip()
+    if redirect_uri:
+        return redirect_uri
+    return settings.poe_account_frontend_complete_uri.strip()
+
+
 def authorize_redirect(settings: Settings, tx: LoginTransaction) -> str:
     base = settings.poe_account_oauth_authorize_url
     query = urlencode(
         {
             "response_type": "code",
             "client_id": settings.oauth_client_id,
-            "redirect_uri": settings.poe_account_redirect_uri,
+            "redirect_uri": tx.redirect_uri,
             "scope": settings.poe_account_oauth_scope,
             "state": tx.state,
             "code_challenge": tx.code_challenge,
