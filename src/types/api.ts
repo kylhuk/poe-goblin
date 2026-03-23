@@ -43,56 +43,11 @@ export interface PriceCheckResponse {
   estimateWarning?: string | null;
   fairValueP50?: number | null;
   fastSale24hPrice?: number | null;
-  searchDiagnostics?: SearchDiagnostics;
-  comparablesSummary?: ComparablesSummary;
-  valueDrivers?: ValueDrivers;
-  scenarioPrices?: ScenarioPrices;
-  shadowComparison?: ShadowComparison | null;
-}
-
-export interface SearchDiagnostics {
-  stage: 0 | 1 | 2 | 3 | 4;
-  candidateCount: number;
-  effectiveSupport: number;
-  droppedAffixes: string[];
-  degradationReason?: string | null;
-}
-
-export interface ComparablesSummary {
-  anchorPrice?: number | null;
-  anchorLow?: number | null;
-  anchorHigh?: number | null;
-}
-
-export interface ValueDrivers {
-  positive: string[];
-  negative: string[];
-}
-
-export interface ScenarioPrices {
-  weakerRolls: number[];
-  strongerRolls?: number[];
 }
 
 // ========== ML Predict One ==========
 export interface MlPredictOneRequest {
   itemText: string;
-}
-
-export interface ShadowComparisonSide {
-  route: string | null;
-  price_p50: number | null;
-  confidence_percent: number | null;
-  interval_p10: number | null;
-  interval_p90: number | null;
-}
-
-export interface ShadowComparison {
-  candidateModelVersion: string | null;
-  incumbentModelVersion: string | null;
-  candidate: ShadowComparisonSide | null;
-  incumbent: ShadowComparisonSide | null;
-  deltaPercent: number | null;
 }
 
 export interface MlPredictOneResponse {
@@ -109,12 +64,6 @@ export interface MlPredictOneResponse {
   predictionSource?: string;
   estimateTrust?: string;
   estimateWarning?: string | null;
-  servingModelVersion?: string | null;
-  shadowComparison?: ShadowComparison | null;
-  searchDiagnostics?: SearchDiagnostics;
-  comparablesSummary?: ComparablesSummary;
-  valueDrivers?: ValueDrivers;
-  scenarioPrices?: ScenarioPrices;
 }
 
 // ========== Search History Analytics ==========
@@ -528,6 +477,12 @@ export interface MlAutomationStatus {
   promotionVerdict?: string | null;
   routeHotspots: unknown[];
   observability: MlAutomationObservability;
+  trainerRuntime?: {
+    stage: string | null;
+    status: string | null;
+    updatedAt: string | null;
+    details: Record<string, unknown>;
+  } | null;
 }
 
 export interface MlAutomationHistoryRun {
@@ -599,6 +554,10 @@ export interface MlAutomationHistory {
     promotedAt: string | null;
   }>;
   observability: MlAutomationObservability;
+  charts?: {
+    mdapeHistory: Record<string, unknown>[];
+    coverageHistory: Record<string, unknown>[];
+  };
 }
 
 // ========== API Service Interface ==========

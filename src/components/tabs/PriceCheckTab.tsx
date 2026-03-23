@@ -6,8 +6,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { ConfidenceBadge } from '@/components/shared/StatusIndicators';
 import { api } from '@/services/api';
-import type { PriceCheckResponse, ShadowComparison } from '@/types/api';
-import { Brain, AlertTriangle, ServerCrash, ShieldAlert, Info, GitCompare } from 'lucide-react';
+import type { PriceCheckResponse } from '@/types/api';
+import { Brain, AlertTriangle, ServerCrash, ShieldAlert, Info } from 'lucide-react';
 import { RenderState } from '@/components/shared/RenderState';
 import { useMouseGlow } from '@/hooks/useMouseGlow';
 
@@ -200,35 +200,7 @@ function PriceResultCard({
               )}
             </div>
           )}
-
         </div>
-
-        {/* Shadow comparison card */}
-        {result.shadowComparison && <ShadowComparisonCard shadow={result.shadowComparison} />}
-
-        {(result.valueDrivers?.positive?.length || result.valueDrivers?.negative?.length) ? (
-          <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Value Drivers</p>
-            {result.valueDrivers?.positive?.length ? (
-              <p className="text-xs text-foreground">Positive: {result.valueDrivers.positive.join(', ')}</p>
-            ) : null}
-            {result.valueDrivers?.negative?.length ? (
-              <p className="text-xs text-muted-foreground">Negative: {result.valueDrivers.negative.join(', ')}</p>
-            ) : null}
-          </div>
-        ) : null}
-
-        {result.searchDiagnostics ? (
-          <div className="text-xs text-muted-foreground">
-            Stage {result.searchDiagnostics.stage} • {result.searchDiagnostics.effectiveSupport} effective support
-          </div>
-        ) : null}
-
-        {result.scenarioPrices?.weakerRolls?.length ? (
-          <div className="text-xs text-muted-foreground">
-            Weaker rolls: {result.scenarioPrices.weakerRolls.join(', ')}
-          </div>
-        ) : null}
 
         {/* Comparables */}
         <ComparablesTable comparables={result.comparables} />
@@ -237,57 +209,7 @@ function PriceResultCard({
   );
 }
 
-function ShadowComparisonCard({ shadow }: { shadow: ShadowComparison }) {
-  const hasBoth = shadow.candidate?.price_p50 != null && shadow.incumbent?.price_p50 != null;
-  if (!hasBoth) return null;
-
-  const delta = shadow.deltaPercent;
-  const improved = delta != null && delta < 0;
-
-  return (
-    <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
-      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-        <GitCompare className="h-3.5 w-3.5 shrink-0" />
-        Shadow Comparison (Candidate vs Incumbent)
-      </div>
-      <div className="grid grid-cols-2 gap-4 text-center">
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Candidate</p>
-          <p className="text-sm font-mono font-semibold text-foreground">{shadow.candidate!.price_p50}</p>
-          {shadow.candidate!.route && (
-            <p className="text-[10px] text-muted-foreground font-mono">{shadow.candidate!.route}</p>
-          )}
-          {shadow.candidateModelVersion && (
-            <p className="text-[10px] text-muted-foreground font-mono">{shadow.candidateModelVersion}</p>
-          )}
-          {shadow.candidate!.confidence_percent != null && (
-            <p className="text-[10px] text-muted-foreground">{shadow.candidate!.confidence_percent}% conf</p>
-          )}
-        </div>
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Incumbent</p>
-          <p className="text-sm font-mono font-semibold text-foreground">{shadow.incumbent!.price_p50}</p>
-          {shadow.incumbent!.route && (
-            <p className="text-[10px] text-muted-foreground font-mono">{shadow.incumbent!.route}</p>
-          )}
-          {shadow.incumbentModelVersion && (
-            <p className="text-[10px] text-muted-foreground font-mono">{shadow.incumbentModelVersion}</p>
-          )}
-          {shadow.incumbent!.confidence_percent != null && (
-            <p className="text-[10px] text-muted-foreground">{shadow.incumbent!.confidence_percent}% conf</p>
-          )}
-        </div>
-      </div>
-      {delta != null && (
-        <p className={`text-xs text-center font-mono ${improved ? 'text-green-500' : 'text-warning'}`}>
-          Δ {delta > 0 ? '+' : ''}{delta.toFixed(1)}%
-        </p>
-      )}
-    </div>
-  );
-}
-
-function ComparablesTable({ comparables }: { comparables: MergedPriceResult['comparables'] }) {
+function ComparablesTable({ comparables }: { comparables: PriceCheckResponse['comparables'] }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">

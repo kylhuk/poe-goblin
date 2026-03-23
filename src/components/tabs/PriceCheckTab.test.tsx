@@ -62,36 +62,21 @@ describe('PriceCheckTab', () => {
     vi.clearAllMocks();
   });
 
-  it('normalizes hybrid search diagnostics and scenarios in rendered output', async () => {
+  it('renders prediction value and comparables from unified response', async () => {
     apiMock.priceCheck.mockResolvedValue({
       predictedValue: 100,
       currency: 'chaos',
       confidence: 0.61,
       comparables: [],
       interval: { p10: 90, p90: 120 },
-      searchDiagnostics: {
-        stage: 2,
-        candidateCount: 12,
-        effectiveSupport: 8,
-        droppedAffixes: ['explicit.light_radius'],
-      },
-      valueDrivers: {
-        positive: ['explicit.max_life'],
-        negative: [],
-      },
-      scenarioPrices: {
-        weakerRolls: [88],
-        strongerRolls: [126],
-      },
     });
 
     render(<PriceCheckTab />);
     fireEvent.change(screen.getByTestId('pricecheck-input'), { target: { value: 'Rarity: Rare' } });
     fireEvent.click(screen.getByTestId('pricecheck-submit'));
 
-    expect(await screen.findByText(/value drivers/i)).toBeInTheDocument();
-    expect(screen.getByText(/stage 2/i)).toBeInTheDocument();
-    expect(screen.getByText(/weaker rolls: 88/i)).toBeInTheDocument();
+    expect(await screen.findByText(/100/)).toBeInTheDocument();
+    expect(screen.getByText(/chaos/i)).toBeInTheDocument();
   });
 
   it('uses unified price-check response without calling mlPredictOne', async () => {
