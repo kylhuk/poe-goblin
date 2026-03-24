@@ -99,19 +99,22 @@ export default function EconomyTab() {
     setHistoryLoading(true);
 
     const BATCH = 20;
+    setHistoryProgress({ loaded: 0, total: unique.length });
     (async () => {
       for (let i = 0; i < unique.length; i += BATCH) {
         if (cancelled) return;
         const batch = unique.slice(i, i + BATCH);
         const result = await fetchItemHistories(batch);
         if (cancelled) return;
+        const done = Math.min(i + BATCH, unique.length);
+        setHistoryProgress({ loaded: done, total: unique.length });
         setHistoryMap(prev => {
           const next = new Map(prev);
           result.forEach((v, k) => next.set(k, v));
           return next;
         });
       }
-      if (!cancelled) setHistoryLoading(false);
+      if (!cancelled) { setHistoryLoading(false); setHistoryProgress(null); }
     })();
 
     return () => { cancelled = true; };
