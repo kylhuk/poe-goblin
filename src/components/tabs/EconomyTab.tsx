@@ -83,33 +83,40 @@ export default function EconomyTab() {
     return items;
   }, [allItems, activeCategory, categories, search]);
 
-  // Lazy-load history for visible page items
+  // Background-load history for ALL items in batches
   useEffect(() => {
-    if (phase !== 'ready') return;
+    if (phase !== 'ready' || allItems.length === 0) return;
 
-    // Get the first page of current filtered items (same PAGE_SIZE as the table)
-    const pageItems = filteredItems.slice(0, PAGE_SIZE);
-    const fingerprints = pageItems
+    const allFingerprints = allItems
       .map(i => i.fingerprint)
-      .filter((fp): fp is string => !!fp && !historyMap.has(fp));
+      .filter((fp): fp is string => !!fp);
+    const unique = [...new Set(allFingerprints)].filter(fp => !historyMap.has(fp));
 
-    if (fingerprints.length === 0) return;
+    if (unique.length === 0) return;
 
     let cancelled = false;
     setHistoryLoading(true);
 
-    fetchItemHistories(fingerprints).then(result => {
-      if (cancelled) return;
-      setHistoryMap(prev => {
-        const next = new Map(prev);
-        result.forEach((v, k) => next.set(k, v));
-        return next;
-      });
-      setHistoryLoading(false);
-    });
+    const BATCH = 20;
+    (async () => {
+      for (let i = 0; i < unique.length; i += BATCH) {
+        if (cancelled) return;
+        const batch = unique.slice(i, i + BATCH);
+        const result = await fetchItemHistories(batch);
+        if (cancelled) return;
+        setHistoryMap(prev => {
+          const next = new Map(prev);
+          result.forEach((v, k) => next.set(k, v));
+          return next;
+        });
+      }
+      if (!cancelled) setHistoryLoading(false);
+    })();
 
     return () => { cancelled = true; };
-  }, [phase, filteredItems, historyMap]);
+  // Only run once when items are ready — historyMap excluded to avoid re-triggering
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, allItems]);
 
   if (phase === 'init') {
     return (
