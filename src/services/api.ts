@@ -744,6 +744,7 @@ function normalizePoeItem(raw: unknown): PoeItem {
 
   return {
     id: optString(item.id) ?? crypto.randomUUID(),
+    fingerprint: optString(item.fingerprint) ?? undefined,
     name,
     typeLine,
     baseType: optString(item.baseType ?? item.base_type) ?? undefined,

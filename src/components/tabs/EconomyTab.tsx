@@ -4,8 +4,10 @@ import type { PoeItem, StashTabMeta } from '@/types/api';
 import {
   loadAllStashItems,
   categorizeItems,
+  fetchItemHistories,
   type ItemCategory,
   type LoadProgress,
+  type ItemHistoryData,
 } from '@/services/stashCache';
 import CategorySidebar from '@/components/economy/CategorySidebar';
 import EconomyTable from '@/components/economy/EconomyTable';
@@ -16,6 +18,8 @@ import { Button } from '@/components/ui/button';
 
 type Phase = 'init' | 'loading' | 'ready' | 'error';
 
+const PAGE_SIZE = 50;
+
 export default function EconomyTab() {
   const [phase, setPhase] = useState<Phase>('init');
   const [progress, setProgress] = useState<LoadProgress>({ loaded: 0, total: 0 });
@@ -25,6 +29,8 @@ export default function EconomyTab() {
   const [search, setSearch] = useState('');
   const [selectedItem, setSelectedItem] = useState<PoeItem | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [historyMap, setHistoryMap] = useState<Map<string, ItemHistoryData>>(new Map());
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const load = useCallback(async () => {
     setPhase('loading');
@@ -36,7 +42,6 @@ export default function EconomyTab() {
         setPhase('error');
         return;
       }
-      // Get tab metadata
       const tabResp = await api.getStashTabs();
       const tabsMeta: StashTabMeta[] = tabResp.tabsMeta;
       const scanId = tabResp.scanId || 'default';
@@ -77,6 +82,34 @@ export default function EconomyTab() {
     }
     return items;
   }, [allItems, activeCategory, categories, search]);
+
+  // Lazy-load history for visible page items
+  useEffect(() => {
+    if (phase !== 'ready') return;
+
+    // Get the first page of current filtered items (same PAGE_SIZE as the table)
+    const pageItems = filteredItems.slice(0, PAGE_SIZE);
+    const fingerprints = pageItems
+      .map(i => i.fingerprint)
+      .filter((fp): fp is string => !!fp && !historyMap.has(fp));
+
+    if (fingerprints.length === 0) return;
+
+    let cancelled = false;
+    setHistoryLoading(true);
+
+    fetchItemHistories(fingerprints).then(result => {
+      if (cancelled) return;
+      setHistoryMap(prev => {
+        const next = new Map(prev);
+        result.forEach((v, k) => next.set(k, v));
+        return next;
+      });
+      setHistoryLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [phase, filteredItems, historyMap]);
 
   if (phase === 'init') {
     return (
@@ -156,7 +189,12 @@ export default function EconomyTab() {
           </Button>
         </div>
 
-        <EconomyTable items={filteredItems} onItemClick={setSelectedItem} />
+        <EconomyTable
+          items={filteredItems}
+          onItemClick={setSelectedItem}
+          historyMap={historyMap}
+          historyLoading={historyLoading}
+        />
       </div>
 
       <ItemDetailDialog

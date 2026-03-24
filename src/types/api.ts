@@ -207,6 +207,7 @@ export interface PoeItemRequirement {
 
 export interface PoeItem {
   id: string;
+  fingerprint?: string;
   name: string;
   typeLine: string;
   baseType?: string;

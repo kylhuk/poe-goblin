@@ -1,5 +1,6 @@
-import type { PoeItem, StashTabMeta } from '@/types/api';
+import type { PoeItem, StashTabMeta, StashItemHistoryEntry } from '@/types/api';
 import { api } from './api';
+import type { SparklinePoint } from '@/components/economy/PriceSparkline';
 
 const CACHE_KEY_PREFIX = 'stash-cache-';
 
@@ -144,6 +145,69 @@ export function invalidateCache() {
       sessionStorage.removeItem(k);
     }
   }
+}
+
+// ── History Cache ─────────────────────────────────
+
+export interface ItemHistoryData {
+  points: SparklinePoint[];
+  change24h: number | null;
+}
+
+const historyCache = new Map<string, ItemHistoryData>();
+
+function deriveChange24h(entries: StashItemHistoryEntry[]): number | null {
+  if (entries.length < 2) return null;
+  const sorted = [...entries].sort((a, b) => new Date(a.pricedAt).getTime() - new Date(b.pricedAt).getTime());
+  const now = Date.now();
+  const cutoff = now - 24 * 60 * 60 * 1000;
+  const recent = sorted.filter(e => new Date(e.pricedAt).getTime() >= cutoff);
+  if (recent.length < 2) {
+    // Fall back to last two entries
+    const prev = sorted[sorted.length - 2].predictedValue;
+    const curr = sorted[sorted.length - 1].predictedValue;
+    if (prev === 0) return null;
+    return ((curr - prev) / prev) * 100;
+  }
+  const first = recent[0].predictedValue;
+  const last = recent[recent.length - 1].predictedValue;
+  if (first === 0) return null;
+  return ((last - first) / first) * 100;
+}
+
+export async function fetchItemHistories(
+  fingerprints: string[],
+): Promise<Map<string, ItemHistoryData>> {
+  const result = new Map<string, ItemHistoryData>();
+  const toFetch = fingerprints.filter(fp => {
+    if (historyCache.has(fp)) {
+      result.set(fp, historyCache.get(fp)!);
+      return false;
+    }
+    return true;
+  });
+
+  for (const fp of toFetch) {
+    try {
+      const resp = await api.getStashItemHistory(fp);
+      const points: SparklinePoint[] = resp.history.map(e => ({
+        timestamp: e.pricedAt,
+        value: e.predictedValue,
+      }));
+      const data: ItemHistoryData = {
+        points,
+        change24h: deriveChange24h(resp.history),
+      };
+      historyCache.set(fp, data);
+      result.set(fp, data);
+    } catch {
+      // Skip failed fetches
+      historyCache.set(fp, { points: [], change24h: null });
+      result.set(fp, { points: [], change24h: null });
+    }
+  }
+
+  return result;
 }
 
 export interface LoadProgress {
