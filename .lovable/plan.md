@@ -1,57 +1,54 @@
 
 
-## Fix Stash Viewer to Work with New API Response Format
+## Multi-Tab Stash Support
 
 ### Problem
 
-The backend changed the `/api/v1/stash/tabs` response from `{"stashTabs": [...]}` to the raw PoE schema:
-```json
+The API now returns all 19 stash tabs' metadata in the `tabs[]` array, plus the first tab's full data in `stash`. The current normalizer ignores `tabs[]` entirely and wraps `stash` as a single-element array, so only one tab is ever visible and there's no way to switch.
+
+### API Response Format (confirmed from debug traffic)
+
+```text
 {
-  "stash": {"id":"...","name":"X2","type":"QuadStash","items":[...],...},
-  "tabs": [],
+  "stash": { id, name, type, index, metadata, items[] },  ← full data for ONE tab
+  "tabs": [                                                ← metadata for ALL 19 tabs
+    { id, tab_index, name, type },
+    ...
+  ],
   "items": [],
-  "numTabs": 0
+  "numTabs": 19
 }
 ```
 
-The current `normalizeStashTabsResponse` looks for `source.stashTabs` which no longer exists, so `tabs` is always empty and nothing renders.
+Tab types seen: `QuadStash`, `CurrencyStash`, `FlaskStash`, `GemStash`, `PremiumStash`, `UniqueStash`, `MapStash`, `EssenceStash`, `DivinationCardStash`, `FragmentStash`, `DeliriumStash`, `UltimatumStash`, `BlightStash`.
 
-Additionally, tab types come as `"QuadStash"`, `"NormalStash"`, `"CurrencyStash"` etc. instead of `"quad"`, `"normal"`, `"currency"`.
-
-### Technical Details
-
-**What the API sends:**
-- `stash` — single stash tab object with `id`, `name`, `type` (e.g. `"QuadStash"`), `items[]`, `metadata`
-- Items have: `x, y, w, h, icon, frameType, stackSize, maxStackSize, rarity, ilvl, sockets, properties, explicitMods, implicitMods, descrText, flavourText`
-- `stash.type` values: `QuadStash` (24×24), `NormalStash` (12×12), potentially `CurrencyStash`, `FragmentStash`, etc.
+To load a different tab, we likely need to pass `&tabIndex=N` or `&stashId=X` to `/api/v1/stash/tabs`.
 
 ### Changes
 
-#### 1. `src/services/api.ts` — Fix `normalizeStashTabsResponse`
+#### 1. `src/types/api.ts` — Add tab metadata type + update response
 
-- Detect `source.stash` (single object) and wrap it as a one-element array
-- Add a `mapPoeStashType()` helper: `QuadStash→quad`, `NormalStash→normal`, `CurrencyStash→currency`, `FragmentStash→fragment`, `MapStash→map`, `EssenceStash→essence`, `DivinationCardStash→divination`, `UniqueStash→unique`, `DelveStash→delve`
-- In `normalizeStashTab`, apply the type mapping and set `quadLayout: true` when type is `QuadStash`
-- Fall back to old `stashTabs[]` handling for backward compat
+- Add `StashTabMeta` interface: `{ id, tabIndex, name, type }`
+- Update `StashTabsResponse` to include `tabsMeta: StashTabMeta[]` and `numTabs: number`
 
-#### 2. `src/components/tabs/StashViewerTab.tsx` — Consume single-tab response
+#### 2. `src/services/api.ts` — Parse `tabs[]` array, support tab index param
 
-- `loadPublished`: set `tabs` from `payload.stashTabs` (now a 1-element array from the normalizer)
-- Since `scanId`/`publishedAt` no longer come from `/stash/tabs`, keep using them only from `/stash/status`
-- Compute `gridSize` dynamically: if tab type is `"quad"` or `quadLayout===true`, use 24; otherwise scan items' max `x+w`/`y+h` — if >12 use 24, else 12
-- Tab selector still renders (just one tab button for now)
+- In `normalizeStashTabsResponse`: extract `source.tabs` array into `tabsMeta[]`, map `tab_index` → `tabIndex` and apply `mapPoeStashType`
+- Update `getStashTabs(tabIndex?: number)` to accept optional tab index and append `&tabIndex=N` to the URL
+- Still wrap `source.stash` into `stashTabs[0]` for the currently loaded tab's items
 
-#### 3. `src/components/stash/NormalGrid.tsx` — Ensure symmetrical squares
+#### 3. `src/components/tabs/StashViewerTab.tsx` — Tab selector from metadata
 
-- Grid already uses `repeat(N, 1fr)` + `aspect-ratio: 1` which should work
-- Remove `aspect-ratio: 1` from `.stash-empty-cell` in CSS (conflicts when items span multiple cells)
-
-#### 4. `src/index.css` — Remove conflicting cell aspect-ratio
-
-- Remove `aspect-ratio: 1` from `.stash-empty-cell` (line 368)
+- Store `tabsMeta` (all 19 tabs) separately from `tabs` (the loaded tab with items)
+- Render tab buttons from `tabsMeta` instead of from `tabs` — this shows all 19 tab buttons
+- On tab click, call `api.getStashTabs(tabIndex)` to fetch that specific tab's items
+- Show a loading indicator while fetching a new tab
+- The active tab's items populate the grid/special layout as before
+- Use `tabsMeta[i].type` to determine grid type (quad vs normal vs special layout)
 
 ### Files Changed
-- `src/services/api.ts` — normalizer fixes
-- `src/components/tabs/StashViewerTab.tsx` — dynamic grid size, consume new format
-- `src/index.css` — remove conflicting aspect-ratio
+
+- `src/types/api.ts` — add `StashTabMeta`, update `StashTabsResponse`
+- `src/services/api.ts` — parse `tabs[]`, add `tabIndex` param to `getStashTabs`
+- `src/components/tabs/StashViewerTab.tsx` — render all tabs from metadata, lazy-load on click
 
