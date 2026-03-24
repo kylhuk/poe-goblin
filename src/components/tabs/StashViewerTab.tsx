@@ -238,7 +238,9 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
             <p className="text-xs text-muted-foreground">
               {scanStatus.status === 'failed'
                 ? `Last scan failed${scanStatus.error ? `: ${scanStatus.error}` : ''}`
-                : `Scan ${scanStatus.status}: ${scanStatus.progress.tabsProcessed}/${scanStatus.progress.tabsTotal} tabs · ${scanStatus.progress.itemsProcessed}/${scanStatus.progress.itemsTotal} items`}
+                : tab
+                  ? `Scan ${scanStatus.status} — showing last available stash data`
+                  : `Scan ${scanStatus.status}: ${scanStatus.progress.tabsProcessed}/${scanStatus.progress.tabsTotal} tabs · ${scanStatus.progress.itemsProcessed}/${scanStatus.progress.itemsTotal} items`}
             </p>
           )}
         </div>
