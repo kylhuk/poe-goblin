@@ -101,38 +101,37 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
     }
   }, []);
 
-  const loadPublished = useCallback(async () => {
+  const pollStatus = useCallback(async () => {
     const stashStatus = await api.getStashStatus();
     setStatus(stashStatus.status);
     setPublishedScanId(stashStatus.publishedScanId ?? null);
     setPublishedAt(stashStatus.publishedAt ?? null);
     setScanStatus(stashStatus.scanStatus ?? EMPTY_SCAN_STATUS);
-    if (stashStatus.connected) {
-      const payload = await api.getStashTabs(activeTabIndex);
-      if (payload.tabsMeta.length > 0) {
-        setTabsMeta(payload.tabsMeta);
-      }
-      if (payload.stashTabs.length > 0) {
-        setActiveTab(payload.stashTabs[0]);
-      }
-      setPublishedScanId(payload.scanId ?? stashStatus.publishedScanId ?? null);
-      setPublishedAt(payload.publishedAt ?? stashStatus.publishedAt ?? null);
-      if (payload.scanStatus) {
-        setScanStatus(payload.scanStatus);
-      }
-    } else {
+    if (!stashStatus.connected) {
       setActiveTab(null);
       setTabsMeta([]);
     }
     setError(null);
-  }, [activeTabIndex]);
+    return stashStatus;
+  }, []);
+
+  const initialLoadDone = React.useRef(false);
 
   useEffect(() => {
-    loadPublished().catch((err: unknown) => {
-      setError(err instanceof Error ? err.message : 'Stash feature unavailable');
-      setStatus('degraded');
-    });
-  }, [loadPublished]);
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
+    (async () => {
+      try {
+        const stashStatus = await pollStatus();
+        if (stashStatus.connected) {
+          await loadTab(0);
+        }
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Stash feature unavailable');
+        setStatus('degraded');
+      }
+    })();
+  }, [pollStatus, loadTab]);
 
   useEffect(() => {
     if (!scanBusy) {
@@ -145,7 +144,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
         if (next.status === 'published') {
           window.clearInterval(timer);
           setScanBusy(false);
-          await loadPublished();
+          await loadTab(activeTabIndex);
         }
         if (next.status === 'failed') {
           window.clearInterval(timer);
@@ -161,7 +160,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
       }
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [scanBusy, loadPublished]);
+  }, [scanBusy, loadTab, activeTabIndex]);
 
   const startScan = useCallback(async () => {
     try {
@@ -200,13 +199,13 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
 
   useEffect(() => {
     const iv = window.setInterval(() => {
-      loadPublished().catch((err: unknown) => {
+      pollStatus().catch((err: unknown) => {
         setError(err instanceof Error ? err.message : 'Stash feature unavailable');
         setStatus('degraded');
       });
     }, 5_000);
     return () => clearInterval(iv);
-  }, [loadPublished]);
+  }, [pollStatus]);
 
   const tab = activeTab;
   const specialLayout = tab ? getSpecialLayout(tab) : null;
