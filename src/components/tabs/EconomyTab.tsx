@@ -31,6 +31,7 @@ export default function EconomyTab() {
   const [errorMsg, setErrorMsg] = useState('');
   const [historyMap, setHistoryMap] = useState<Map<string, ItemHistoryData>>(new Map());
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyProgress, setHistoryProgress] = useState<{ loaded: number; total: number } | null>(null);
 
   const load = useCallback(async () => {
     setPhase('loading');
