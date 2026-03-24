@@ -725,16 +725,33 @@ function normalizePoeItem(raw: unknown): PoeItem {
   };
 }
 
+function mapPoeStashType(rawType: string): StashTab['type'] {
+  const map: Record<string, StashTab['type']> = {
+    QuadStash: 'quad',
+    NormalStash: 'normal',
+    CurrencyStash: 'currency',
+    FragmentStash: 'fragment',
+    MapStash: 'map',
+    EssenceStash: 'essence',
+    DivinationCardStash: 'divination',
+    UniqueStash: 'unique',
+    DelveStash: 'delve',
+  };
+  return map[rawType] ?? (rawType as StashTab['type']) ?? 'normal';
+}
+
 function normalizeStashTab(raw: unknown): StashTab {
   const tab = asObject(raw);
   const rawItems = Array.isArray(tab.items) ? tab.items : [];
+  const rawType = optString(tab.type) ?? 'normal';
+  const mappedType = mapPoeStashType(rawType);
 
   return {
     id: optString(tab.id) ?? crypto.randomUUID(),
     name: optString(tab.name) ?? 'Tab',
-    type: (optString(tab.type) as StashTab['type']) ?? 'normal',
+    type: mappedType,
     items: rawItems.map(normalizePoeItem),
-    quadLayout: typeof tab.quadLayout === 'boolean' ? tab.quadLayout : Boolean(tab.quad_layout),
+    quadLayout: mappedType === 'quad' || (typeof tab.quadLayout === 'boolean' ? tab.quadLayout : Boolean(tab.quad_layout)),
     currencyLayout: (tab.currencyLayout ?? tab.currency_layout) as StashTab['currencyLayout'],
     fragmentLayout: (tab.fragmentLayout ?? tab.fragment_layout) as StashTab['fragmentLayout'],
     essenceLayout: (tab.essenceLayout ?? tab.essence_layout) as StashTab['essenceLayout'],
@@ -751,6 +768,20 @@ function normalizeStashTab(raw: unknown): StashTab {
 
 function normalizeStashTabsResponse(payload: unknown): StashTabsResponse {
   const source = asObject(payload);
+
+  // New raw PoE schema: { stash: {single tab object}, tabs: [], items: [], numTabs: 0 }
+  if (source.stash && typeof source.stash === 'object' && !Array.isArray(source.stash)) {
+    const tab = normalizeStashTab(source.stash);
+    return {
+      scanId: null,
+      publishedAt: null,
+      isStale: false,
+      scanStatus: null,
+      stashTabs: [tab],
+    };
+  }
+
+  // Legacy format: { stashTabs: [...] }
   const rawTabs = Array.isArray(source.stashTabs ?? source.stash_tabs) ? (source.stashTabs ?? source.stash_tabs) as unknown[] : [];
 
   return {

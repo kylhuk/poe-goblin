@@ -365,7 +365,6 @@ body::after {
   background: hsl(25 10% 4%);
   border: 1px solid hsl(25 8% 10%);
   position: relative;
-  aspect-ratio: 1;
 }
 
 .stash-empty-cell::after {
