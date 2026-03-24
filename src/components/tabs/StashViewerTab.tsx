@@ -10,6 +10,7 @@ import type {
   StashScanStatus,
   StashStatus,
   StashTab,
+  StashTabMeta,
   PriceEvaluation,
   SpecialLayout,
 } from '@/types/api';
