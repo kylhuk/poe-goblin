@@ -1,25 +1,57 @@
-## Fix Stash Viewer — Remove All In-Cell Text Clutter
+
+
+## Fix Stash Viewer to Work with New API Response Format
 
 ### Problem
 
-Every item cell renders the item name and price as tiny overlaid text directly in the cell. This makes the grid completely unreadable. In-game PoE stash tabs show **only the item icon** in cells — all text info appears in the hover tooltip.
+The backend changed the `/api/v1/stash/tabs` response from `{"stashTabs": [...]}` to the raw PoE schema:
+```json
+{
+  "stash": {"id":"...","name":"X2","type":"QuadStash","items":[...],...},
+  "tabs": [],
+  "items": [],
+  "numTabs": 0
+}
+```
+
+The current `normalizeStashTabsResponse` looks for `source.stashTabs` which no longer exists, so `tabs` is always empty and nothing renders.
+
+Additionally, tab types come as `"QuadStash"`, `"NormalStash"`, `"CurrencyStash"` etc. instead of `"quad"`, `"normal"`, `"currency"`.
+
+### Technical Details
+
+**What the API sends:**
+- `stash` — single stash tab object with `id`, `name`, `type` (e.g. `"QuadStash"`), `items[]`, `metadata`
+- Items have: `x, y, w, h, icon, frameType, stackSize, maxStackSize, rarity, ilvl, sockets, properties, explicitMods, implicitMods, descrText, flavourText`
+- `stash.type` values: `QuadStash` (24×24), `NormalStash` (12×12), potentially `CurrencyStash`, `FragmentStash`, etc.
 
 ### Changes
 
-#### 1. `src/components/stash/StashItemCell.tsx`
+#### 1. `src/services/api.ts` — Fix `normalizeStashTabsResponse`
 
-- **Remove the fallback name text entirely** from the cell — the `displayName` span that shows "Majestic Plate", "Dragonbone Rapier" etc. should never render inside the cell, even for normal tabs. If there's no icon, show an empty dark cell (the tooltip handles identification).
-- **Remove the price tag** (`estimatedPrice`) from inside the cell entirely. Price info belongs in the tooltip only.
-- **Keep stack size badge** — this is the only text that belongs in-cell (matches in-game behavior).
-- **Keep evaluation background tint** — the subtle green/yellow/red tint is fine as a non-text visual cue.
+- Detect `source.stash` (single object) and wrap it as a one-element array
+- Add a `mapPoeStashType()` helper: `QuadStash→quad`, `NormalStash→normal`, `CurrencyStash→currency`, `FragmentStash→fragment`, `MapStash→map`, `EssenceStash→essence`, `DivinationCardStash→divination`, `UniqueStash→unique`, `DelveStash→delve`
+- In `normalizeStashTab`, apply the type mapping and set `quadLayout: true` when type is `QuadStash`
+- Fall back to old `stashTabs[]` handling for backward compat
 
-#### 2. No other files need changes
+#### 2. `src/components/tabs/StashViewerTab.tsx` — Consume single-tab response
 
-The grid layout, CSS, and tooltip already work correctly. The only problem is the text spam inside cells.
+- `loadPublished`: set `tabs` from `payload.stashTabs` (now a 1-element array from the normalizer)
+- Since `scanId`/`publishedAt` no longer come from `/stash/tabs`, keep using them only from `/stash/status`
+- Compute `gridSize` dynamically: if tab type is `"quad"` or `quadLayout===true`, use 24; otherwise scan items' max `x+w`/`y+h` — if >12 use 24, else 12
+- Tab selector still renders (just one tab button for now)
 
-### Result
+#### 3. `src/components/stash/NormalGrid.tsx` — Ensure symmetrical squares
 
-Cells will show: icon + optional stack size badge + subtle eval tint. Nothing else. All detailed info (name, price, stats) appears on hover via the existing `ItemTooltip`.  
-  
-  
-YOU FUCKING IDIOT SHALL NOT DRAW A GRID IF IT IS NOT A GRID!!!! THE FUCKING GRID HAS TO BE SYMMETRICAL AND GOD FUCKING DAMMIT JUST CHECK YOURSELF WITH SCREENSHOTS IF IT LOOKS GOOD OR NOT!!!!
+- Grid already uses `repeat(N, 1fr)` + `aspect-ratio: 1` which should work
+- Remove `aspect-ratio: 1` from `.stash-empty-cell` in CSS (conflicts when items span multiple cells)
+
+#### 4. `src/index.css` — Remove conflicting cell aspect-ratio
+
+- Remove `aspect-ratio: 1` from `.stash-empty-cell` (line 368)
+
+### Files Changed
+- `src/services/api.ts` — normalizer fixes
+- `src/components/tabs/StashViewerTab.tsx` — dynamic grid size, consume new format
+- `src/index.css` — remove conflicting aspect-ratio
+
