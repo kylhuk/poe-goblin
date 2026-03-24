@@ -144,7 +144,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
         if (next.status === 'published') {
           window.clearInterval(timer);
           setScanBusy(false);
-          await loadPublished();
+          await loadTab(activeTabIndex);
         }
         if (next.status === 'failed') {
           window.clearInterval(timer);
