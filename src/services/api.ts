@@ -40,6 +40,18 @@ export interface IngestionRow {
 export interface ScannerRow {
   strategy_id: string;
   recommendation_count: number;
+  enabled?: boolean;
+  accepted_count?: number;
+  rejected_count?: number;
+  candidate_count?: number;
+  top_rejection_reason?: string | null;
+}
+
+export interface ScannerAnalyticsResponse {
+  latestRunId?: string | null;
+  rows: ScannerRow[];
+  gateRejections?: Array<{ decision_reason: string; rejection_count: number }>;
+  complexityTiers?: Array<{ complexity_tier: string; tier_count: number }>;
 }
 
 export interface AlertRow {
@@ -268,8 +280,7 @@ export async function getAnalyticsIngestion() {
 }
 
 export async function getAnalyticsScanner() {
-  const payload = await request<{ rows: ScannerRow[] }>('/api/v1/ops/analytics/scanner');
-  return payload.rows;
+  return request<ScannerAnalyticsResponse>('/api/v1/ops/analytics/scanner');
 }
 
 export async function getAnalyticsAlerts() {

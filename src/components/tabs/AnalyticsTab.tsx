@@ -28,6 +28,7 @@ import {
   getAnalyticsSearchHistory,
   getAnalyticsSearchSuggestions,
   type IngestionRow, 
+  type ScannerAnalyticsResponse,
   type ScannerRow, 
   type AlertRow, 
   type BacktestAnalytics, 
@@ -99,8 +100,8 @@ function IngestionPanel() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      {items.map((item, i) => (
-        <Card key={i} className="card-game">
+      {items.map((item) => (
+        <Card key={item.strategy_id} className="card-game">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-sans">{item.queue_key}</CardTitle>
@@ -120,26 +121,39 @@ function IngestionPanel() {
 }
 
 function ScannerPanel() {
-  const [items, setItems] = useState<ScannerRow[]>([]);
+  const [data, setData] = useState<ScannerAnalyticsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
     getAnalyticsScanner()
-      .then(setItems)
+      .then(setData)
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load scanner analytics'));
   }, []);
   useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
-  if (items.length === 0) return <RenderState kind="empty" message="No scanner data available" />;
+  if (!data || data.rows.length === 0) return <RenderState kind="empty" message="No scanner data available" />;
+
+  const items = data.rows;
 
   return (
-    <div className="space-y-2">
-      {items.map((item, i) => (
-        <Card key={i} className="card-game">
+    <div className="space-y-3">
+      <Card className="card-game">
+        <CardContent className="p-4 text-xs text-muted-foreground flex items-center justify-between gap-3">
+          <span>Latest run: <span className="font-mono text-foreground">{data.latestRunId ?? 'n/a'}</span></span>
+          <span>Strategies listed: <span className="font-mono text-foreground">{items.length}</span></span>
+        </CardContent>
+      </Card>
+      {items.map((item) => (
+        <Card key={item.strategy_id} className="card-game">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1.5fr)_repeat(4,minmax(0,1fr))_minmax(0,1.5fr)] md:items-center text-xs">
               <span className="text-sm font-medium text-foreground">{item.strategy_id}</span>
-              <span className="text-xs text-muted-foreground">Recommendations: <span className="font-mono text-foreground">{item.recommendation_count}</span></span>
+              <span className="text-muted-foreground">Enabled: <span className="font-mono text-foreground">{item.enabled ? 'yes' : 'no'}</span></span>
+              <span className="text-muted-foreground">Candidates: <span className="font-mono text-foreground">{item.candidate_count ?? 0}</span></span>
+              <span className="text-muted-foreground">Accepted: <span className="font-mono text-foreground">{item.accepted_count ?? 0}</span></span>
+              <span className="text-muted-foreground">Rejected: <span className="font-mono text-foreground">{item.rejected_count ?? 0}</span></span>
+              <span className="text-muted-foreground">Recommendations: <span className="font-mono text-foreground">{item.recommendation_count}</span></span>
+              <span className="text-muted-foreground">Top rejection: <span className="font-mono text-foreground">{item.top_rejection_reason ?? '—'}</span></span>
             </div>
           </CardContent>
         </Card>

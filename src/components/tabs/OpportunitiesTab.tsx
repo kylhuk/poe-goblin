@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { RenderState } from '../shared/RenderState';
 import { Button } from '../ui/button';
@@ -115,7 +115,7 @@ const OpportunitiesTab = forwardRef<HTMLDivElement, Record<string, never>>(funct
   const mouseGlow = useMouseGlow();
   const requestVersionRef = useRef(0);
 
-  const fetchInitial = (currentSort: ScannerSort, opts?: { limit?: number; strategyId?: string; minConfidence?: number }) => {
+  const fetchInitial = useCallback((currentSort: ScannerSort, opts?: { limit?: number; strategyId?: string; minConfidence?: number }) => {
     const requestVersion = ++requestVersionRef.current;
     setLoading(true);
     setLoadingMore(false);
@@ -134,12 +134,33 @@ const OpportunitiesTab = forwardRef<HTMLDivElement, Record<string, never>>(funct
       .finally(() => {
         if (requestVersionRef.current === requestVersion) setLoading(false);
       });
-  };
+  }, []);
 
   useEffect(() => {
     fetchInitial(sort, { limit, strategyId: strategyId.trim() || undefined, minConfidence });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sort]);
+  }, [fetchInitial, sort, limit, strategyId, minConfidence]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      fetchInitial(sort, { limit, strategyId: strategyId.trim() || undefined, minConfidence });
+    };
+
+    const intervalId = window.setInterval(refresh, 30000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refresh();
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [fetchInitial, sort, strategyId, minConfidence, limit]);
 
   const applyFilters = () => {
     fetchInitial(sort, { limit, strategyId: strategyId.trim() || undefined, minConfidence });
