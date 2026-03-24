@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import secrets
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -26,6 +27,11 @@ _PROFILE_TITLE_PATTERN = re.compile(
     r"<title>\s*([^<]+?)\s*(?:['’]s profile|[-–—]\s*Path of Exile|Profile)\s*</title>",
     flags=re.IGNORECASE,
 )
+
+
+_LOGIN_TRANSACTION_LOCK = threading.Lock()
+_OAUTH_TOKEN_STATE_LOCK = threading.Lock()
+_SESSION_STATE_LOCK = threading.Lock()
 
 
 class AuthSessionError(Exception):
@@ -97,6 +103,219 @@ def credential_state_path(settings: Settings) -> Path:
     return _state_dir(settings) / "credential-state.json"
 
 
+def oauth_token_state_path(settings: Settings) -> Path:
+    return _state_dir(settings) / "oauth-token-state.json"
+
+
+def _serialize_login_transaction(tx: LoginTransaction) -> dict[str, str]:
+    return {
+        "state": tx.state,
+        "code_verifier": tx.code_verifier,
+        "code_challenge": tx.code_challenge,
+        "redirect_uri": tx.redirect_uri,
+        "created_at": tx.created_at,
+        "expires_at": tx.expires_at,
+        "used_at": tx.used_at,
+    }
+
+
+def _coerce_login_transaction(payload: dict[str, Any]) -> LoginTransaction | None:
+    state = str(payload.get("state") or "").strip()
+    code_verifier = str(payload.get("code_verifier") or "").strip()
+    code_challenge = str(payload.get("code_challenge") or "").strip()
+    redirect_uri = str(payload.get("redirect_uri") or "").strip()
+    created_at = str(payload.get("created_at") or "").strip()
+    expires_at = str(payload.get("expires_at") or "").strip()
+    used_at = str(payload.get("used_at") or "").strip()
+    if not all(
+        (state, code_verifier, code_challenge, redirect_uri, created_at, expires_at)
+    ):
+        return None
+    return LoginTransaction(
+        state=state,
+        code_verifier=code_verifier,
+        code_challenge=code_challenge,
+        redirect_uri=redirect_uri,
+        created_at=created_at,
+        expires_at=expires_at,
+        used_at=used_at,
+    )
+
+
+def _parse_login_timestamp(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _prune_login_transactions_payload(
+    payload: dict[str, Any], *, now: datetime | None = None
+) -> None:
+    transactions = payload.get("transactions")
+    if not isinstance(transactions, dict):
+        payload["transactions"] = {}
+        return
+
+    now = now or _now()
+    kept: dict[str, dict[str, str]] = {}
+    consumed: list[tuple[datetime, str, dict[str, str]]] = []
+
+    for key, row in transactions.items():
+        if not isinstance(key, str) or not isinstance(row, dict):
+            continue
+        tx = _coerce_login_transaction(row)
+        if tx is None:
+            continue
+        serialized = _serialize_login_transaction(tx)
+        used_at = tx.used_at.strip()
+        if not used_at:
+            expires_at = _parse_login_timestamp(tx.expires_at)
+            if expires_at is None or now > expires_at:
+                continue
+            kept[key] = serialized
+            continue
+        consumed_at = _parse_login_timestamp(used_at)
+        if consumed_at is None:
+            continue
+        consumed.append((consumed_at, key, serialized))
+
+    consumed.sort(key=lambda item: item[0], reverse=True)
+    consumed_kept = 0
+    for consumed_at, key, serialized in consumed:
+        if consumed_kept >= 32:
+            break
+        if now - consumed_at > timedelta(days=1):
+            continue
+        kept[key] = serialized
+        consumed_kept += 1
+
+    payload["transactions"] = kept
+
+
+def _read_login_transaction_payload(settings: Settings) -> dict[str, Any]:
+    payload = _load_json(_state_path(settings))
+    transactions = payload.get("transactions")
+    if not isinstance(transactions, dict):
+        payload["transactions"] = {}
+        transactions = payload["transactions"]
+    legacy = _coerce_login_transaction(payload)
+    if (
+        legacy is not None
+        and not legacy.used_at.strip()
+        and legacy.state not in transactions
+    ):
+        transactions[legacy.state] = _serialize_login_transaction(legacy)
+    _prune_login_transactions_payload(payload)
+    return payload
+
+
+def _load_login_transaction_payload(settings: Settings) -> dict[str, Any]:
+    with _LOGIN_TRANSACTION_LOCK:
+        return _read_login_transaction_payload(settings)
+
+
+def _save_login_transaction(settings: Settings, tx: LoginTransaction) -> None:
+    with _LOGIN_TRANSACTION_LOCK:
+        payload = _read_login_transaction_payload(settings)
+        serialized = _serialize_login_transaction(tx)
+        transactions = payload.get("transactions")
+        assert isinstance(transactions, dict)
+        transactions[tx.state] = serialized
+        payload.update(serialized)
+        payload["transactions"] = transactions
+        _prune_login_transactions_payload(payload)
+        _save_json(_state_path(settings), payload)
+
+
+def _load_login_transaction(
+    settings: Settings, *, state: str
+) -> LoginTransaction | None:
+    with _LOGIN_TRANSACTION_LOCK:
+        payload = _read_login_transaction_payload(settings)
+        transactions = payload.get("transactions")
+        if isinstance(transactions, dict):
+            row = transactions.get(state)
+            if isinstance(row, dict):
+                tx = _coerce_login_transaction(row)
+                if tx is not None:
+                    return tx
+        if payload.get("state") == state:
+            return _coerce_login_transaction(payload)
+    return None
+
+
+def _consume_login_transaction(
+    settings: Settings, *, state: str
+) -> LoginTransaction | None:
+    with _LOGIN_TRANSACTION_LOCK:
+        payload = _read_login_transaction_payload(settings)
+        transactions = payload.get("transactions")
+        tx: LoginTransaction | None = None
+        if isinstance(transactions, dict):
+            row = transactions.get(state)
+            if isinstance(row, dict):
+                tx = _coerce_login_transaction(row)
+        if tx is None and payload.get("state") == state:
+            tx = _coerce_login_transaction(payload)
+        if tx is None or tx.used_at.strip():
+            return None
+        expires = _parse_login_timestamp(tx.expires_at)
+        if expires is None or _now() > expires:
+            return None
+        consumed = LoginTransaction(
+            state=tx.state,
+            code_verifier=tx.code_verifier,
+            code_challenge=tx.code_challenge,
+            redirect_uri=tx.redirect_uri,
+            created_at=tx.created_at,
+            expires_at=tx.expires_at,
+            used_at=_iso(_now()),
+        )
+        serialized = _serialize_login_transaction(consumed)
+        if isinstance(transactions, dict):
+            transactions[state] = serialized
+            payload["transactions"] = transactions
+        payload.update(serialized)
+        _prune_login_transactions_payload(payload)
+        _save_json(_state_path(settings), payload)
+        return consumed
+
+
+def consume_login_state(settings: Settings, *, state: str) -> LoginTransaction:
+    consumed = _consume_login_transaction(settings, state=state)
+    if consumed is not None:
+        return consumed
+    tx = _load_login_transaction(settings, state=state)
+    if tx is not None and tx.used_at.strip():
+        raise OAuthExchangeError(
+            "state already used",
+            code="state_already_used",
+            status=400,
+        )
+    raise OAuthExchangeError("invalid state", code="invalid_state", status=400)
+
+
+def prune_login_transactions(settings: Settings, *, now: datetime | None = None) -> int:
+    with _LOGIN_TRANSACTION_LOCK:
+        payload = _load_json(_state_path(settings))
+        transactions = payload.get("transactions")
+        if not isinstance(transactions, dict):
+            transactions = {}
+            payload["transactions"] = transactions
+        legacy = _coerce_login_transaction(payload)
+        if legacy is not None and legacy.state not in transactions:
+            transactions[legacy.state] = _serialize_login_transaction(legacy)
+        before = len(transactions)
+        _prune_login_transactions_payload(payload, now=now)
+        transactions = payload.get("transactions")
+        after = len(transactions) if isinstance(transactions, dict) else 0
+        _save_json(_state_path(settings), payload)
+        return max(0, before - after)
+
+
 def load_credential_state(settings: Settings) -> dict[str, Any]:
     payload = _load_json(credential_state_path(settings))
     account_name = payload.get("account_name")
@@ -123,6 +342,10 @@ def load_credential_state(settings: Settings) -> dict[str, Any]:
     }
 
 
+def load_oauth_credential_state(settings: Settings) -> dict[str, Any]:
+    return load_credential_state(settings)
+
+
 def save_credential_state(
     settings: Settings,
     *,
@@ -142,6 +365,23 @@ def save_credential_state(
     return payload
 
 
+def save_oauth_credential_state(
+    settings: Settings,
+    *,
+    account_name: str,
+    status: str,
+    poe_session_id: str = "",
+    cf_clearance: str = "",
+) -> dict[str, Any]:
+    return save_credential_state(
+        settings,
+        account_name=account_name,
+        status=status,
+        poe_session_id=poe_session_id,
+        cf_clearance=cf_clearance,
+    )
+
+
 def clear_credential_state(settings: Settings) -> dict[str, Any]:
     return save_credential_state(
         settings,
@@ -150,6 +390,81 @@ def clear_credential_state(settings: Settings) -> dict[str, Any]:
         cf_clearance="",
         status="logged_out",
     )
+
+
+def load_oauth_token_states(settings: Settings) -> dict[str, dict[str, Any]]:
+    payload = _load_json(oauth_token_state_path(settings))
+    states: dict[str, dict[str, Any]] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str) or not isinstance(value, dict):
+            continue
+        account_name = str(value.get("account_name") or key).strip()
+        if not account_name:
+            continue
+        expires_at = value.get("expires_at")
+        updated_at = value.get("updated_at")
+        status = value.get("status")
+        states[account_name] = {
+            "account_name": account_name,
+            "access_token": str(value.get("access_token") or "").strip(),
+            "refresh_token": str(value.get("refresh_token") or "").strip(),
+            "token_type": str(value.get("token_type") or "bearer").strip() or "bearer",
+            "scope": str(value.get("scope") or "").strip(),
+            "expires_at": expires_at.strip() if isinstance(expires_at, str) else "",
+            "updated_at": updated_at if isinstance(updated_at, str) else _iso(_now()),
+            "status": str(status or "unknown").strip() or "unknown",
+        }
+    return states
+
+
+def load_oauth_token_state(
+    settings: Settings, *, account_name: str
+) -> dict[str, Any] | None:
+    trimmed_account_name = account_name.strip()
+    if not trimmed_account_name:
+        return None
+    return load_oauth_token_states(settings).get(trimmed_account_name)
+
+
+def save_oauth_token_state(
+    settings: Settings,
+    *,
+    account_name: str,
+    access_token: str,
+    refresh_token: str,
+    token_type: str,
+    scope: str,
+    expires_at: str,
+    status: str,
+) -> dict[str, Any]:
+    trimmed_account_name = account_name.strip()
+    payload = {
+        "account_name": trimmed_account_name,
+        "access_token": access_token.strip(),
+        "refresh_token": refresh_token.strip(),
+        "token_type": token_type.strip() or "bearer",
+        "scope": scope.strip(),
+        "expires_at": expires_at.strip(),
+        "updated_at": _iso(_now()),
+        "status": status.strip() or "unknown",
+    }
+    with _OAUTH_TOKEN_STATE_LOCK:
+        states = load_oauth_token_states(settings)
+        states[trimmed_account_name] = payload
+        _save_json(oauth_token_state_path(settings), states)
+    return payload
+
+
+def clear_oauth_token_state(settings: Settings, *, account_name: str) -> None:
+    trimmed_account_name = account_name.strip()
+    if not trimmed_account_name:
+        return
+    with _OAUTH_TOKEN_STATE_LOCK:
+        states = load_oauth_token_states(settings)
+        if trimmed_account_name not in states:
+            return
+        del states[trimmed_account_name]
+        _save_json(oauth_token_state_path(settings), states)
 
 
 def build_private_stash_cookie_header(
@@ -238,10 +553,10 @@ def exchange_oauth_code(
 ) -> OAuthExchangeResult:
     if not code.strip():
         raise OAuthExchangeError("code is required", code="missing_code", status=400)
-    if not validate_state(settings, state=state):
+    tx_state = _consume_login_transaction(settings, state=state)
+    if tx_state is None:
         raise OAuthExchangeError("invalid state", code="invalid_state", status=400)
-    tx_state = _load_json(_state_path(settings))
-    code_verifier = str(tx_state.get("code_verifier") or "").strip()
+    code_verifier = tx_state.code_verifier.strip()
     if not code_verifier:
         raise OAuthExchangeError(
             "missing code verifier",
@@ -254,9 +569,9 @@ def exchange_oauth_code(
             code="oauth_client_id_missing",
             status=500,
         )
-    redirect_uri = str(
-        tx_state.get("redirect_uri") or _resolve_oauth_redirect_uri(settings)
-    ).strip()
+    redirect_uri = tx_state.redirect_uri.strip() or _resolve_oauth_redirect_uri(
+        settings
+    )
     if not redirect_uri:
         raise OAuthExchangeError(
             "missing oauth redirect uri",
@@ -309,6 +624,12 @@ def exchange_oauth_code(
             status=400 if status in {400, 401, 403} else 502,
         )
     access_token = str(payload.get("access_token") or "").strip()
+    if not access_token:
+        raise OAuthExchangeError(
+            "oauth token response missing access token",
+            code="oauth_missing_access_token",
+            status=502,
+        )
     refresh_token = str(payload.get("refresh_token") or "").strip()
     token_type = str(payload.get("token_type") or "bearer").strip() or "bearer"
     scope = str(payload.get("scope") or settings.poe_account_oauth_scope).strip()
@@ -566,6 +887,7 @@ class LoginTransaction:
     redirect_uri: str
     created_at: str
     expires_at: str
+    used_at: str = ""
 
 
 def begin_login(settings: Settings) -> LoginTransaction:
@@ -585,59 +907,47 @@ def begin_login(settings: Settings) -> LoginTransaction:
         created_at=_iso(created),
         expires_at=_iso(expires),
     )
-    _save_json(
-        _state_path(settings),
-        {
-            "state": tx.state,
-            "code_verifier": tx.code_verifier,
-            "code_challenge": tx.code_challenge,
-            "redirect_uri": tx.redirect_uri,
-            "created_at": tx.created_at,
-            "expires_at": tx.expires_at,
-        },
-    )
+    _save_login_transaction(settings, tx)
     return tx
 
 
 def validate_state(settings: Settings, *, state: str) -> bool:
-    payload = _load_json(_state_path(settings))
-    if payload.get("state") != state:
+    tx = _load_login_transaction(settings, state=state)
+    if tx is None or tx.used_at.strip():
         return False
-    expires_raw = payload.get("expires_at")
-    if not isinstance(expires_raw, str):
-        return False
-    try:
-        expires = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
-    except ValueError:
+    expires = _parse_login_timestamp(tx.expires_at)
+    if expires is None:
         return False
     return _now() <= expires
 
 
 def create_session(settings: Settings, *, account_name: str) -> dict[str, Any]:
-    sessions = _load_json(_sessions_path(settings))
-    session_id = secrets.token_urlsafe(32)
-    expires = _now() + timedelta(days=7)
-    session = {
-        "session_id": session_id,
-        "account_name": account_name,
-        "status": "connected",
-        "created_at": _iso(_now()),
-        "expires_at": _iso(expires),
-        "scope": [
-            part.strip()
-            for part in settings.poe_account_oauth_scope.split(" ")
-            if part.strip()
-        ],
-    }
-    sessions[session_id] = session
-    _save_json(_sessions_path(settings), sessions)
-    return session
+    with _SESSION_STATE_LOCK:
+        sessions = _load_json(_sessions_path(settings))
+        session_id = secrets.token_urlsafe(32)
+        expires = _now() + timedelta(days=7)
+        session = {
+            "session_id": session_id,
+            "account_name": account_name,
+            "status": "connected",
+            "created_at": _iso(_now()),
+            "expires_at": _iso(expires),
+            "scope": [
+                part.strip()
+                for part in settings.poe_account_oauth_scope.split(" ")
+                if part.strip()
+            ],
+        }
+        sessions[session_id] = session
+        _save_json(_sessions_path(settings), sessions)
+        return session
 
 
 def get_session(settings: Settings, *, session_id: str | None) -> dict[str, Any] | None:
     if not session_id:
         return None
-    sessions = _load_json(_sessions_path(settings))
+    with _SESSION_STATE_LOCK:
+        sessions = _load_json(_sessions_path(settings))
     row = sessions.get(session_id)
     if not isinstance(row, dict):
         return None
@@ -659,13 +969,42 @@ def get_session(settings: Settings, *, session_id: str | None) -> dict[str, Any]
     return row
 
 
+def has_connected_session_for_account(
+    settings: Settings,
+    *,
+    account_name: str,
+    exclude_session_id: str | None = None,
+) -> bool:
+    trimmed_account_name = account_name.strip()
+    if not trimmed_account_name:
+        return False
+    with _SESSION_STATE_LOCK:
+        sessions = _load_json(_sessions_path(settings))
+    for session_id, row in sessions.items():
+        if session_id == exclude_session_id or not isinstance(row, dict):
+            continue
+        if str(row.get("account_name") or "").strip() != trimmed_account_name:
+            continue
+        expires_raw = row.get("expires_at")
+        if not isinstance(expires_raw, str):
+            continue
+        try:
+            expires = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if _now() <= expires and str(row.get("status") or "connected") == "connected":
+            return True
+    return False
+
+
 def clear_session(settings: Settings, *, session_id: str | None) -> None:
     if not session_id:
         return
-    sessions = _load_json(_sessions_path(settings))
-    if session_id in sessions:
-        del sessions[session_id]
-        _save_json(_sessions_path(settings), sessions)
+    with _SESSION_STATE_LOCK:
+        sessions = _load_json(_sessions_path(settings))
+        if session_id in sessions:
+            del sessions[session_id]
+            _save_json(_sessions_path(settings), sessions)
 
 
 def _resolve_oauth_redirect_uri(settings: Settings) -> str:

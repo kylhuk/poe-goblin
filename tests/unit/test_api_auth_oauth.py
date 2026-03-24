@@ -13,6 +13,11 @@ from poe_trade.api.auth_session import (
     OAuthExchangeResult,
     authorize_redirect,
     begin_login,
+    create_session,
+    load_credential_state,
+    load_oauth_token_state,
+    save_credential_state,
+    save_oauth_token_state,
 )
 from poe_trade.api.responses import ApiError
 from poe_trade.config.settings import Settings
@@ -135,6 +140,248 @@ def test_auth_callback_exchanges_code_and_sets_session_cookie(tmp_path) -> None:
     assert "Path=/" in response.headers["Set-Cookie"]
     mocked_exchange.assert_called_once_with(settings, code="code-123", state=state)
     mocked_session.assert_called_once_with(settings, account_name="qa-exile")
+
+
+def test_auth_callback_persists_oauth_token_state(tmp_path) -> None:
+    env = {
+        "POE_API_OPERATOR_TOKEN": "phase1-token",
+        "POE_OAUTH_CLIENT_ID": "client-id",
+        "POE_ACCOUNT_FRONTEND_COMPLETE_URI": "https://app.example.com/auth/callback",
+        "POE_AUTH_STATE_DIR": str(tmp_path / "auth-state"),
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        settings = Settings.from_env()
+    app = ApiApp(settings, clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+
+    login_response = app.handle(
+        method="GET",
+        raw_path="/api/v1/auth/login",
+        headers={"Origin": "https://app.example.com"},
+        body_reader=BytesIO(b""),
+    )
+    login_payload = json.loads(login_response.body.decode("utf-8"))
+    state = parse_qs(urlparse(login_payload["authorizeUrl"]).query)["state"][0]
+
+    exchange = OAuthExchangeResult(
+        account_name="qa-exile",
+        access_token="access-token",
+        refresh_token="refresh-token",
+        token_type="bearer",
+        expires_in=3600,
+        scope="account:profile account:stashes",
+    )
+    with mock.patch("poe_trade.api.app.exchange_oauth_code", return_value=exchange):
+        response = app.handle(
+            method="GET",
+            raw_path=f"/api/v1/auth/callback?code=code-123&state={state}",
+            headers={"Origin": "https://app.example.com"},
+            body_reader=BytesIO(b""),
+        )
+
+    token_state = load_oauth_token_state(settings, account_name="qa-exile")
+
+    assert response.status == 200
+    assert token_state is not None
+    assert token_state["account_name"] == "qa-exile"
+    assert token_state["access_token"] == "access-token"
+    assert token_state["refresh_token"] == "refresh-token"
+    assert token_state["token_type"] == "bearer"
+    assert token_state["scope"] == "account:profile account:stashes"
+    assert token_state["status"] == "connected"
+    assert token_state["expires_at"].endswith("Z")
+    assert isinstance(token_state["updated_at"], str)
+
+
+def test_auth_callback_rejects_empty_access_token_before_creating_session(
+    tmp_path,
+) -> None:
+    env = {
+        "POE_API_OPERATOR_TOKEN": "phase1-token",
+        "POE_OAUTH_CLIENT_ID": "client-id",
+        "POE_ACCOUNT_FRONTEND_COMPLETE_URI": "https://app.example.com/auth/callback",
+        "POE_AUTH_STATE_DIR": str(tmp_path / "auth-state"),
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        settings = Settings.from_env()
+    app = ApiApp(settings, clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+
+    login_response = app.handle(
+        method="GET",
+        raw_path="/api/v1/auth/login",
+        headers={"Origin": "https://app.example.com"},
+        body_reader=BytesIO(b""),
+    )
+    login_payload = json.loads(login_response.body.decode("utf-8"))
+    state = parse_qs(urlparse(login_payload["authorizeUrl"]).query)["state"][0]
+    exchange = OAuthExchangeResult(
+        account_name="qa-exile",
+        access_token="",
+        refresh_token="refresh-token",
+        token_type="bearer",
+        expires_in=3600,
+        scope="account:profile account:stashes",
+    )
+
+    with mock.patch("poe_trade.api.app.exchange_oauth_code", return_value=exchange):
+        with mock.patch("poe_trade.api.app.create_session") as mocked_session:
+            with pytest.raises(ApiError, match="missing access token") as exc:
+                _ = app.handle(
+                    method="GET",
+                    raw_path=f"/api/v1/auth/callback?code=code-123&state={state}",
+                    headers={"Origin": "https://app.example.com"},
+                    body_reader=BytesIO(b""),
+                )
+
+    assert exc.value.code == "oauth_missing_access_token"
+    assert exc.value.status == 502
+    mocked_session.assert_not_called()
+    assert load_oauth_token_state(settings, account_name="qa-exile") is None
+
+
+def test_auth_logout_keeps_oauth_token_state_when_same_account_has_another_session(
+    tmp_path,
+) -> None:
+    env = {
+        "POE_API_OPERATOR_TOKEN": "phase1-token",
+        "POE_OAUTH_CLIENT_ID": "client-id",
+        "POE_ACCOUNT_FRONTEND_COMPLETE_URI": "https://app.example.com/auth/callback",
+        "POE_AUTH_STATE_DIR": str(tmp_path / "auth-state"),
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        settings = Settings.from_env()
+    app = ApiApp(settings, clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+    primary = create_session(settings, account_name="qa-exile")
+    _ = create_session(settings, account_name="qa-exile")
+    saved = save_oauth_token_state(
+        settings,
+        account_name="qa-exile",
+        access_token="access-token",
+        refresh_token="refresh-token",
+        token_type="bearer",
+        scope="account:profile account:stashes",
+        expires_at="2026-03-24T12:00:00Z",
+        status="connected",
+    )
+
+    response = app.handle(
+        method="POST",
+        raw_path="/api/v1/auth/logout",
+        headers={
+            "Origin": "https://app.example.com",
+            "Cookie": f"poe_session={primary['session_id']}",
+        },
+        body_reader=BytesIO(b""),
+    )
+
+    assert response.status == 200
+    assert load_oauth_token_state(settings, account_name="qa-exile") == saved
+
+
+def test_auth_logout_keeps_legacy_credential_state_when_same_account_has_another_session(
+    tmp_path,
+) -> None:
+    env = {
+        "POE_API_OPERATOR_TOKEN": "phase1-token",
+        "POE_OAUTH_CLIENT_ID": "client-id",
+        "POE_ACCOUNT_FRONTEND_COMPLETE_URI": "https://app.example.com/auth/callback",
+        "POE_AUTH_STATE_DIR": str(tmp_path / "auth-state"),
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        settings = Settings.from_env()
+    app = ApiApp(settings, clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+    primary = create_session(settings, account_name="qa-exile")
+    _ = create_session(settings, account_name="qa-exile")
+    saved = save_credential_state(
+        settings,
+        account_name="qa-exile",
+        poe_session_id="POESESSID-123",
+        cf_clearance="cf-clearance-123",
+        status="bootstrap_connected",
+    )
+
+    response = app.handle(
+        method="POST",
+        raw_path="/api/v1/auth/logout",
+        headers={
+            "Origin": "https://app.example.com",
+            "Cookie": f"poe_session={primary['session_id']}",
+        },
+        body_reader=BytesIO(b""),
+    )
+
+    assert response.status == 200
+    assert load_credential_state(settings) == saved
+
+
+def test_auth_logout_keeps_other_account_legacy_credential_state(tmp_path) -> None:
+    env = {
+        "POE_API_OPERATOR_TOKEN": "phase1-token",
+        "POE_OAUTH_CLIENT_ID": "client-id",
+        "POE_ACCOUNT_FRONTEND_COMPLETE_URI": "https://app.example.com/auth/callback",
+        "POE_AUTH_STATE_DIR": str(tmp_path / "auth-state"),
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        settings = Settings.from_env()
+    app = ApiApp(settings, clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+    session = create_session(settings, account_name="qa-exile")
+    saved = save_credential_state(
+        settings,
+        account_name="other-exile",
+        poe_session_id="POESESSID-999",
+        cf_clearance="cf-clearance-999",
+        status="bootstrap_connected",
+    )
+
+    response = app.handle(
+        method="POST",
+        raw_path="/api/v1/auth/logout",
+        headers={
+            "Origin": "https://app.example.com",
+            "Cookie": f"poe_session={session['session_id']}",
+        },
+        body_reader=BytesIO(b""),
+    )
+
+    assert response.status == 200
+    assert load_credential_state(settings) == saved
+
+
+def test_auth_logout_clears_oauth_token_state_for_last_session_account(
+    tmp_path,
+) -> None:
+    env = {
+        "POE_API_OPERATOR_TOKEN": "phase1-token",
+        "POE_OAUTH_CLIENT_ID": "client-id",
+        "POE_ACCOUNT_FRONTEND_COMPLETE_URI": "https://app.example.com/auth/callback",
+        "POE_AUTH_STATE_DIR": str(tmp_path / "auth-state"),
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        settings = Settings.from_env()
+    app = ApiApp(settings, clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+    session = create_session(settings, account_name="qa-exile")
+    _ = save_oauth_token_state(
+        settings,
+        account_name="qa-exile",
+        access_token="access-token",
+        refresh_token="refresh-token",
+        token_type="bearer",
+        scope="account:profile account:stashes",
+        expires_at="2026-03-24T12:00:00Z",
+        status="connected",
+    )
+
+    response = app.handle(
+        method="POST",
+        raw_path="/api/v1/auth/logout",
+        headers={
+            "Origin": "https://app.example.com",
+            "Cookie": f"poe_session={session['session_id']}",
+        },
+        body_reader=BytesIO(b""),
+    )
+
+    assert response.status == 200
+    assert load_oauth_token_state(settings, account_name="qa-exile") is None
 
 
 @pytest.mark.parametrize(

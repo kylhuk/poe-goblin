@@ -148,8 +148,16 @@ def stash_scan_status_payload(
     account_name: str,
     league: str,
     realm: str,
+    stale_timeout_seconds: int = 0,
 ) -> dict[str, Any]:
     try:
+        active = fetch_active_scan(
+            client,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+            stale_timeout_seconds=stale_timeout_seconds,
+        )
         latest = fetch_latest_scan_run(
             client,
             account_name=account_name,
@@ -162,22 +170,33 @@ def stash_scan_status_payload(
             league=league,
             realm=realm,
         )
-        active = fetch_active_scan(
-            client,
-            account_name=account_name,
-            league=league,
-            realm=realm,
-        )
     except StashScanBackendUnavailable as exc:
         raise StashBackendUnavailable("stash scan status backend unavailable") from exc
 
     if latest is None:
+        if active is None:
+            return {
+                "status": "idle",
+                "activeScanId": None,
+                "publishedScanId": published_scan_id,
+                "startedAt": None,
+                "updatedAt": None,
+                "publishedAt": None,
+                "progress": {
+                    "tabsTotal": 0,
+                    "tabsProcessed": 0,
+                    "itemsTotal": 0,
+                    "itemsProcessed": 0,
+                },
+                "error": None,
+            }
+        status = "running" if active.get("isActive") else "idle"
         return {
-            "status": "idle",
-            "activeScanId": None,
+            "status": status,
+            "activeScanId": active.get("scanId") if active.get("isActive") else None,
             "publishedScanId": published_scan_id,
-            "startedAt": None,
-            "updatedAt": None,
+            "startedAt": active.get("startedAt"),
+            "updatedAt": active.get("updatedAt"),
             "publishedAt": None,
             "progress": {
                 "tabsTotal": 0,
@@ -190,7 +209,11 @@ def stash_scan_status_payload(
 
     is_active = bool(active and active.get("isActive"))
     status = str(latest.get("status") or "idle")
-    active_scan_id = latest.get("scanId") if (is_active or status in {"running", "publishing"}) else None
+    active_scan_id = (
+        latest.get("scanId")
+        if (is_active or status in {"running", "publishing"})
+        else None
+    )
     if status == "published":
         active_scan_id = None
     return {

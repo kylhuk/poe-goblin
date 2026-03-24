@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,9 +36,7 @@ def content_signature_for_item(item: dict[str, Any]) -> str:
         "mods": _normalized_mod_lines(item),
         "icon": str(item.get("icon") or "").strip(),
     }
-    encoded = json.dumps(stable, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    encoded = json.dumps(stable, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -66,7 +65,12 @@ def serialize_stash_item_to_clipboard(item: dict[str, Any]) -> str:
     lines = [
         f"Rarity: {_rarity_label(item.get('frameType'))}",
         str(item.get("name") or "").strip(),
-        str(item.get("typeLine") or item.get("baseType") or item.get("name") or "Unknown").strip(),
+        str(
+            item.get("typeLine")
+            or item.get("baseType")
+            or item.get("name")
+            or "Unknown"
+        ).strip(),
         "--------",
     ]
     for entry in _normalized_mod_lines(item):
@@ -75,11 +79,17 @@ def serialize_stash_item_to_clipboard(item: dict[str, Any]) -> str:
 
 
 def normalize_stash_prediction(payload: dict[str, Any]) -> StashPrediction:
-    interval = payload.get("interval") if isinstance(payload.get("interval"), dict) else {}
+    interval = (
+        payload.get("interval") if isinstance(payload.get("interval"), dict) else {}
+    )
     return StashPrediction(
-        predicted_price=float(payload.get("predictedValue") or payload.get("price_p50") or 0.0),
+        predicted_price=float(
+            payload.get("predictedValue") or payload.get("price_p50") or 0.0
+        ),
         currency=str(payload.get("currency") or "chaos"),
-        confidence=float(payload.get("confidence") or payload.get("confidence_percent") or 0.0),
+        confidence=float(
+            payload.get("confidence") or payload.get("confidence_percent") or 0.0
+        ),
         price_p10=_opt_float(interval.get("p10") or payload.get("price_p10")),
         price_p90=_opt_float(interval.get("p90") or payload.get("price_p90")),
         price_recommendation_eligible=bool(
@@ -88,19 +98,13 @@ def normalize_stash_prediction(payload: dict[str, Any]) -> StashPrediction:
             else payload.get("price_recommendation_eligible", False)
         ),
         estimate_trust=str(
-            payload.get("estimateTrust")
-            or payload.get("estimate_trust")
-            or "normal"
+            payload.get("estimateTrust") or payload.get("estimate_trust") or "normal"
         ),
         estimate_warning=str(
-            payload.get("estimateWarning")
-            or payload.get("estimate_warning")
-            or ""
+            payload.get("estimateWarning") or payload.get("estimate_warning") or ""
         ),
         fallback_reason=str(
-            payload.get("fallbackReason")
-            or payload.get("fallback_reason")
-            or ""
+            payload.get("fallbackReason") or payload.get("fallback_reason") or ""
         ),
     )
 
@@ -137,6 +141,7 @@ def fetch_active_scan(
     account_name: str,
     league: str,
     realm: str,
+    stale_timeout_seconds: int | None = None,
 ) -> dict[str, Any] | None:
     query = (
         "SELECT scan_id, is_active, started_at, updated_at "
@@ -153,12 +158,37 @@ def fetch_active_scan(
     if not payload:
         return None
     row = json.loads(payload.splitlines()[0])
-    return {
+    active_scan = {
         "scanId": str(row.get("scan_id") or ""),
         "isActive": bool(row.get("is_active") or 0),
         "startedAt": str(row.get("started_at") or ""),
         "updatedAt": str(row.get("updated_at") or ""),
     }
+    if not active_scan["isActive"]:
+        return active_scan
+
+    timeout_seconds = int(stale_timeout_seconds or 0)
+    if timeout_seconds <= 0:
+        return active_scan
+
+    latest_run = fetch_latest_scan_run(
+        client,
+        account_name=account_name,
+        league=league,
+        realm=realm,
+        scan_id=active_scan["scanId"],
+    )
+    if not _active_scan_is_stale(active_scan, latest_run, timeout_seconds):
+        return active_scan
+
+    return _reconcile_stale_active_scan(
+        client,
+        account_name=account_name,
+        league=league,
+        realm=realm,
+        active_scan=active_scan,
+        latest_run=latest_run,
+    )
 
 
 def fetch_latest_scan_run(
@@ -167,13 +197,18 @@ def fetch_latest_scan_run(
     account_name: str,
     league: str,
     realm: str,
+    scan_id: str | None = None,
 ) -> dict[str, Any] | None:
+    scan_id_filter = (
+        f"AND scan_id = '{_escape_sql_literal(scan_id)}' " if scan_id else ""
+    )
     query = (
         "SELECT scan_id, status, started_at, updated_at, published_at, tabs_total, tabs_processed, items_total, items_processed, error_message "
         "FROM poe_trade.account_stash_scan_runs "
         f"WHERE account_name = '{_escape_sql_literal(account_name)}' "
         f"AND league = '{_escape_sql_literal(league)}' "
         f"AND realm = '{_escape_sql_literal(realm)}' "
+        f"{scan_id_filter}"
         "ORDER BY updated_at DESC LIMIT 1 FORMAT JSONEachRow"
     )
     try:
@@ -196,6 +231,83 @@ def fetch_latest_scan_run(
             "itemsProcessed": int(row.get("items_processed") or 0),
         },
         "error": str(row.get("error_message") or "") or None,
+    }
+
+
+def _active_scan_is_stale(
+    active_scan: dict[str, Any],
+    latest_run: dict[str, Any] | None,
+    stale_timeout_seconds: int,
+) -> bool:
+    if stale_timeout_seconds <= 0:
+        return False
+    candidate_timestamp = _parse_iso_datetime(
+        str((latest_run or {}).get("updatedAt") or active_scan.get("updatedAt") or "")
+    )
+    if candidate_timestamp is None:
+        return False
+    if candidate_timestamp.tzinfo is None:
+        candidate_timestamp = candidate_timestamp.replace(tzinfo=timezone.utc)
+    return _utcnow() - candidate_timestamp > timedelta(seconds=stale_timeout_seconds)
+
+
+def _reconcile_stale_active_scan(
+    client: ClickHouseClient,
+    *,
+    account_name: str,
+    league: str,
+    realm: str,
+    active_scan: dict[str, Any],
+    latest_run: dict[str, Any] | None,
+) -> dict[str, Any]:
+    reconciled_at = _utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    scan_id = str(active_scan.get("scanId") or "")
+    started_at = str(
+        (latest_run or {}).get("startedAt")
+        or active_scan.get("startedAt")
+        or reconciled_at
+    )
+
+    _write_active_scan_row(
+        client,
+        account_name=account_name,
+        league=league,
+        realm=realm,
+        scan_id=scan_id,
+        is_active=False,
+        started_at=started_at,
+        updated_at=reconciled_at,
+    )
+
+    latest_status = str((latest_run or {}).get("status") or "")
+    if latest_run is None or latest_status not in {"failed", "published"}:
+        progress = (
+            (latest_run or {}).get("progress") if isinstance(latest_run, dict) else {}
+        )
+        progress = progress if isinstance(progress, dict) else {}
+        _write_scan_run_row(
+            client,
+            scan_id=scan_id,
+            status="failed",
+            account_name=account_name,
+            league=league,
+            realm=realm,
+            started_at=started_at,
+            updated_at=reconciled_at,
+            completed_at=None,
+            published_at=None,
+            failed_at=reconciled_at,
+            tabs_total=int(progress.get("tabsTotal") or 0),
+            tabs_processed=int(progress.get("tabsProcessed") or 0),
+            items_total=int(progress.get("itemsTotal") or 0),
+            items_processed=int(progress.get("itemsProcessed") or 0),
+            error_message="stale active scan timed out",
+        )
+
+    return {
+        **active_scan,
+        "isActive": False,
+        "updatedAt": reconciled_at,
     }
 
 
@@ -223,7 +335,9 @@ def fetch_published_tabs(
             "scanId": None,
             "publishedAt": None,
             "isStale": False,
-            "scanStatus": latest_run if latest_run and latest_run.get("status") in {"running", "publishing"} else None,
+            "scanStatus": latest_run
+            if latest_run and latest_run.get("status") in {"running", "publishing"}
+            else None,
             "stashTabs": [],
         }
 
@@ -255,7 +369,9 @@ def fetch_published_tabs(
         tabs_payload = client.execute(tabs_query).strip()
         items_payload = client.execute(items_query).strip()
     except ClickHouseClientError as exc:
-        raise StashScanBackendUnavailable("published stash backend unavailable") from exc
+        raise StashScanBackendUnavailable(
+            "published stash backend unavailable"
+        ) from exc
 
     tabs: list[dict[str, Any]] = []
     tab_map: dict[str, dict[str, Any]] = {}
@@ -281,7 +397,9 @@ def fetch_published_tabs(
         "scanId": scan_id,
         "publishedAt": published_at,
         "isStale": False,
-        "scanStatus": latest_run if latest_run and latest_run.get("status") in {"running", "publishing"} else None,
+        "scanStatus": latest_run
+        if latest_run and latest_run.get("status") in {"running", "publishing"}
+        else None,
         "stashTabs": tabs,
     }
 
@@ -335,7 +453,9 @@ def fetch_item_history(
                     "p10": _opt_float(row.get("price_p10")),
                     "p90": _opt_float(row.get("price_p90")),
                 },
-                "priceRecommendationEligible": bool(row.get("price_recommendation_eligible") or 0),
+                "priceRecommendationEligible": bool(
+                    row.get("price_recommendation_eligible") or 0
+                ),
                 "estimateTrust": str(row.get("estimate_trust") or "normal"),
                 "estimateWarning": str(row.get("estimate_warning") or ""),
                 "fallbackReason": str(row.get("fallback_reason") or ""),
@@ -404,7 +524,9 @@ def _to_api_item(row: dict[str, Any]) -> dict[str, Any]:
             "p10": _opt_float(row.get("price_p10")),
             "p90": _opt_float(row.get("price_p90")),
         },
-        "priceRecommendationEligible": bool(row.get("price_recommendation_eligible") or 0),
+        "priceRecommendationEligible": bool(
+            row.get("price_recommendation_eligible") or 0
+        ),
         "estimateTrust": str(row.get("estimate_trust") or "normal"),
         "estimateWarning": str(row.get("estimate_warning") or ""),
         "fallbackReason": str(row.get("fallback_reason") or ""),
@@ -449,6 +571,93 @@ def _rarity_label(frame_type: Any) -> str:
 
 def _escape_sql_literal(value: str) -> str:
     return value.replace("'", "''")
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_iso_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _write_scan_run_row(
+    client: ClickHouseClient,
+    *,
+    scan_id: str,
+    status: str,
+    account_name: str,
+    league: str,
+    realm: str,
+    started_at: str,
+    updated_at: str,
+    completed_at: str | None,
+    published_at: str | None,
+    failed_at: str | None,
+    tabs_total: int,
+    tabs_processed: int,
+    items_total: int,
+    items_processed: int,
+    error_message: str,
+) -> None:
+    row = {
+        "scan_id": scan_id,
+        "account_name": account_name,
+        "league": league,
+        "realm": realm,
+        "status": status,
+        "started_at": started_at,
+        "updated_at": updated_at,
+        "completed_at": completed_at,
+        "published_at": published_at,
+        "failed_at": failed_at,
+        "tabs_total": tabs_total,
+        "tabs_processed": tabs_processed,
+        "items_total": items_total,
+        "items_processed": items_processed,
+        "error_message": error_message,
+    }
+    query = (
+        "INSERT INTO poe_trade.account_stash_scan_runs "
+        "(scan_id, account_name, league, realm, status, started_at, updated_at, completed_at, published_at, failed_at, tabs_total, tabs_processed, items_total, items_processed, error_message)\n"
+        "FORMAT JSONEachRow\n"
+        f"{json.dumps(row, ensure_ascii=False)}"
+    )
+    client.execute(query)
+
+
+def _write_active_scan_row(
+    client: ClickHouseClient,
+    *,
+    account_name: str,
+    league: str,
+    realm: str,
+    scan_id: str,
+    is_active: bool,
+    started_at: str,
+    updated_at: str,
+) -> None:
+    row = {
+        "account_name": account_name,
+        "league": league,
+        "realm": realm,
+        "scan_id": scan_id,
+        "is_active": 1 if is_active else 0,
+        "started_at": started_at,
+        "updated_at": updated_at,
+    }
+    query = (
+        "INSERT INTO poe_trade.account_stash_active_scans "
+        "(account_name, league, realm, scan_id, is_active, started_at, updated_at)\n"
+        "FORMAT JSONEachRow\n"
+        f"{json.dumps(row, ensure_ascii=False)}"
+    )
+    client.execute(query)
 
 
 def _normalize_tab_type(raw: str) -> str:

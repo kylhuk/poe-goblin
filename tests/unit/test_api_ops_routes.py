@@ -546,18 +546,6 @@ def test_start_private_stash_scan_uses_oauth_token_state(
         def __init__(self, *_args, **_kwargs):
             return None
 
-        def set_bearer_token(self, _token: str | None) -> None:
-            return None
-
-        def set_bearer_token(self, _token: str | None) -> None:
-            return None
-
-        def set_bearer_token(self, _token: str | None) -> None:
-            return None
-
-        def set_bearer_token(self, _token: str | None) -> None:
-            return None
-
         def set_bearer_token(self, token: str | None) -> None:
             bearer_tokens.append(token)
 
@@ -689,6 +677,118 @@ def test_start_private_stash_scan_refreshes_near_expiry_oauth_state(
     assert bearer_tokens == ["fresh-token"]
 
 
+def test_start_private_stash_scan_reconciles_stale_active_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token_state = {
+        "account_name": "qa-exile",
+        "access_token": "access-token",
+        "refresh_token": "refresh-token",
+        "token_type": "bearer",
+        "scope": "account:profile account:stashes",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "updated_at": "2026-03-24T00:00:00Z",
+        "status": "connected",
+    }
+    seen_timeouts: list[int | None] = []
+    started = Event()
+    release = Event()
+    finished = Event()
+    runs: list[tuple[str | None, str | None]] = []
+
+    monkeypatch.setattr(
+        api_app_module,
+        "load_oauth_token_state",
+        lambda _settings, *, account_name: (
+            token_state if account_name == "qa-exile" else None
+        ),
+    )
+    monkeypatch.setattr(
+        api_app_module,
+        "load_credential_state",
+        mock.Mock(side_effect=AssertionError("legacy credential state path used")),
+    )
+
+    def _fetch_active_scan(
+        _client,
+        *,
+        account_name: str,
+        league: str,
+        realm: str,
+        stale_timeout_seconds: int | None = None,
+    ):
+        seen_timeouts.append(stale_timeout_seconds)
+        if stale_timeout_seconds == 120:
+            return {
+                "scanId": "scan-stale",
+                "isActive": False,
+                "startedAt": "2026-03-24T11:00:00Z",
+                "updatedAt": "2026-03-24T11:40:00Z",
+            }
+        return {
+            "scanId": "scan-stale",
+            "isActive": True,
+            "startedAt": "2026-03-24T11:00:00Z",
+            "updatedAt": "2026-03-24T11:00:00Z",
+        }
+
+    monkeypatch.setattr("poe_trade.stash_scan.fetch_active_scan", _fetch_active_scan)
+
+    class _DummyPoeClient:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+        def set_bearer_token(self, _token: str | None) -> None:
+            return None
+
+    class _DummyStatusReporter:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+    class _DummyHarvester:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+        def run_private_scan(self, **kwargs):
+            runs.append((kwargs.get("scan_id"), kwargs.get("started_at")))
+            started.set()
+            release.wait(timeout=5)
+            finished.set()
+            return {"scanId": kwargs.get("scan_id"), "status": "published"}
+
+    monkeypatch.setattr(api_app_module, "PoeClient", _DummyPoeClient)
+    monkeypatch.setattr(api_app_module, "StatusReporter", _DummyStatusReporter)
+    monkeypatch.setattr(api_app_module, "AccountStashHarvester", _DummyHarvester)
+
+    env = {
+        "POE_API_OPERATOR_TOKEN": "phase1-token",
+        "POE_API_CORS_ORIGINS": "https://app.example.com",
+        "POE_API_MAX_BODY_BYTES": "32768",
+        "POE_API_LEAGUE_ALLOWLIST": "Mirage",
+        "POE_ENABLE_ACCOUNT_STASH": "true",
+        "POE_ACCOUNT_STASH_SCAN_STALE_TIMEOUT_SECONDS": "120",
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        settings = Settings.from_env()
+
+    clickhouse = ClickHouseClient(endpoint="http://ch")
+    result = api_app_module.start_private_stash_scan(
+        settings,
+        clickhouse,
+        account_name="qa-exile",
+        league="Mirage",
+        realm="pc",
+    )
+
+    assert started.wait(timeout=5)
+    release.set()
+    assert finished.wait(timeout=5)
+
+    assert seen_timeouts == [120]
+    assert "deduplicated" not in result
+    assert len(runs) == 1
+
+
 def test_stash_scan_status_route_returns_progress_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -707,7 +807,7 @@ def test_stash_scan_status_route_returns_progress_payload(
     )
     monkeypatch.setattr(
         "poe_trade.api.app.stash_scan_status_payload",
-        lambda _client, *, account_name, league, realm: {
+        lambda _client, *, account_name, league, realm, stale_timeout_seconds=0: {
             "status": "running",
             "activeScanId": "scan-2",
             "publishedScanId": "scan-1",

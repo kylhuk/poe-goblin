@@ -40,7 +40,7 @@ class _StubClient(PoeClient):
             }
         )
         if copied_params and copied_params.get("tabs") == "1":
-            return {"tabs": [{"id": "t1", "i": 0, "n": "Trade 1", "type": "normal"}]}
+            return {"stashes": [{"id": "t1", "i": 0, "n": "Trade 1", "type": "normal"}]}
         if path.endswith("/Mirage"):
             return [{"id": "t1", "n": "Trade 1", "type": "normal"}]
         return {
@@ -178,9 +178,7 @@ def test_harvest_uses_bearer_token_for_account_stash_requests() -> None:
     assert client.calls[1]["headers"] is None
 
 
-def test_private_scan_fetches_tab_list_with_tabs_flag_and_preserves_upstream_order() -> (
-    None
-):
+def test_private_scan_fetches_stash_list_and_preserves_upstream_order() -> None:
     class _PrivateScanClient(_StubClient):
         def request(self, method, path, params=None, data=None, headers=None):
             copied_headers = dict(headers) if isinstance(headers, dict) else headers
@@ -196,7 +194,7 @@ def test_private_scan_fetches_tab_list_with_tabs_flag_and_preserves_upstream_ord
             )
             if path.endswith("/Mirage"):
                 return {
-                    "tabs": [
+                    "stashes": [
                         {"id": "tab-2", "i": 0, "n": "Currency", "type": "currency"},
                         {"id": "tab-9", "i": 1, "n": "Dump", "type": "quad"},
                     ]
@@ -242,9 +240,30 @@ def test_private_scan_fetches_tab_list_with_tabs_flag_and_preserves_upstream_ord
 
     assert client.calls[0]["path"] == "stash/Mirage"
     assert client.calls[0]["bearer_token"] == "access-123"
+    assert client.calls[0]["params"] == {
+        "accountName": "qa-exile",
+        "realm": "pc",
+        "league": "Mirage",
+        "tabs": "1",
+        "tabIndex": "0",
+    }
     assert client.calls[1]["path"] == "stash/Mirage/tab-2"
     assert client.calls[1]["bearer_token"] == "access-123"
+    assert client.calls[1]["params"] == {
+        "accountName": "qa-exile",
+        "realm": "pc",
+        "league": "Mirage",
+        "tabs": "0",
+        "tabIndex": "0",
+    }
     assert client.calls[2]["path"] == "stash/Mirage/tab-9"
+    assert client.calls[2]["params"] == {
+        "accountName": "qa-exile",
+        "realm": "pc",
+        "league": "Mirage",
+        "tabs": "0",
+        "tabIndex": "1",
+    }
     tab_queries = [
         query for query in clickhouse.queries if "account_stash_scan_tabs" in query
     ]
@@ -315,7 +334,7 @@ def test_private_scan_updates_running_progress_before_publish() -> None:
             )
             if path.endswith("/Mirage"):
                 return {
-                    "tabs": [
+                    "stashes": [
                         {"id": "tab-1", "i": 0, "n": "Currency", "type": "currency"},
                         {"id": "tab-2", "i": 1, "n": "Dump", "type": "quad"},
                     ]
@@ -491,7 +510,86 @@ def test_private_scan_maps_upstream_auth_error_to_invalid_poe_session_message() 
     )
 
     assert result["status"] == "failed"
-    assert result["error"] == "account stash access denied"
+    assert result["error"] == "auth_required"
+
+
+def test_private_scan_maps_upstream_403_to_insufficient_scope_error() -> None:
+    class _ForbiddenClient(_StubClient):
+        def request(self, method, path, params=None, data=None, headers=None):
+            raise RuntimeError("PoE client error 403: forbidden")
+
+    client = _ForbiddenClient()
+    clickhouse = _StubClickHouse()
+    status = _StubStatus(clickhouse)
+    harvester = AccountStashHarvester(
+        client,
+        clickhouse,
+        status,
+        account_name="qa-exile",
+        access_token="access-123",
+    )
+
+    result = harvester.run_private_scan(
+        realm="pc",
+        league="Mirage",
+        price_item=lambda _item: {"predictedValue": 1.0},
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"] == "insufficient_scope"
+
+
+def test_harvest_maps_upstream_403_to_insufficient_scope_error() -> None:
+    class _ForbiddenClient(_StubClient):
+        def request(self, method, path, params=None, data=None, headers=None):
+            raise RuntimeError("PoE client error 403: forbidden")
+
+    client = _ForbiddenClient()
+    clickhouse = _StubClickHouse()
+    status = _StubStatus(clickhouse)
+    harvester = AccountStashHarvester(
+        client,
+        clickhouse,
+        status,
+        access_token="access-123",
+    )
+
+    harvester.run(realm="pc", league="Mirage", interval=0.0, dry_run=True, once=True)
+
+    assert status.calls[-1]["status"] == "error"
+    assert status.calls[-1]["error"] == "insufficient_scope"
+
+
+def test_private_scan_preserves_rate_limit_failures_without_refresh() -> None:
+    class _RateLimitedClient(_StubClient):
+        def request(self, method, path, params=None, data=None, headers=None):
+            raise RuntimeError("PoE client error 429: too many requests")
+
+    client = _RateLimitedClient()
+    clickhouse = _StubClickHouse()
+    status = _StubStatus(clickhouse)
+    refresh_calls = {"count": 0}
+
+    harvester = AccountStashHarvester(
+        client,
+        clickhouse,
+        status,
+        account_name="qa-exile",
+        access_token="access-123",
+        refresh_access_token=lambda: refresh_calls.__setitem__(
+            "count", refresh_calls["count"] + 1
+        ),
+    )
+
+    result = harvester.run_private_scan(
+        realm="pc",
+        league="Mirage",
+        price_item=lambda _item: {"predictedValue": 1.0},
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"] == "upstream_rate_limited"
+    assert refresh_calls["count"] == 0
 
 
 def test_private_scan_refreshes_bearer_token_once_on_401_and_retries_failed_request() -> (
@@ -516,7 +614,7 @@ def test_private_scan_refreshes_bearer_token_once_on_401_and_retries_failed_requ
             )
             if path.endswith("/Mirage"):
                 return {
-                    "tabs": [
+                    "stashes": [
                         {"id": "tab-1", "i": 0, "n": "Currency", "type": "currency"},
                         {"id": "tab-2", "i": 1, "n": "Dump", "type": "quad"},
                     ]
@@ -575,6 +673,86 @@ def test_private_scan_refreshes_bearer_token_once_on_401_and_retries_failed_requ
     assert any(call["bearer_token"] == "access-456" for call in client.calls)
 
 
+def test_private_scan_refreshes_each_failed_request_once_for_later_401s() -> None:
+    class _Multi401Client(_StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempts: dict[str, int] = {}
+
+        def request(self, method, path, params=None, data=None, headers=None):
+            copied_headers = dict(headers) if isinstance(headers, dict) else headers
+            copied_params = dict(params) if isinstance(params, dict) else params
+            self.calls.append(
+                {
+                    "method": method,
+                    "path": path,
+                    "headers": copied_headers,
+                    "params": copied_params,
+                    "bearer_token": self._bearer_token,
+                }
+            )
+            if path.endswith("/Mirage"):
+                return {
+                    "stashes": [
+                        {"id": "tab-1", "i": 0, "n": "Currency", "type": "currency"},
+                        {"id": "tab-2", "i": 1, "n": "Dump", "type": "quad"},
+                    ]
+                }
+            tab_id = path.rsplit("/", 1)[-1]
+            self.attempts[tab_id] = self.attempts.get(tab_id, 0) + 1
+            if self.attempts[tab_id] == 1:
+                raise RuntimeError("PoE client error 401: unauthorized")
+            return {
+                "items": [
+                    {
+                        "id": f"item-{tab_id}",
+                        "name": f"Orb {tab_id}",
+                        "typeLine": f"Orb {tab_id}",
+                        "itemClass": "Currency",
+                        "frameType": 0,
+                        "x": 0,
+                        "y": 0,
+                        "w": 1,
+                        "h": 1,
+                    }
+                ]
+            }
+
+    client = _Multi401Client()
+    clickhouse = _StubClickHouse()
+    status = _StubStatus(clickhouse)
+    refresh_calls = {"count": 0}
+
+    def _refresh() -> str:
+        refresh_calls["count"] += 1
+        return f"access-{refresh_calls['count'] + 123}"
+
+    harvester = AccountStashHarvester(
+        client,
+        clickhouse,
+        status,
+        account_name="qa-exile",
+        access_token="access-123",
+        refresh_access_token=_refresh,
+    )
+
+    result = harvester.run_private_scan(
+        realm="pc",
+        league="Mirage",
+        price_item=lambda _item: {
+            "predictedValue": 10.0,
+            "currency": "chaos",
+            "confidence": 85.0,
+            "interval": {"p10": 8.0, "p90": 12.0},
+        },
+    )
+
+    assert result["status"] == "published"
+    assert refresh_calls["count"] == 2
+    assert client.attempts["tab-1"] == 2
+    assert client.attempts["tab-2"] == 2
+
+
 def test_private_scan_fails_terminally_when_retry_still_returns_401() -> None:
     class _Terminal401Client(_StubClient):
         def request(self, method, path, params=None, data=None, headers=None):
@@ -622,5 +800,5 @@ def test_private_scan_fails_terminally_when_retry_still_returns_401() -> None:
     )
 
     assert result["status"] == "failed"
-    assert result["error"] == "account stash access denied"
+    assert result["error"] == "auth_required"
     assert any('"status": "failed"' in query for query in clickhouse.queries)

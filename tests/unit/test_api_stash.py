@@ -5,6 +5,7 @@ from collections.abc import Mapping
 import pytest
 
 import poe_trade.api.stash as stash_api
+import poe_trade.stash_scan as stash_scan
 from poe_trade.api.stash import (
     fetch_stash_item_history,
     fetch_stash_tabs,
@@ -42,7 +43,9 @@ def test_fetch_stash_tabs_returns_empty_metadata_when_no_published_scan(
         },
     )
 
-    assert fetch_stash_tabs(client, league="Mirage", realm="pc", account_name="qa-exile") == {
+    assert fetch_stash_tabs(
+        client, league="Mirage", realm="pc", account_name="qa-exile"
+    ) == {
         "scanId": None,
         "publishedAt": None,
         "isStale": False,
@@ -144,7 +147,12 @@ def test_stash_status_connected_populated_when_published_scan_exists(
             "isStale": False,
             "scanStatus": None,
             "stashTabs": [
-                {"id": "tab-2", "name": "Currency", "type": "currency", "items": [{"id": "item-1"}]},
+                {
+                    "id": "tab-2",
+                    "name": "Currency",
+                    "type": "currency",
+                    "items": [{"id": "item-1"}],
+                },
                 {"id": "tab-9", "name": "Dump", "type": "quad", "items": []},
             ],
         },
@@ -174,6 +182,16 @@ def test_stash_scan_status_reports_running_progress_and_current_published_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _StubClickHouse()
+    monkeypatch.setattr(
+        stash_api,
+        "fetch_active_scan",
+        lambda _client, *, account_name, league, realm, stale_timeout_seconds=0: {
+            "scanId": "scan-2",
+            "isActive": True,
+            "startedAt": "2026-03-21T12:01:00Z",
+            "updatedAt": "2026-03-21T12:02:00Z",
+        },
+    )
     monkeypatch.setattr(
         stash_api,
         "fetch_latest_scan_run",
@@ -222,6 +240,74 @@ def test_stash_scan_status_reports_running_progress_and_current_published_scan(
     }
 
 
+def test_stash_scan_status_uses_reconciled_latest_run_after_active_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _StubClickHouse()
+    active_calls = {"count": 0}
+
+    def _active(_client, *, account_name, league, realm, stale_timeout_seconds=0):
+        active_calls["count"] += 1
+        return {
+            "scanId": "scan-2",
+            "isActive": False,
+            "startedAt": "2026-03-21T12:01:00Z",
+            "updatedAt": "2026-03-21T12:05:00Z",
+        }
+
+    def _latest(_client, *, account_name, league, realm):
+        if active_calls["count"] == 0:
+            return {
+                "scanId": "scan-2",
+                "status": "running",
+                "startedAt": "2026-03-21T12:01:00Z",
+                "updatedAt": "2026-03-21T12:02:00Z",
+                "publishedAt": None,
+                "progress": {
+                    "tabsTotal": 8,
+                    "tabsProcessed": 3,
+                    "itemsTotal": 120,
+                    "itemsProcessed": 44,
+                },
+                "error": None,
+            }
+        return {
+            "scanId": "scan-2",
+            "status": "failed",
+            "startedAt": "2026-03-21T12:01:00Z",
+            "updatedAt": "2026-03-21T12:05:00Z",
+            "publishedAt": None,
+            "progress": {
+                "tabsTotal": 8,
+                "tabsProcessed": 3,
+                "itemsTotal": 120,
+                "itemsProcessed": 44,
+            },
+            "error": "stale active scan timed out",
+        }
+
+    monkeypatch.setattr(stash_api, "fetch_active_scan", _active)
+    monkeypatch.setattr(stash_api, "fetch_latest_scan_run", _latest)
+    monkeypatch.setattr(
+        stash_api,
+        "fetch_published_scan_id",
+        lambda _client, *, account_name, league, realm: None,
+    )
+
+    payload = stash_scan_status_payload(
+        client,
+        account_name="qa-exile",
+        league="Mirage",
+        realm="pc",
+        stale_timeout_seconds=60,
+    )
+
+    assert payload["status"] == "failed"
+    assert payload["activeScanId"] is None
+    assert payload["updatedAt"] == "2026-03-21T12:05:00Z"
+    assert payload["error"] == "stale active scan timed out"
+
+
 def test_fetch_stash_item_history_returns_header_and_entries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -265,6 +351,42 @@ def test_fetch_stash_item_history_returns_header_and_entries(
 
     assert payload["item"]["name"] == "Grim Bane"
     assert payload["history"][0]["interval"] == {"p10": 39.0, "p90": 51.0}
+
+
+def test_fetch_active_scan_reconciles_stale_rows() -> None:
+    class _ReconcileStubClickHouse(ClickHouseClient):
+        def __init__(self) -> None:
+            super().__init__(endpoint="http://clickhouse")
+            self.queries: list[str] = []
+
+        def execute(  # pyright: ignore[reportImplicitOverride]
+            self, query: str, settings: Mapping[str, str] | None = None
+        ) -> str:
+            self.queries.append(query)
+            if "FROM poe_trade.account_stash_active_scans" in query:
+                return '{"scan_id":"scan-1","is_active":1,"started_at":"1970-01-01 00:00:00","updated_at":"1970-01-01 00:00:00"}\n'
+            if "FROM poe_trade.account_stash_scan_runs" in query:
+                return '{"scan_id":"scan-1","status":"running","started_at":"1970-01-01 00:00:00","updated_at":"1970-01-01 00:00:00","published_at":null,"tabs_total":8,"tabs_processed":3,"items_total":120,"items_processed":44,"error_message":""}\n'
+            return ""
+
+    client = _ReconcileStubClickHouse()
+
+    result = stash_scan.fetch_active_scan(
+        client,
+        account_name="qa-exile",
+        league="Mirage",
+        realm="pc",
+        stale_timeout_seconds=60,
+    )
+
+    assert result is not None
+    assert result["isActive"] is False
+    assert any(
+        "INSERT INTO poe_trade.account_stash_active_scans" in q for q in client.queries
+    )
+    assert any(
+        "INSERT INTO poe_trade.account_stash_scan_runs" in q for q in client.queries
+    )
 
 
 def test_stash_status_disconnected_for_disconnected_session() -> None:

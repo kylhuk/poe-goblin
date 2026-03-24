@@ -219,6 +219,72 @@ def _refresh_oauth_token_state(
     )
 
 
+def _load_private_stash_token_state(
+    settings: Settings,
+    account_name: str,
+) -> tuple[dict[str, object], str]:
+    token_state = load_oauth_token_state(settings, account_name=account_name)
+    if token_state is None:
+        raise ApiError(
+            status=401,
+            code="auth_required",
+            message="oauth session required",
+        )
+
+    if _oauth_token_needs_refresh(token_state):
+        token_state = _refresh_oauth_token_state(settings, token_state)
+
+    access_token = str(token_state.get("access_token") or "").strip()
+    if not access_token:
+        raise ApiError(
+            status=401,
+            code="auth_required",
+            message="oauth session required",
+        )
+    return token_state, access_token
+
+
+def _build_private_stash_harvester(
+    settings: Settings,
+    clickhouse_client: ClickHouseClient,
+    *,
+    account_name: str,
+    token_state: dict[str, object],
+    access_token: str,
+) -> AccountStashHarvester:
+    policy = RateLimitPolicy(
+        settings.rate_limit_max_retries,
+        settings.rate_limit_backoff_base,
+        settings.rate_limit_backoff_max,
+        settings.rate_limit_jitter,
+    )
+    poe_client = PoeClient(
+        settings.poe_api_base_url,
+        policy,
+        settings.poe_user_agent,
+        settings.poe_request_timeout,
+    )
+    poe_client.set_bearer_token(access_token)
+
+    def _refresh_access_token() -> str:
+        nonlocal token_state
+        token_state = _refresh_oauth_token_state(settings, token_state)
+        refreshed_access_token = str(token_state.get("access_token") or "").strip()
+        poe_client.set_bearer_token(refreshed_access_token or None)
+        return refreshed_access_token
+
+    reporter = StatusReporter(clickhouse_client, "account_stash_harvester")
+    return AccountStashHarvester(
+        poe_client,
+        clickhouse_client,
+        reporter,
+        service_name="account_stash_harvester",
+        account_name=account_name,
+        access_token=access_token,
+        refresh_access_token=_refresh_access_token,
+    )
+
+
 def _scan_price_item_factory(clickhouse_client: ClickHouseClient, *, league: str):
     def _price_item(item: dict[str, object]) -> dict[str, object]:
         from poe_trade.stash_scan import serialize_stash_item_to_clipboard
@@ -255,6 +321,7 @@ def start_private_stash_scan(
             account_name=account_name,
             league=league,
             realm=realm,
+            stale_timeout_seconds=settings.account_stash_scan_stale_timeout_seconds,
         )
         if existing and existing.get("isActive"):
             return {
@@ -267,55 +334,16 @@ def start_private_stash_scan(
                 "deduplicated": True,
             }
 
-        token_state = load_oauth_token_state(settings, account_name=account_name)
-        if token_state is None:
-            raise ApiError(
-                status=401,
-                code="auth_required",
-                message="oauth session required",
-            )
-
-        if _oauth_token_needs_refresh(token_state):
-            token_state = _refresh_oauth_token_state(settings, token_state)
-
-        access_token = str(token_state.get("access_token") or "").strip()
-        if not access_token:
-            raise ApiError(
-                status=401,
-                code="auth_required",
-                message="oauth session required",
-            )
-
-        policy = RateLimitPolicy(
-            settings.rate_limit_max_retries,
-            settings.rate_limit_backoff_base,
-            settings.rate_limit_backoff_max,
-            settings.rate_limit_jitter,
+        token_state, access_token = _load_private_stash_token_state(
+            settings, account_name
         )
-        poe_client = PoeClient(
-            settings.poe_api_base_url,
-            policy,
-            settings.poe_user_agent,
-            settings.poe_request_timeout,
-        )
-        poe_client.set_bearer_token(access_token)
 
-        def _refresh_access_token() -> str:
-            nonlocal token_state
-            token_state = _refresh_oauth_token_state(settings, token_state)
-            refreshed_access_token = str(token_state.get("access_token") or "").strip()
-            poe_client.set_bearer_token(refreshed_access_token or None)
-            return refreshed_access_token
-
-        reporter = StatusReporter(clickhouse_client, "account_stash_harvester")
-        harvester = AccountStashHarvester(
-            poe_client,
+        harvester = _build_private_stash_harvester(
+            settings,
             clickhouse_client,
-            reporter,
-            service_name="account_stash_harvester",
             account_name=account_name,
+            token_state=token_state,
             access_token=access_token,
-            refresh_access_token=_refresh_access_token,
         )
 
         scan_id = uuid.uuid4().hex
@@ -1107,6 +1135,7 @@ class ApiApp:
                 account_name=account_name,
                 league=league,
                 realm=realm,
+                stale_timeout_seconds=self.settings.account_stash_scan_stale_timeout_seconds,
             )
         except StashBackendUnavailable:
             raise ApiError(

@@ -186,6 +186,7 @@ class Settings:
     account_stash_realm: str
     account_stash_league: str
     account_stash_poll_interval: float
+    account_stash_scan_stale_timeout_seconds: int
     auth_state_dir: str
     auth_cookie_name: str
     auth_cookie_secure: bool
@@ -357,6 +358,10 @@ class Settings:
             account_stash_poll_interval=_parse_env_float(
                 "POE_ACCOUNT_STASH_POLL_INTERVAL",
                 constants.DEFAULT_ACCOUNT_STASH_POLL_INTERVAL,
+            ),
+            account_stash_scan_stale_timeout_seconds=_parse_env_int(
+                "POE_ACCOUNT_STASH_SCAN_STALE_TIMEOUT_SECONDS",
+                1800,
             ),
             auth_state_dir=_get_env_str(
                 "POE_AUTH_STATE_DIR", constants.DEFAULT_AUTH_STATE_DIR

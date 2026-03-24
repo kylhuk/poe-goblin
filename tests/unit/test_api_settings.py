@@ -44,6 +44,7 @@ def test_api_settings_parse_values() -> None:
         "POE_ACCOUNT_STASH_REALM": "xbox",
         "POE_ACCOUNT_STASH_LEAGUE": "Settlers",
         "POE_ACCOUNT_STASH_POLL_INTERVAL": "120",
+        "POE_ACCOUNT_STASH_SCAN_STALE_TIMEOUT_SECONDS": "45",
         "POE_AUTH_COOKIE_NAME": "session_cookie",
         "POE_ACCOUNT_REDIRECT_URI": "https://api.example.com/api/v1/auth/callback",
         "POE_ML_AUTOMATION_LEAGUE": "Mirage",
@@ -66,6 +67,7 @@ def test_api_settings_parse_values() -> None:
     assert cfg.account_stash_realm == "xbox"
     assert cfg.account_stash_league == "Settlers"
     assert cfg.account_stash_poll_interval == 120.0
+    assert cfg.account_stash_scan_stale_timeout_seconds == 45
     assert cfg.auth_cookie_name == "session_cookie"
     assert (
         cfg.poe_account_redirect_uri == "https://api.example.com/api/v1/auth/callback"

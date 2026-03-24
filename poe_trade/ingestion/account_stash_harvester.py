@@ -127,13 +127,18 @@ class AccountStashHarvester:
         tabs_processed = 0
         items_processed = 0
         items_total = 0
-        refresh_state = {"attempted": False}
 
         try:
             self._set_bearer_token()
             tabs_payload = self._request_account_stash(
                 stash_endpoint(realm, league),
-                refresh_state=refresh_state,
+                params=_private_stash_params(
+                    account_name=account_name,
+                    realm=realm,
+                    league=league,
+                    tabs="1",
+                    tab_index="0",
+                ),
             )
             tabs = _ordered_private_tabs_from_payload(tabs_payload)
             tabs_total = len(tabs)
@@ -142,7 +147,13 @@ class AccountStashHarvester:
                 tab_index = int(tab.get("tab_index") or 0)
                 payload = self._request_account_stash(
                     stash_endpoint(realm, league, tab_id=str(tab.get("id") or "")),
-                    refresh_state=refresh_state,
+                    params=_private_stash_params(
+                        account_name=account_name,
+                        realm=realm,
+                        league=league,
+                        tabs="0",
+                        tab_index=str(tab_index),
+                    ),
                 )
                 current_tab_row = {
                     "scan_id": effective_scan_id,
@@ -338,21 +349,19 @@ class AccountStashHarvester:
             self._set_bearer_token()
             tabs_payload = self._request_account_stash(
                 stash_endpoint(realm, league),
-                refresh_state={"attempted": False},
             )
             tabs = _tab_rows_from_payload(tabs_payload)
             snapshots = self._fetch_tab_snapshots(
                 realm=realm,
                 league=league,
                 tabs=tabs,
-                refresh_state={"attempted": False},
             )
             if not dry_run:
                 self._write_raw_snapshots(snapshots)
                 self._write_flat_items(snapshots)
         except Exception as exc:
             status_text = "error"
-            error_msg = str(exc)
+            error_msg = _friendly_scan_error_message(exc)
             logger.exception(
                 "Account stash harvest failed realm=%s league=%s", realm, league
             )
@@ -380,17 +389,15 @@ class AccountStashHarvester:
         realm: str,
         league: str,
         tabs: list[dict[str, Any]],
-        refresh_state: dict[str, bool],
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         captured_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         for tab in tabs:
-            tab_id = str(tab.get("id") or tab.get("tab_id") or "")
+            tab_id = str(tab.get("id") or tab.get("tab_id") or "").strip()
             if not tab_id:
                 continue
             payload = self._request_account_stash(
                 stash_endpoint(realm, league, tab_id=tab_id),
-                refresh_state=refresh_state,
             )
             snapshot_payload = {
                 "tab": tab,
@@ -402,7 +409,7 @@ class AccountStashHarvester:
                     "captured_at": captured_at,
                     "realm": realm,
                     "league": league,
-                    "account_name": self._account_name,
+                    "account_name": self._account_name.strip(),
                     "tab_id": tab_id,
                     "next_change_id": str(payload.get("next_change_id") or ""),
                     "payload_json": json.dumps(snapshot_payload, ensure_ascii=False),
@@ -415,11 +422,11 @@ class AccountStashHarvester:
 
     def _refresh_bearer_token(self) -> None:
         if self._refresh_access_token is None:
-            raise RuntimeError("account stash access denied")
+            raise RuntimeError("auth_required")
         refreshed_token = self._refresh_access_token()
         token = str(refreshed_token or "").strip()
         if not token:
-            raise RuntimeError("account stash access denied")
+            raise RuntimeError("auth_required")
         self._access_token = token
         self._client.set_bearer_token(token)
 
@@ -427,25 +434,42 @@ class AccountStashHarvester:
         self,
         path: str,
         *,
-        refresh_state: dict[str, bool],
+        params: Mapping[str, str] | None = None,
     ) -> Any:
+        request_headers = {
+            key: value
+            for key, value in self._request_headers.items()
+            if key.lower() != "cookie"
+        }
+        headers = request_headers or None
         try:
-            return self._client.request("GET", path)
+            return self._client.request("GET", path, params=params, headers=headers)
         except Exception as exc:
-            if not _is_auth_401(exc):
+            status_code = _upstream_status_code(exc)
+            if status_code != 401:
+                if status_code == 403:
+                    raise ValueError("insufficient_scope") from exc
+                if status_code == 429 or (
+                    status_code is not None and status_code >= 500
+                ):
+                    raise RuntimeError("upstream_rate_limited") from exc
                 raise
-            if refresh_state.get("attempted"):
-                raise RuntimeError("account stash access denied") from exc
-            refresh_state["attempted"] = True
             try:
                 self._refresh_bearer_token()
             except Exception as refresh_exc:
-                raise RuntimeError("account stash access denied") from refresh_exc
+                raise RuntimeError("auth_required") from refresh_exc
             try:
-                return self._client.request("GET", path)
+                return self._client.request("GET", path, params=params, headers=headers)
             except Exception as retry_exc:
-                if _is_auth_401(retry_exc):
-                    raise RuntimeError("account stash access denied") from retry_exc
+                if _upstream_status_code(retry_exc) == 401:
+                    raise RuntimeError("auth_required") from retry_exc
+                retry_status = _upstream_status_code(retry_exc)
+                if retry_status == 403:
+                    raise ValueError("insufficient_scope") from retry_exc
+                if retry_status == 429 or (
+                    retry_status is not None and retry_status >= 500
+                ):
+                    raise RuntimeError("upstream_rate_limited") from retry_exc
                 raise
 
     def _write_raw_snapshots(self, rows: list[dict[str, Any]]) -> None:
@@ -642,6 +666,9 @@ def _tab_rows_from_payload(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [row for row in payload if isinstance(row, dict)]
     if isinstance(payload, dict):
+        stashes = payload.get("stashes")
+        if isinstance(stashes, list):
+            return [row for row in stashes if isinstance(row, dict)]
         tabs = payload.get("tabs")
         if isinstance(tabs, list):
             return [row for row in tabs if isinstance(row, dict)]
@@ -711,16 +738,29 @@ def _bool_to_uint8(value: bool) -> int:
 
 def _friendly_scan_error_message(exc: Exception) -> str:
     message = str(exc)
-    if message == "account stash access denied":
+    if message in {
+        "auth_required",
+        "insufficient_scope",
+        "upstream_rate_limited",
+    }:
         return message
-    if "PoE client error 401" in message or "PoE client error 403" in message:
-        return "account stash access denied"
+    if "PoE client error 401" in message:
+        return "auth_required"
+    if "PoE client error 403" in message:
+        return "insufficient_scope"
+    if "PoE client error 429" in message:
+        return "upstream_rate_limited"
+    if "PoE client error 5" in message and len(message) >= 18:
+        return "upstream_rate_limited"
     return message
 
 
-def _is_auth_401(exc: Exception) -> bool:
+def _upstream_status_code(exc: Exception) -> int | None:
     message = str(exc)
-    return "PoE client error 401" in message
+    match = re.search(r"PoE client error (\d{3})", message)
+    if not match:
+        return None
+    return int(match.group(1))
 
 
 def parse_listed_price(note: str) -> tuple[float, str] | None:
