@@ -291,9 +291,14 @@ export async function getAnalyticsIngestion() {
   return payload.rows;
 }
 
-export async function getAnalyticsScanner() {
-  const payload = await request<{ rows: ScannerRow[] }>('/api/v1/ops/analytics/scanner');
-  return payload.rows;
+export async function getAnalyticsScanner(): Promise<ScannerAnalyticsResponse> {
+  const payload = await request<ScannerAnalyticsResponse>('/api/v1/ops/analytics/scanner');
+  return {
+    latestRunId: payload.latestRunId ?? null,
+    rows: Array.isArray(payload.rows) ? payload.rows : [],
+    gateRejections: Array.isArray(payload.gateRejections) ? payload.gateRejections : [],
+    complexityTiers: Array.isArray(payload.complexityTiers) ? payload.complexityTiers : [],
+  };
 }
 
 export async function getAnalyticsAlerts() {
