@@ -204,15 +204,26 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
     }
   }, []);
 
+  const activeTabRef = React.useRef(activeTab);
+  activeTabRef.current = activeTab;
+  const activeTabIndexRef = React.useRef(activeTabIndex);
+  activeTabIndexRef.current = activeTabIndex;
+
   useEffect(() => {
-    const iv = window.setInterval(() => {
-      pollStatus().catch((err: unknown) => {
+    const iv = window.setInterval(async () => {
+      try {
+        const st = await pollStatus();
+        // If connected but no tab loaded yet, retry loading
+        if (st.connected && !activeTabRef.current) {
+          await loadTab(activeTabIndexRef.current);
+        }
+      } catch (err: unknown) {
         setError(err instanceof Error ? err.message : 'Stash feature unavailable');
         setStatus('degraded');
-      });
+      }
     }, 5_000);
     return () => clearInterval(iv);
-  }, [pollStatus]);
+  }, [pollStatus, loadTab]);
 
   const tab = activeTab;
   const specialLayout = tab ? getSpecialLayout(tab) : null;
