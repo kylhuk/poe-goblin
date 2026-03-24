@@ -1,54 +1,28 @@
 
 
-## Multi-Tab Stash Support
+## Fix Stash Tab Switching Being Overwritten by Polling
 
 ### Problem
 
-The API now returns all 19 stash tabs' metadata in the `tabs[]` array, plus the first tab's full data in `stash`. The current normalizer ignores `tabs[]` entirely and wraps `stash` as a single-element array, so only one tab is ever visible and there's no way to switch.
+When clicking a different tab, `loadTab` correctly fetches and displays that tab's items. However, `loadPublished` runs every 5 seconds and also calls `api.getStashTabs(activeTabIndex)`, overwriting `activeTab` with stale data. This causes the grid to snap back or show wrong items.
 
-### API Response Format (confirmed from debug traffic)
+### Root Cause
 
-```text
-{
-  "stash": { id, name, type, index, metadata, items[] },  ← full data for ONE tab
-  "tabs": [                                                ← metadata for ALL 19 tabs
-    { id, tab_index, name, type },
-    ...
-  ],
-  "items": [],
-  "numTabs": 19
-}
-```
+`loadPublished` does two things it shouldn't:
+1. It re-fetches the active tab's items on every poll — unnecessary since the tab data only changes on scan publish
+2. The 5-second polling interval means any tab switch gets overwritten almost immediately
 
-Tab types seen: `QuadStash`, `CurrencyStash`, `FlaskStash`, `GemStash`, `PremiumStash`, `UniqueStash`, `MapStash`, `EssenceStash`, `DivinationCardStash`, `FragmentStash`, `DeliriumStash`, `UltimatumStash`, `BlightStash`.
+### Fix — `src/components/tabs/StashViewerTab.tsx`
 
-To load a different tab, we likely need to pass `&tabIndex=N` or `&stashId=X` to `/api/v1/stash/tabs`.
+**Separate status polling from tab data loading:**
 
-### Changes
-
-#### 1. `src/types/api.ts` — Add tab metadata type + update response
-
-- Add `StashTabMeta` interface: `{ id, tabIndex, name, type }`
-- Update `StashTabsResponse` to include `tabsMeta: StashTabMeta[]` and `numTabs: number`
-
-#### 2. `src/services/api.ts` — Parse `tabs[]` array, support tab index param
-
-- In `normalizeStashTabsResponse`: extract `source.tabs` array into `tabsMeta[]`, map `tab_index` → `tabIndex` and apply `mapPoeStashType`
-- Update `getStashTabs(tabIndex?: number)` to accept optional tab index and append `&tabIndex=N` to the URL
-- Still wrap `source.stash` into `stashTabs[0]` for the currently loaded tab's items
-
-#### 3. `src/components/tabs/StashViewerTab.tsx` — Tab selector from metadata
-
-- Store `tabsMeta` (all 19 tabs) separately from `tabs` (the loaded tab with items)
-- Render tab buttons from `tabsMeta` instead of from `tabs` — this shows all 19 tab buttons
-- On tab click, call `api.getStashTabs(tabIndex)` to fetch that specific tab's items
-- Show a loading indicator while fetching a new tab
-- The active tab's items populate the grid/special layout as before
-- Use `tabsMeta[i].type` to determine grid type (quad vs normal vs special layout)
+- `loadPublished` should only call `api.getStashStatus()` for scan status, published scan ID, and connection state. It should NOT call `api.getStashTabs()` or touch `activeTab`.
+- Remove `activeTabIndex` from `loadPublished`'s dependency array.
+- Initial tab load: call `loadTab(0)` once on mount (after status confirms connected).
+- Tab clicks: call `loadTab(tabIndex)` as they already do — this is the only place that fetches tab items.
+- When a scan finishes (`published` status detected), call `loadTab(activeTabIndex)` to refresh the current tab's items with the new snapshot.
 
 ### Files Changed
 
-- `src/types/api.ts` — add `StashTabMeta`, update `StashTabsResponse`
-- `src/services/api.ts` — parse `tabs[]`, add `tabIndex` param to `getStashTabs`
-- `src/components/tabs/StashViewerTab.tsx` — render all tabs from metadata, lazy-load on click
+- `src/components/tabs/StashViewerTab.tsx` — decouple status polling from tab data fetching
 
