@@ -31,6 +31,7 @@ export default function EconomyTab() {
   const [errorMsg, setErrorMsg] = useState('');
   const [historyMap, setHistoryMap] = useState<Map<string, ItemHistoryData>>(new Map());
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyProgress, setHistoryProgress] = useState<{ loaded: number; total: number } | null>(null);
 
   const load = useCallback(async () => {
     setPhase('loading');
@@ -98,19 +99,22 @@ export default function EconomyTab() {
     setHistoryLoading(true);
 
     const BATCH = 20;
+    setHistoryProgress({ loaded: 0, total: unique.length });
     (async () => {
       for (let i = 0; i < unique.length; i += BATCH) {
         if (cancelled) return;
         const batch = unique.slice(i, i + BATCH);
         const result = await fetchItemHistories(batch);
         if (cancelled) return;
+        const done = Math.min(i + BATCH, unique.length);
+        setHistoryProgress({ loaded: done, total: unique.length });
         setHistoryMap(prev => {
           const next = new Map(prev);
           result.forEach((v, k) => next.set(k, v));
           return next;
         });
       }
-      if (!cancelled) setHistoryLoading(false);
+      if (!cancelled) { setHistoryLoading(false); setHistoryProgress(null); }
     })();
 
     return () => { cancelled = true; };
@@ -191,6 +195,11 @@ export default function EconomyTab() {
               <option key={c.key} value={c.key}>{c.label} ({c.items.length})</option>
             ))}
           </select>
+          {historyProgress && (
+            <span className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">
+              Loading prices: {historyProgress.loaded}/{historyProgress.total}
+            </span>
+          )}
           <Button variant="outline" size="sm" className="h-8 text-xs" onClick={load}>
             <RefreshCw className="h-3 w-3 mr-1" /> Reload
           </Button>
