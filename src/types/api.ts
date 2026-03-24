@@ -351,6 +351,7 @@ export interface StashTabMeta {
   tabIndex: number;
   name: string;
   type: string;
+  colour?: string;
 }
 
 export interface StashTabsResponse {

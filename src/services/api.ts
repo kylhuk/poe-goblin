@@ -833,11 +833,13 @@ function normalizeStashTab(raw: unknown): StashTab {
 function normalizeTabsMeta(rawTabs: unknown[]): StashTabMeta[] {
   return rawTabs.map((entry) => {
     const t = asObject(entry);
+    const meta = asObject(t.metadata);
     return {
       id: optString(t.id) ?? '',
       tabIndex: optNumber(t.tab_index ?? t.tabIndex ?? t.index) ?? 0,
       name: optString(t.name) ?? 'Tab',
       type: optString(t.type) ?? 'NormalStash',
+      colour: optString(meta.colour as unknown) ?? undefined,
     };
   });
 }
