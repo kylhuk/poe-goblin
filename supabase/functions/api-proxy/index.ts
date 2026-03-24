@@ -26,7 +26,7 @@ async function captureTraffic(
       request_body: reqBody ?? null,
       response_status: resStatus,
       response_headers: resHeaders,
-      response_body: resBody.length > 500_000 ? resBody.slice(0, 500_000) + "…[truncated]" : resBody,
+      response_body: resBody,
     });
     console.log(`[api-proxy] DEBUG captured ${method} ${path} (${resBody.length} bytes)`);
   } catch (e) {
