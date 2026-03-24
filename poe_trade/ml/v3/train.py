@@ -67,6 +67,9 @@ def _load_training_rows(
     query = " ".join(
         [
             "SELECT",
+            "strategy_family,",
+            "cohort_key,",
+            "material_state_signature,",
             "feature_vector_json,",
             "mod_features_json,",
             "target_price_chaos,",
@@ -101,6 +104,150 @@ def _feature_dict(row: dict[str, Any]) -> dict[str, float]:
             except (TypeError, ValueError):
                 continue
     return merged
+
+
+def _cohort_identity_from_row(*, row: dict[str, Any], route: str) -> tuple[str, str]:
+    strategy_family = str(row.get("strategy_family") or "").strip() or route
+    cohort_key = str(row.get("cohort_key") or "").strip()
+    if not cohort_key:
+        cohort_key = f"{strategy_family}|__legacy_missing_material_state_signature__"
+    return strategy_family, cohort_key
+
+
+def _derive_cohort_metadata(
+    *, strategy_family: str, cohort_key: str, route_compatibility_alias: str
+) -> dict[str, str]:
+    default_material_state_signature = "__legacy_missing_material_state_signature__"
+    parent_cohort_key = f"{strategy_family}|{default_material_state_signature}"
+    material_state_signature = default_material_state_signature
+
+    parts = cohort_key.split("|", 2)
+    if len(parts) == 3:
+        material_state_signature = parts[2] or default_material_state_signature
+        parent_cohort_key = f"{strategy_family}|{material_state_signature}"
+
+    return {
+        "strategy_family": strategy_family,
+        "cohort_key": cohort_key,
+        "parent_cohort_key": parent_cohort_key,
+        "material_state_signature": material_state_signature,
+        "route_compatibility_alias": route_compatibility_alias,
+    }
+
+
+def _train_bundle_for_rows(
+    *,
+    league: str,
+    route: str,
+    strategy_family: str,
+    cohort_key: str,
+    rows: list[dict[str, Any]],
+    model_scope: str = "cohort",
+) -> dict[str, Any]:
+    feature_rows = [_feature_dict(row) for row in rows]
+    vectorizer = DictVectorizer(sparse=True)
+    X = vectorizer.fit_transform(feature_rows)
+    y_p50 = np.array([float(row.get("target_price_chaos") or 0.0) for row in rows])
+
+    model_p10 = GradientBoostingRegressor(
+        loss="quantile",
+        alpha=0.1,
+        n_estimators=120,
+        learning_rate=0.05,
+        max_depth=3,
+        random_state=42,
+    )
+    model_p50 = GradientBoostingRegressor(
+        loss="absolute_error",
+        n_estimators=120,
+        learning_rate=0.05,
+        max_depth=3,
+        random_state=42,
+    )
+    model_p90 = GradientBoostingRegressor(
+        loss="quantile",
+        alpha=0.9,
+        n_estimators=120,
+        learning_rate=0.05,
+        max_depth=3,
+        random_state=42,
+    )
+    model_p10.fit(X, y_p50)
+    model_p50.fit(X, y_p50)
+    model_p90.fit(X, y_p50)
+
+    sale_targets = np.array(
+        [float(row.get("target_sale_probability_24h") or 0.0) >= 0.5 for row in rows],
+        dtype=np.int8,
+    )
+    unique_classes = np.unique(sale_targets)
+    sale_model: LogisticRegression | None = None
+    if unique_classes.size >= 2:
+        sale_model = LogisticRegression(max_iter=1000, random_state=42)
+        sale_model.fit(X, sale_targets)
+
+    fast_sale_targets = np.array(
+        [float(row.get("target_fast_sale_24h_price") or 0.0) for row in rows]
+    )
+    fallback_multiplier = 0.9
+    positive_mask = (y_p50 > 0) & (fast_sale_targets > 0)
+    if positive_mask.any():
+        fallback_multiplier = float(
+            np.clip(
+                np.median(fast_sale_targets[positive_mask] / y_p50[positive_mask]),
+                0.5,
+                1.0,
+            )
+        )
+    effective_fast_sale = np.where(
+        fast_sale_targets > 0,
+        fast_sale_targets,
+        np.maximum(0.1, y_p50 * fallback_multiplier),
+    )
+    model_fast_sale = GradientBoostingRegressor(
+        loss="absolute_error",
+        n_estimators=120,
+        learning_rate=0.05,
+        max_depth=3,
+        random_state=42,
+    )
+    model_fast_sale.fit(X, effective_fast_sale)
+
+    identity_metadata = _derive_cohort_metadata(
+        strategy_family=strategy_family,
+        cohort_key=cohort_key,
+        route_compatibility_alias=route,
+    )
+    return {
+        "vectorizer": vectorizer,
+        "models": {
+            "p10": model_p10,
+            "p50": model_p50,
+            "p90": model_p90,
+            "fast_sale_24h": model_fast_sale,
+            "sale_probability": sale_model,
+        },
+        "search_config": {
+            "max_candidates": 64,
+            "stage_support_targets": {"1": 8, "2": 12, "3": 18, "4": 24},
+        },
+        "route_family_priors": {},
+        "fair_value_residual_model": model_p50,
+        "fast_sale_residual_model": model_fast_sale,
+        "fallback_fast_sale_multiplier": fallback_multiplier,
+        "metadata": {
+            "league": league,
+            "route": route,
+            **identity_metadata,
+            "model_scope": model_scope,
+            "row_count": len(rows),
+            "has_fast_sale_target": bool((fast_sale_targets > 0).any()),
+            "feature_schema": {
+                "fields": sorted(vectorizer.feature_names_),
+                "field_count": len(vectorizer.feature_names_),
+            },
+        },
+    }
 
 
 def apply_residual_cap(
@@ -332,103 +479,59 @@ def train_route_v3(
             )
         )
 
-    feature_rows = [_feature_dict(row) for row in rows]
-    vectorizer = DictVectorizer(sparse=True)
-    X = vectorizer.fit_transform(feature_rows)
-    y_p50 = np.array([float(row.get("target_price_chaos") or 0.0) for row in rows])
+    grouped_rows: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        strategy_family, cohort_key = _cohort_identity_from_row(row=row, route=route)
+        cohort_bundle_key = f"{strategy_family}::{cohort_key}"
+        entry = grouped_rows.get(cohort_bundle_key)
+        if entry is None:
+            entry = {
+                "strategy_family": strategy_family,
+                "cohort_key": cohort_key,
+                "rows": [],
+            }
+            grouped_rows[cohort_bundle_key] = entry
+        entry["rows"].append(row)
 
-    model_p10 = GradientBoostingRegressor(
-        loss="quantile",
-        alpha=0.1,
-        n_estimators=120,
-        learning_rate=0.05,
-        max_depth=3,
-        random_state=42,
+    ordered_group_keys = list(grouped_rows)
+    bundle = _train_bundle_for_rows(
+        league=league,
+        route=route,
+        strategy_family="__route_wide__",
+        cohort_key="__route_wide__",
+        rows=rows,
+        model_scope="route_wide",
     )
-    model_p50 = GradientBoostingRegressor(
-        loss="absolute_error",
-        n_estimators=120,
-        learning_rate=0.05,
-        max_depth=3,
-        random_state=42,
-    )
-    model_p90 = GradientBoostingRegressor(
-        loss="quantile",
-        alpha=0.9,
-        n_estimators=120,
-        learning_rate=0.05,
-        max_depth=3,
-        random_state=42,
-    )
-    model_p10.fit(X, y_p50)
-    model_p50.fit(X, y_p50)
-    model_p90.fit(X, y_p50)
-
-    sale_targets = np.array(
-        [float(row.get("target_sale_probability_24h") or 0.0) >= 0.5 for row in rows],
-        dtype=np.int8,
-    )
-    unique_classes = np.unique(sale_targets)
-    sale_model: LogisticRegression | None = None
-    if unique_classes.size >= 2:
-        sale_model = LogisticRegression(max_iter=1000, random_state=42)
-        sale_model.fit(X, sale_targets)
-
-    fast_sale_targets = np.array(
-        [float(row.get("target_fast_sale_24h_price") or 0.0) for row in rows]
-    )
-    fallback_multiplier = 0.9
-    positive_mask = (y_p50 > 0) & (fast_sale_targets > 0)
-    if positive_mask.any():
-        fallback_multiplier = float(
-            np.clip(
-                np.median(fast_sale_targets[positive_mask] / y_p50[positive_mask]),
-                0.5,
-                1.0,
-            )
+    if len(grouped_rows) == 1:
+        only_key = ordered_group_keys[0]
+        only_group = grouped_rows[only_key]
+        cohort_bundle = dict(bundle)
+        cohort_bundle_metadata = dict((bundle.get("metadata") or {}))
+        cohort_bundle_identity = _derive_cohort_metadata(
+            strategy_family=str(only_group["strategy_family"]),
+            cohort_key=str(only_group["cohort_key"]),
+            route_compatibility_alias=route,
         )
-    effective_fast_sale = np.where(
-        fast_sale_targets > 0,
-        fast_sale_targets,
-        np.maximum(0.1, y_p50 * fallback_multiplier),
-    )
-    model_fast_sale = GradientBoostingRegressor(
-        loss="absolute_error",
-        n_estimators=120,
-        learning_rate=0.05,
-        max_depth=3,
-        random_state=42,
-    )
-    model_fast_sale.fit(X, effective_fast_sale)
-
-    bundle = {
-        "vectorizer": vectorizer,
-        "models": {
-            "p10": model_p10,
-            "p50": model_p50,
-            "p90": model_p90,
-            "fast_sale_24h": model_fast_sale,
-            "sale_probability": sale_model,
-        },
-        "search_config": {
-            "max_candidates": 64,
-            "stage_support_targets": {"1": 8, "2": 12, "3": 18, "4": 24},
-        },
-        "route_family_priors": {},
-        "fair_value_residual_model": model_p50,
-        "fast_sale_residual_model": model_fast_sale,
-        "fallback_fast_sale_multiplier": fallback_multiplier,
-        "metadata": {
-            "league": league,
-            "route": route,
-            "row_count": len(rows),
-            "has_fast_sale_target": bool((fast_sale_targets > 0).any()),
-            "feature_schema": {
-                "fields": sorted(vectorizer.feature_names_),
-                "field_count": len(vectorizer.feature_names_),
-            },
-        },
-    }
+        cohort_bundle_metadata.update(cohort_bundle_identity)
+        cohort_bundle_metadata["model_scope"] = "cohort"
+        cohort_bundle["metadata"] = cohort_bundle_metadata
+        bundle["cohort_bundles"] = {only_key: cohort_bundle}
+    else:
+        bundle["cohort_bundles"] = {
+            cohort_bundle_key: _train_bundle_for_rows(
+                league=league,
+                route=route,
+                strategy_family=str(group["strategy_family"]),
+                cohort_key=str(group["cohort_key"]),
+                rows=list(group["rows"]),
+                model_scope="cohort",
+            )
+            for cohort_bundle_key, group in grouped_rows.items()
+        }
+    metadata = bundle.get("metadata")
+    if isinstance(metadata, dict):
+        metadata["cohort_count"] = len(grouped_rows)
+        metadata["cohort_bundle_keys"] = ordered_group_keys
 
     target_dir = Path(model_dir) / "v3" / league / route
     target_dir.mkdir(parents=True, exist_ok=True)

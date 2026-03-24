@@ -17,7 +17,7 @@ from . import sql
 from . import hybrid_search
 from .hybrid_anchor import build_anchor
 from .train import apply_residual_cap
-from .sql import TRAINING_TABLE
+from .sql import ROLLOUT_STATE_TABLE, TRAINING_TABLE
 
 
 def _quote(value: str) -> str:
@@ -70,22 +70,28 @@ def _median_fallback(
     base_type: str,
     rarity: str,
 ) -> tuple[float, int]:
-    query = " ".join(
-        [
-            "SELECT quantileTDigest(0.5)(target_price_chaos) AS p50, count() AS rows",
-            f"FROM {TRAINING_TABLE}",
-            f"WHERE league = {_quote(league)}",
-            f"AND route = {_quote(route)}",
-            f"AND base_type = {_quote(base_type)}",
-            f"AND rarity = {_quote(rarity)}",
-            "FORMAT JSONEachRow",
-        ]
-    )
-    rows = _query_rows(client, query)
+    try:
+        query = " ".join(
+            [
+                "SELECT quantileTDigest(0.5)(target_price_chaos) AS p50, count() AS rows",
+                f"FROM {TRAINING_TABLE}",
+                f"WHERE league = {_quote(league)}",
+                f"AND route = {_quote(route)}",
+                f"AND base_type = {_quote(base_type)}",
+                f"AND rarity = {_quote(rarity)}",
+                "FORMAT JSONEachRow",
+            ]
+        )
+        rows = _query_rows(client, query)
+    except Exception:
+        return 1.0, 0
     if not rows:
         return 1.0, 0
-    p50 = float(rows[0].get("p50") or 1.0)
-    support = int(rows[0].get("rows") or 0)
+    try:
+        p50 = float(rows[0].get("p50") or 1.0)
+        support = int(rows[0].get("rows") or 0)
+    except (TypeError, ValueError):
+        return 1.0, 0
     return max(0.1, p50), max(0, support)
 
 
@@ -141,6 +147,214 @@ def _ranked_affixes_for_item(parsed: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _bundle_key(strategy_family: str, cohort_key: str) -> str:
+    return f"{strategy_family}::{cohort_key}"
+
+
+def _engine_family_for_strategy(strategy_family: str) -> str:
+    normalized = strategy_family.strip().lower()
+    if normalized in {"fallback_abstain", "abstain"}:
+        return "abstain"
+    if "reference" in normalized:
+        return "reference"
+    if "retrieval" in normalized:
+        return "retrieval"
+    return "ml"
+
+
+def _retrieval_strategy_for_target(cohort_key: str) -> str:
+    if cohort_key.startswith("cluster_jewel_retrieval|"):
+        return "cluster_jewel_retrieval"
+    if "|cluster_jewel|" in cohort_key:
+        return "cluster_jewel_retrieval"
+    return "sparse_retrieval"
+
+
+def _rewrite_cohort_for_strategy(strategy_family: str, cohort_key: str) -> str:
+    if "|" not in cohort_key:
+        return strategy_family
+    _, suffix = cohort_key.split("|", 1)
+    return f"{strategy_family}|{suffix}"
+
+
+def _is_promoted_row(row: dict[str, Any]) -> bool:
+    raw = row.get("promoted")
+    if raw is None:
+        return True
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized in {"", "0", "false", "f", "no", "off"}:
+            return False
+        return True
+    try:
+        return int(raw) != 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _normalize_promoted_rollout_rows(
+    promoted_rows: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    normalized_rows: list[dict[str, str]] = []
+    for row in promoted_rows:
+        if not _is_promoted_row(row):
+            continue
+        strategy_family = str(row.get("strategy_family") or "").strip()
+        cohort_key = str(row.get("cohort_key") or "").strip()
+        if not strategy_family or not cohort_key:
+            continue
+        normalized_rows.append(
+            {
+                "strategy_family": strategy_family,
+                "cohort_key": cohort_key,
+            }
+        )
+    normalized_rows.sort(key=lambda row: (row["cohort_key"], row["strategy_family"]))
+    return normalized_rows
+
+
+def _resolve_rollout_bundle_key(
+    *,
+    strategy_family: str,
+    cohort_key: str,
+    parent_cohort_key: str,
+    promoted_rows: list[dict[str, Any]],
+    available_bundle_keys: set[str],
+) -> str | None:
+    normalized_rows = _normalize_promoted_rollout_rows(promoted_rows)
+    promoted_by_cohort: dict[str, list[dict[str, str]]] = {}
+    for row in normalized_rows:
+        promoted_by_cohort.setdefault(row["cohort_key"], []).append(row)
+
+    def _pick_candidate(
+        rows_for_cohort: list[dict[str, str]], *, preferred_strategy_family: str
+    ) -> dict[str, str] | None:
+        if not rows_for_cohort:
+            return None
+        if len(rows_for_cohort) == 1:
+            return rows_for_cohort[0]
+        preferred = [
+            row
+            for row in rows_for_cohort
+            if row["strategy_family"] == preferred_strategy_family
+        ]
+        if len(preferred) == 1:
+            return preferred[0]
+        return None
+
+    exact_promoted = _pick_candidate(
+        promoted_by_cohort.get(cohort_key, []),
+        preferred_strategy_family=strategy_family,
+    )
+    if exact_promoted is not None:
+        exact_key = _bundle_key(
+            exact_promoted["strategy_family"], exact_promoted["cohort_key"]
+        )
+        if exact_key in available_bundle_keys:
+            return exact_key
+
+    parent_promoted = _pick_candidate(
+        promoted_by_cohort.get(parent_cohort_key, []),
+        preferred_strategy_family=strategy_family,
+    )
+    if parent_promoted is not None:
+        parent_key = _bundle_key(
+            parent_promoted["strategy_family"], parent_promoted["cohort_key"]
+        )
+        if parent_key in available_bundle_keys:
+            return parent_key
+
+    target_family = _engine_family_for_strategy(strategy_family)
+    if target_family == "abstain":
+        return None
+
+    if target_family == "reference":
+        reference_parent = _rewrite_cohort_for_strategy(
+            "fungible_reference", parent_cohort_key
+        )
+        reference_parent_key = _bundle_key("fungible_reference", reference_parent)
+        if reference_parent_key in available_bundle_keys:
+            return reference_parent_key
+        return None
+
+    retrieval_strategy = _retrieval_strategy_for_target(cohort_key)
+    retrieval_parent = _rewrite_cohort_for_strategy(
+        retrieval_strategy, parent_cohort_key
+    )
+    retrieval_parent_key = _bundle_key(retrieval_strategy, retrieval_parent)
+
+    if target_family == "retrieval":
+        if retrieval_parent_key in available_bundle_keys:
+            return retrieval_parent_key
+        return None
+
+    retrieval_same = _rewrite_cohort_for_strategy(retrieval_strategy, cohort_key)
+    retrieval_same_promoted = _pick_candidate(
+        promoted_by_cohort.get(retrieval_same, []),
+        preferred_strategy_family=retrieval_strategy,
+    )
+    if retrieval_same_promoted is not None:
+        retrieval_same_key = _bundle_key(
+            retrieval_same_promoted["strategy_family"],
+            retrieval_same_promoted["cohort_key"],
+        )
+        if retrieval_same_key in available_bundle_keys:
+            return retrieval_same_key
+
+    if retrieval_parent_key in available_bundle_keys:
+        return retrieval_parent_key
+    return None
+
+
+def _load_promoted_rollout_rows(
+    client: ClickHouseClient, *, league: str
+) -> list[dict[str, Any]]:
+    query = " ".join(
+        [
+            "SELECT strategy_family, cohort_key, promoted",
+            f"FROM {ROLLOUT_STATE_TABLE}",
+            f"WHERE league = {_quote(league)} AND promoted = 1",
+            "ORDER BY strategy_family ASC, cohort_key ASC",
+            "FORMAT JSONEachRow",
+        ]
+    )
+    try:
+        return _query_rows(client, query)
+    except Exception:
+        return []
+
+
+def _select_serving_bundle(
+    *,
+    bundle: dict[str, Any],
+    strategy_family: str,
+    cohort_key: str,
+    parent_cohort_key: str,
+    promoted_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    cohort_bundles = bundle.get("cohort_bundles")
+    if not isinstance(cohort_bundles, dict) or not cohort_bundles:
+        return bundle
+    available_bundle_keys = {
+        str(key)
+        for key, value in cohort_bundles.items()
+        if isinstance(key, str) and isinstance(value, dict)
+    }
+    selected_key = _resolve_rollout_bundle_key(
+        strategy_family=strategy_family,
+        cohort_key=cohort_key,
+        parent_cohort_key=parent_cohort_key,
+        promoted_rows=promoted_rows,
+        available_bundle_keys=available_bundle_keys,
+    )
+    if selected_key is None:
+        return None
+    selected_bundle = cohort_bundles.get(selected_key)
+    if not isinstance(selected_bundle, dict):
+        return None
+    return selected_bundle
+
+
 def predict_one_v3(
     client: ClickHouseClient,
     *,
@@ -150,20 +364,32 @@ def predict_one_v3(
 ) -> dict[str, Any]:
     parsed = workflows._parse_clipboard_item(clipboard_text)
     route = routes.select_route(parsed)
+    cohort_identity = routes.assign_cohort(parsed)
+    strategy_family = str(cohort_identity.get("strategy_family") or route)
+    cohort_key = str(
+        cohort_identity.get("cohort_key")
+        or f"{strategy_family}|__legacy_missing_material_state_signature__"
+    )
+    parent_cohort_key = str(
+        cohort_identity.get("parent_cohort_key")
+        or f"{strategy_family}|__legacy_missing_material_state_signature__"
+    )
     features = build_feature_row(parsed)
     parsed = {**parsed, **features}
     base_type = str(parsed.get("base_type") or "")
     rarity = str(parsed.get("rarity") or "")
 
-    retrieval_rows = _query_rows(
-        client,
-        sql.build_retrieval_candidate_query(
+    retrieval_rows: list[dict[str, Any]] = []
+    try:
+        retrieval_query = sql.build_retrieval_candidate_query(
             league=league,
             route=route,
             item_state_key=str(parsed.get("item_state_key") or ""),
             limit=2000,
-        ),
-    )
+        )
+        retrieval_rows = _query_rows(client, retrieval_query)
+    except Exception:
+        retrieval_rows = []
     search = hybrid_search.run_search(
         parsed_item=parsed,
         candidate_rows=retrieval_rows,
@@ -175,6 +401,17 @@ def predict_one_v3(
     bundle = _load_bundle_if_present(model_dir=model_dir, league=league, route=route)
     if not _is_valid_bundle_schema(bundle):
         bundle = None
+    elif isinstance(bundle, dict):
+        promoted_rows = _load_promoted_rollout_rows(client, league=league)
+        bundle = _select_serving_bundle(
+            bundle=bundle,
+            strategy_family=strategy_family,
+            cohort_key=cohort_key,
+            parent_cohort_key=parent_cohort_key,
+            promoted_rows=promoted_rows,
+        )
+        if not _is_valid_bundle_schema(bundle):
+            bundle = None
     p10 = 0.1
     p50 = 0.1
     p90 = 0.1
@@ -296,6 +533,9 @@ def predict_one_v3(
         "prediction_id": prediction_id,
         "prediction_as_of_ts": now,
         "route": route,
+        "strategy_family": strategy_family,
+        "cohort_key": cohort_key,
+        "parent_cohort_key": parent_cohort_key,
         "price_p10": p10,
         "price_p50": p50,
         "price_p90": p90,
@@ -309,8 +549,11 @@ def predict_one_v3(
         "confidence_percent": round(confidence * 100, 2),
         "support_count_recent": support,
         "prediction_source": source,
+        "engine_version": "ml_v3",
         "uncertainty_tier": uncertainty_tier,
         "fallback_reason": fallback_reason,
+        "fallback_depth": int(search.stage),
+        "incumbent_flag": 1,
         "estimate_trust": estimate_trust,
         "ml_predicted": True,
         "price_recommendation_eligible": confidence >= 0.35,

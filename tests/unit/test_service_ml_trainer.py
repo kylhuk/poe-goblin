@@ -5,6 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
 from poe_trade.db import ClickHouseClient
 from poe_trade.services import ml_trainer
 
@@ -39,6 +41,7 @@ def test_ml_trainer_persists_runtime_stage_in_status(monkeypatch) -> None:
         ml_trainer,
         "_refresh_v3_training_examples",
         lambda *_args, **_kwargs: {
+            "status": "completed",
             "latest_source_at": None,
             "latest_training_at": None,
             "replayed_days": [],
@@ -120,6 +123,7 @@ def test_ml_trainer_uses_v3_training(monkeypatch) -> None:
         ml_trainer,
         "_refresh_v3_training_examples",
         lambda *_args, **_kwargs: {
+            "status": "completed",
             "latest_source_at": None,
             "latest_training_at": None,
             "replayed_days": [],
@@ -184,3 +188,52 @@ def test_refresh_v3_training_examples_replays_missing_days() -> None:
 
     assert calls == [("2026-03-21", "2026-03-22")]
     assert payload["replayed_days"] == ["2026-03-21", "2026-03-22"]
+
+
+def test_assert_stage_completed_accepts_legacy_train_payload_without_status() -> None:
+    ml_trainer._assert_stage_completed(
+        stage="train_models",
+        payload={"trained_count": 1, "results": [{"route": "rings"}]},
+    )
+
+
+def test_assert_stage_completed_accepts_legacy_eval_payload_without_status() -> None:
+    ml_trainer._assert_stage_completed(
+        stage="evaluate_models",
+        payload={
+            "run_id": "run-1",
+            "summary": {"gate_passed": 1},
+            "metrics": {"global_fair_value_mdape": 0.21},
+        },
+    )
+
+
+def test_assert_stage_completed_rejects_missing_status_for_refresh_stage() -> None:
+    with pytest.raises(
+        RuntimeError, match="refresh_training_examples failed with missing status"
+    ):
+        ml_trainer._assert_stage_completed(
+            stage="refresh_training_examples",
+            payload={"trained_count": 1, "results": [{"route": "rings"}]},
+        )
+
+
+def test_assert_stage_completed_rejects_missing_status_for_malformed_train_payload() -> (
+    None
+):
+    with pytest.raises(RuntimeError, match="train_models failed with missing status"):
+        ml_trainer._assert_stage_completed(
+            stage="train_models", payload={"run_id": "run-1"}
+        )
+
+
+def test_assert_stage_completed_rejects_missing_status_for_malformed_eval_payload() -> (
+    None
+):
+    with pytest.raises(
+        RuntimeError, match="evaluate_models failed with missing status"
+    ):
+        ml_trainer._assert_stage_completed(
+            stage="evaluate_models",
+            payload={"run_id": "run-1", "route_rows": []},
+        )

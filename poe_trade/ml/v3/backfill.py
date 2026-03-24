@@ -24,6 +24,12 @@ class BackfillDayResult:
     training_examples_inserted: bool
 
 
+@dataclass(frozen=True)
+class _ChunkReplayError(Exception):
+    completed: list[BackfillDayResult]
+    remaining_days: list[date]
+
+
 def _query_rows(client: ClickHouseClient, query: str) -> list[dict[str, Any]]:
     payload = client.execute(query).strip()
     if not payload:
@@ -36,23 +42,71 @@ def _query_rows(client: ClickHouseClient, query: str) -> list[dict[str, Any]]:
     return rows
 
 
-def disk_usage_bytes(client: ClickHouseClient) -> int:
+def _quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def disk_usage_bytes(client: ClickHouseClient, *, fail_open: bool = False) -> int:
     try:
         rows = _query_rows(client, sql.disk_usage_query())
     except ClickHouseClientError:
-        return 0
+        if fail_open:
+            return 0
+        raise
     if not rows:
-        return 0
+        if fail_open:
+            return 0
+        raise ClickHouseClientError("disk telemetry unavailable")
     return int(rows[0].get("bytes_on_disk") or 0)
 
 
 def guard_disk_budget(client: ClickHouseClient, *, max_bytes: int) -> int:
-    current = disk_usage_bytes(client)
+    try:
+        current = disk_usage_bytes(client)
+    except ClickHouseClientError as exc:
+        raise ValueError("disk telemetry unavailable; aborting backfill") from exc
     if current > max(0, max_bytes):
         raise ValueError(
             f"disk budget exceeded: current={current} max={max_bytes}; aborting backfill"
         )
     return current
+
+
+def _clear_replay_day_slice(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    day: date,
+) -> None:
+    league_sql = _quote(league)
+    day_sql = _quote(day.isoformat())
+    client.execute(
+        " ".join(
+            [
+                "DELETE FROM poe_trade.silver_v3_item_events",
+                f"WHERE league = {league_sql}",
+                f"AND toDate(event_ts) = toDate({day_sql})",
+            ]
+        )
+    )
+    client.execute(
+        " ".join(
+            [
+                "DELETE FROM poe_trade.ml_v3_sale_proxy_labels",
+                f"WHERE league = {league_sql}",
+                f"AND toDate(as_of_ts) = toDate({day_sql})",
+            ]
+        )
+    )
+    client.execute(
+        " ".join(
+            [
+                "DELETE FROM poe_trade.ml_v3_training_examples",
+                f"WHERE league = {league_sql}",
+                f"AND toDate(as_of_ts) = toDate({day_sql})",
+            ]
+        )
+    )
 
 
 def replay_day(
@@ -63,6 +117,7 @@ def replay_day(
     max_bytes: int = 13_500_000_000,
 ) -> BackfillDayResult:
     guard_disk_budget(client, max_bytes=max_bytes)
+    _clear_replay_day_slice(client, league=league, day=day)
     client.execute(sql.build_events_insert_query(league=league, day=day))
     client.execute(sql.build_disappearance_events_insert_query(league=league, day=day))
     client.execute(sql.build_sale_proxy_labels_insert_query(league=league, day=day))
@@ -78,6 +133,46 @@ def replay_day(
     )
 
 
+def _replay_chunk_with_retry(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    days: list[date],
+    max_bytes: int,
+    max_retries: int,
+) -> list[BackfillDayResult]:
+    completed: list[BackfillDayResult] = []
+    for day in days:
+        attempt = 0
+        while True:
+            try:
+                completed.append(
+                    replay_day(
+                        client,
+                        league=league,
+                        day=day,
+                        max_bytes=max_bytes,
+                    )
+                )
+                break
+            except ClickHouseClientError as exc:
+                if attempt >= max_retries:
+                    remaining_days = days[len(completed) :]
+                    raise _ChunkReplayError(
+                        completed=completed,
+                        remaining_days=remaining_days,
+                    ) from exc
+                attempt += 1
+                logger.warning(
+                    "ml-v3 replay chunk retry league=%s day=%s attempt=%s error=%s",
+                    league,
+                    day.isoformat(),
+                    attempt,
+                    exc,
+                )
+    return completed
+
+
 def _parse_day(value: str) -> date:
     parsed = datetime.strptime(value, "%Y-%m-%d")
     return parsed.date()
@@ -90,33 +185,68 @@ def backfill_range(
     start_day: str,
     end_day: str,
     max_bytes: int = 13_500_000_000,
+    chunk_days: int = 1,
+    max_retries: int = 1,
 ) -> dict[str, Any]:
     start = _parse_day(start_day)
     end = _parse_day(end_day)
     if end < start:
         raise ValueError("end_day must be >= start_day")
+    if chunk_days < 1:
+        raise ValueError("chunk_days must be >= 1")
+    if max_retries < 0:
+        raise ValueError("max_retries must be >= 0")
 
     days = (end - start).days + 1
     cursor = start
     results: list[dict[str, Any]] = []
     while cursor <= end:
-        result = replay_day(
-            client,
-            league=league,
-            day=cursor,
-            max_bytes=max_bytes,
-        )
-        results.append(
-            {
-                "league": result.league,
-                "day": result.day,
-                "events_inserted": result.events_inserted,
-                "disappearance_events_inserted": result.disappearance_events_inserted,
-                "labels_inserted": result.labels_inserted,
-                "training_examples_inserted": result.training_examples_inserted,
-            }
-        )
-        cursor += timedelta(days=1)
+        chunk: list[date] = []
+        for _ in range(chunk_days):
+            if cursor > end:
+                break
+            chunk.append(cursor)
+            cursor += timedelta(days=1)
+        if not chunk:
+            break
+        try:
+            chunk_results = _replay_chunk_with_retry(
+                client,
+                league=league,
+                days=chunk,
+                max_bytes=max_bytes,
+                max_retries=max_retries,
+            )
+        except _ChunkReplayError as exc:
+            if len(chunk) == 1:
+                raise
+            logger.warning(
+                "ml-v3 replay chunk fallback to day-by-day league=%s days=%s",
+                league,
+                [day.isoformat() for day in exc.remaining_days],
+            )
+            chunk_results = list(exc.completed)
+            for day in exc.remaining_days:
+                chunk_results.extend(
+                    _replay_chunk_with_retry(
+                        client,
+                        league=league,
+                        days=[day],
+                        max_bytes=max_bytes,
+                        max_retries=max_retries,
+                    )
+                )
+        for result in chunk_results:
+            results.append(
+                {
+                    "league": result.league,
+                    "day": result.day,
+                    "events_inserted": result.events_inserted,
+                    "disappearance_events_inserted": result.disappearance_events_inserted,
+                    "labels_inserted": result.labels_inserted,
+                    "training_examples_inserted": result.training_examples_inserted,
+                }
+            )
 
     return {
         "league": league,
@@ -125,5 +255,5 @@ def backfill_range(
         "days_requested": days,
         "days_processed": len(results),
         "results": results,
-        "disk_bytes_after": disk_usage_bytes(client),
+        "disk_bytes_after": disk_usage_bytes(client, fail_open=True),
     }
