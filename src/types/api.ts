@@ -293,6 +293,7 @@ export interface StashTab {
   id: string;
   name: string;
   type: StashTabType;
+  returnedIndex?: number;
   items: PoeItem[];
   quadLayout?: boolean;
   currencyLayout?: SpecialLayout;

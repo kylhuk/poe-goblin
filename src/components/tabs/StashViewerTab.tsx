@@ -70,6 +70,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
   const [activeTab, setActiveTab] = useState<StashTab | null>(null);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [tabLoading, setTabLoading] = useState(false);
+  const [tabMismatch, setTabMismatch] = useState<string | null>(null);
   const [status, setStatus] = useState<StashStatus['status'] | 'loading' | 'degraded'>('loading');
   const [schemaOpen, setSchemaOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);

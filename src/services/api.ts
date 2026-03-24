@@ -778,6 +778,7 @@ function normalizeStashTab(raw: unknown): StashTab {
     id: optString(tab.id) ?? crypto.randomUUID(),
     name: optString(tab.name) ?? 'Tab',
     type: mappedType,
+    returnedIndex: optNumber(tab.index ?? tab.tabIndex ?? tab.tab_index),
     items: rawItems.map(normalizePoeItem),
     quadLayout: mappedType === 'quad' || (typeof tab.quadLayout === 'boolean' ? tab.quadLayout : Boolean(tab.quad_layout)),
     currencyLayout: (tab.currencyLayout ?? tab.currency_layout) as StashTab['currencyLayout'],
