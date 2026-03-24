@@ -280,6 +280,11 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
       {!error && status === 'feature_unavailable' && <RenderState kind="feature_unavailable" message="Stash feature unavailable" />}
       {!error && tabsMeta.length === 0 && !tab && status === 'connected_empty' && <RenderState kind="empty" message="Connected but stash is empty" />}
       {tabLoading && <RenderState kind="loading" message="Loading tab..." />}
+      {tabMismatch && (
+        <div className="rounded border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning" data-testid="tab-mismatch-warning">
+          ⚠ {tabMismatch}
+        </div>
+      )}
       {/* Grid / Special layout rendering */}
       {tab && specialLayout && (
         <SpecialLayoutGrid items={tab.items} layout={specialLayout} />
