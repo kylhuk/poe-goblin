@@ -1,5 +1,6 @@
-import type { PoeItem, StashTabMeta } from '@/types/api';
+import type { PoeItem, StashTabMeta, StashItemHistoryEntry } from '@/types/api';
 import { api } from './api';
+import type { SparklinePoint } from '@/components/economy/PriceSparkline';
 
 const CACHE_KEY_PREFIX = 'stash-cache-';
 
