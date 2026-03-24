@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from io import BytesIO
 from threading import Event
 from typing import cast
@@ -456,7 +457,7 @@ def test_stash_scan_start_route_returns_async_scan_payload(
     assert body["accountName"] == "qa-exile"
 
 
-def test_stash_scan_start_route_rejects_invalid_poe_session(
+def test_stash_scan_start_route_rejects_missing_oauth_token_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -473,24 +474,17 @@ def test_stash_scan_start_route_rejects_invalid_poe_session(
         ),
     )
     monkeypatch.setattr(
-        "poe_trade.api.app.load_credential_state",
-        lambda _settings: {
-            "account_name": "qa-exile",
-            "poe_session_id": "POESESSID-123",
-        },
+        "poe_trade.api.app.load_oauth_token_state",
+        lambda _settings, *, account_name: None,
+    )
+    monkeypatch.setattr(
+        api_app_module,
+        "load_credential_state",
+        mock.Mock(side_effect=AssertionError("legacy credential state path used")),
     )
     monkeypatch.setattr(
         "poe_trade.stash_scan.fetch_active_scan", lambda *_args, **_kwargs: None
     )
-
-    def _raise_invalid(_settings, *, poe_session_id):
-        raise api_app_module.AccountResolutionError(
-            "invalid POESESSID or account profile unavailable",
-            code="invalid_poe_session",
-            status=400,
-        )
-
-    monkeypatch.setattr("poe_trade.api.app.resolve_account_name", _raise_invalid)
     app = ApiApp(
         _settings_with_stash_enabled(),
         clickhouse_client=ClickHouseClient(endpoint="http://ch"),
@@ -504,8 +498,195 @@ def test_stash_scan_start_route_rejects_invalid_poe_session(
             body_reader=BytesIO(b""),
         )
 
-    assert exc.value.status == 400
-    assert exc.value.code == "invalid_poe_session"
+    assert exc.value.status == 401
+    assert exc.value.code == "auth_required"
+
+
+def test_start_private_stash_scan_uses_oauth_token_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token_state = {
+        "account_name": "qa-exile",
+        "access_token": "access-token",
+        "refresh_token": "refresh-token",
+        "token_type": "bearer",
+        "scope": "account:profile account:stashes",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "updated_at": "2026-03-24T00:00:00Z",
+        "status": "connected",
+    }
+    started = Event()
+    release = Event()
+    finished = Event()
+    bearer_tokens: list[str | None] = []
+    runs: list[tuple[str | None, str | None]] = []
+
+    monkeypatch.setattr(
+        api_app_module,
+        "load_oauth_token_state",
+        lambda _settings, *, account_name: (
+            token_state if account_name == "qa-exile" else None
+        ),
+    )
+    monkeypatch.setattr(
+        api_app_module,
+        "load_credential_state",
+        mock.Mock(side_effect=AssertionError("legacy credential state path used")),
+    )
+    monkeypatch.setattr(
+        api_app_module,
+        "_refresh_oauth_token_state",
+        mock.Mock(side_effect=AssertionError("refresh not expected")),
+    )
+    monkeypatch.setattr(
+        "poe_trade.stash_scan.fetch_active_scan", lambda *_args, **_kwargs: None
+    )
+
+    class _DummyPoeClient:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+        def set_bearer_token(self, _token: str | None) -> None:
+            return None
+
+        def set_bearer_token(self, _token: str | None) -> None:
+            return None
+
+        def set_bearer_token(self, _token: str | None) -> None:
+            return None
+
+        def set_bearer_token(self, _token: str | None) -> None:
+            return None
+
+        def set_bearer_token(self, token: str | None) -> None:
+            bearer_tokens.append(token)
+
+    class _DummyStatusReporter:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+    class _DummyHarvester:
+        def __init__(self, *_args, **kwargs):
+            assert kwargs.get("access_token") == "access-token"
+            assert callable(kwargs.get("refresh_access_token"))
+            return None
+
+        def run_private_scan(self, **kwargs):
+            runs.append((kwargs.get("scan_id"), kwargs.get("started_at")))
+            started.set()
+            release.wait(timeout=5)
+            finished.set()
+            return {"scanId": kwargs.get("scan_id"), "status": "published"}
+
+    monkeypatch.setattr(api_app_module, "PoeClient", _DummyPoeClient)
+    monkeypatch.setattr(api_app_module, "StatusReporter", _DummyStatusReporter)
+    monkeypatch.setattr(api_app_module, "AccountStashHarvester", _DummyHarvester)
+
+    settings = _settings_with_stash_enabled()
+    clickhouse = ClickHouseClient(endpoint="http://ch")
+    first = api_app_module.start_private_stash_scan(
+        settings,
+        clickhouse,
+        account_name="qa-exile",
+        league="Mirage",
+        realm="pc",
+    )
+    assert started.wait(timeout=5)
+    release.set()
+    assert finished.wait(timeout=5)
+
+    assert first["scanId"]
+    assert bearer_tokens == ["access-token"]
+    assert len(runs) == 1
+
+
+def test_start_private_stash_scan_refreshes_near_expiry_oauth_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token_state = {
+        "account_name": "qa-exile",
+        "access_token": "stale-token",
+        "refresh_token": "refresh-token",
+        "token_type": "bearer",
+        "scope": "account:profile account:stashes",
+        "expires_at": "2026-03-24T12:04:59Z",
+        "updated_at": "2026-03-24T12:00:00Z",
+        "status": "connected",
+    }
+    refreshed_state = {
+        **token_state,
+        "access_token": "fresh-token",
+        "expires_at": "2026-03-24T12:59:59Z",
+        "updated_at": "2026-03-24T12:00:00Z",
+    }
+    bearer_tokens: list[str | None] = []
+    refreshes: list[dict[str, str]] = []
+    finished = Event()
+
+    monkeypatch.setattr(
+        api_app_module,
+        "_utcnow",
+        lambda: datetime(2026, 3, 24, 12, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        api_app_module,
+        "load_oauth_token_state",
+        lambda _settings, *, account_name: (
+            token_state if account_name == "qa-exile" else None
+        ),
+    )
+    monkeypatch.setattr(
+        api_app_module,
+        "load_credential_state",
+        mock.Mock(side_effect=AssertionError("legacy credential state path used")),
+    )
+    monkeypatch.setattr(
+        api_app_module,
+        "_refresh_oauth_token_state",
+        lambda _settings, state: refreshes.append(dict(state)) or refreshed_state,
+    )
+    monkeypatch.setattr(
+        "poe_trade.stash_scan.fetch_active_scan", lambda *_args, **_kwargs: None
+    )
+
+    class _DummyPoeClient:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+        def set_bearer_token(self, token: str | None) -> None:
+            bearer_tokens.append(token)
+
+    class _DummyStatusReporter:
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+    class _DummyHarvester:
+        def __init__(self, *_args, **kwargs):
+            assert kwargs.get("access_token") == "fresh-token"
+            return None
+
+        def run_private_scan(self, **kwargs):
+            finished.set()
+            return {"scanId": kwargs.get("scan_id"), "status": "published"}
+
+    monkeypatch.setattr(api_app_module, "PoeClient", _DummyPoeClient)
+    monkeypatch.setattr(api_app_module, "StatusReporter", _DummyStatusReporter)
+    monkeypatch.setattr(api_app_module, "AccountStashHarvester", _DummyHarvester)
+
+    settings = _settings_with_stash_enabled()
+    clickhouse = ClickHouseClient(endpoint="http://ch")
+    result = api_app_module.start_private_stash_scan(
+        settings,
+        clickhouse,
+        account_name="qa-exile",
+        league="Mirage",
+        realm="pc",
+    )
+    assert finished.wait(timeout=5)
+
+    assert result["scanId"]
+    assert refreshes == [token_state]
+    assert bearer_tokens == ["fresh-token"]
 
 
 def test_stash_scan_status_route_returns_progress_payload(
@@ -620,15 +801,27 @@ def test_start_private_stash_scan_deduplicates_pending_run(
 ) -> None:
     started = Event()
     release = Event()
+    finished = Event()
     runs: list[tuple[str | None, str | None]] = []
 
     monkeypatch.setattr(
         api_app_module,
-        "load_credential_state",
-        lambda _settings: {
-            "account_name": "qa-exile",
-            "poe_session_id": "POESESSID-123",
+        "load_oauth_token_state",
+        lambda _settings, *, account_name: {
+            "account_name": account_name,
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+            "token_type": "bearer",
+            "scope": "account:profile account:stashes",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "updated_at": "2026-03-24T00:00:00Z",
+            "status": "connected",
         },
+    )
+    monkeypatch.setattr(
+        api_app_module,
+        "load_credential_state",
+        mock.Mock(side_effect=AssertionError("legacy credential state path used")),
     )
     monkeypatch.setattr(
         "poe_trade.stash_scan.fetch_active_scan", lambda *_args, **_kwargs: None
@@ -636,6 +829,9 @@ def test_start_private_stash_scan_deduplicates_pending_run(
 
     class _DummyPoeClient:
         def __init__(self, *_args, **_kwargs):
+            return None
+
+        def set_bearer_token(self, _token: str | None) -> None:
             return None
 
     class _DummyStatusReporter:
@@ -650,16 +846,12 @@ def test_start_private_stash_scan_deduplicates_pending_run(
             runs.append((kwargs.get("scan_id"), kwargs.get("started_at")))
             started.set()
             release.wait(timeout=5)
+            finished.set()
             return {"scanId": kwargs.get("scan_id"), "status": "published"}
 
     monkeypatch.setattr(api_app_module, "PoeClient", _DummyPoeClient)
     monkeypatch.setattr(api_app_module, "StatusReporter", _DummyStatusReporter)
     monkeypatch.setattr(api_app_module, "AccountStashHarvester", _DummyHarvester)
-    monkeypatch.setattr(
-        api_app_module,
-        "resolve_account_name",
-        lambda _settings, *, poe_session_id: "qa-exile",
-    )
 
     settings = _settings_with_stash_enabled()
     clickhouse = ClickHouseClient(endpoint="http://ch")
@@ -679,6 +871,7 @@ def test_start_private_stash_scan_deduplicates_pending_run(
         realm="pc",
     )
     release.set()
+    assert finished.wait(timeout=5)
 
     assert first["scanId"] == second["scanId"]
     assert second["status"] == "running"

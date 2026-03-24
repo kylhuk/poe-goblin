@@ -4,11 +4,14 @@ import json
 import logging
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BufferedIOBase
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections.abc import Mapping
 from typing import cast
+import urllib.error
+import urllib.parse
+import urllib.request
 from urllib.parse import parse_qs, urlparse
 
 from poe_trade.config import settings as config_settings
@@ -17,17 +20,19 @@ from poe_trade.db import ClickHouseClient
 
 from .auth import cors_headers, parse_bearer_token, validate_bearer_token
 from .auth_session import (
-    AccountResolutionError,
     OAuthExchangeError,
     authorize_redirect,
-    build_private_stash_cookie_header,
     clear_session,
     clear_credential_state,
+    clear_oauth_token_state,
     create_session,
     begin_login,
+    load_credential_state,
+    load_oauth_token_state,
     get_session,
     exchange_oauth_code,
-    resolve_account_name,
+    has_connected_session_for_account,
+    save_oauth_token_state,
 )
 from .ml import (
     BackendUnavailable,
@@ -87,6 +92,133 @@ _STASH_SCAN_START_LOCK = threading.Lock()
 _PENDING_STASH_SCANS: dict[tuple[str, str, str], dict[str, object]] = {}
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_iso_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _oauth_token_needs_refresh(token_state: Mapping[str, object]) -> bool:
+    expires_at = _parse_iso_datetime(str(token_state.get("expires_at") or ""))
+    if expires_at is None:
+        return True
+    return expires_at - _utcnow() <= timedelta(seconds=300)
+
+
+def _refresh_oauth_token_state(
+    settings: Settings,
+    token_state: Mapping[str, object],
+) -> dict[str, object]:
+    account_name = str(token_state.get("account_name") or "").strip()
+    refresh_token = str(token_state.get("refresh_token") or "").strip()
+    if not account_name or not refresh_token:
+        raise ApiError(
+            status=401,
+            code="auth_required",
+            message="oauth session required",
+        )
+
+    payload = {
+        "client_id": settings.oauth_client_id,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "scope": str(token_state.get("scope") or settings.poe_account_oauth_scope),
+    }
+    if settings.oauth_client_secret.strip():
+        payload["client_secret"] = settings.oauth_client_secret
+
+    request = urllib.request.Request(
+        settings.poe_account_oauth_token_url,
+        data=urllib.parse.urlencode(payload).encode("utf-8"),
+        headers={
+            "Accept": "application/json",
+            "User-Agent": settings.poe_user_agent,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(
+            request, timeout=settings.poe_request_timeout
+        ) as resp:
+            response_body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        response_body = exc.read().decode("utf-8", errors="ignore")
+        raise ApiError(
+            status=502,
+            code="oauth_refresh_failed",
+            message=response_body or "oauth token refresh failed",
+        ) from None
+    except urllib.error.URLError as exc:
+        raise ApiError(
+            status=502,
+            code="oauth_refresh_unavailable",
+            message="oauth token endpoint unavailable",
+        ) from exc
+
+    try:
+        response_payload = json.loads(response_body)
+    except json.JSONDecodeError as exc:
+        raise ApiError(
+            status=502,
+            code="oauth_refresh_failed",
+            message="invalid oauth token response",
+        ) from exc
+    if not isinstance(response_payload, dict):
+        raise ApiError(
+            status=502,
+            code="oauth_refresh_failed",
+            message="invalid oauth token response",
+        )
+    access_token = str(response_payload.get("access_token") or "").strip()
+    if not access_token:
+        raise ApiError(
+            status=502,
+            code="oauth_refresh_failed",
+            message="oauth token response missing access token",
+        )
+    refresh_value = str(response_payload.get("refresh_token") or refresh_token).strip()
+    token_type = (
+        str(
+            response_payload.get("token_type")
+            or token_state.get("token_type")
+            or "bearer"
+        ).strip()
+        or "bearer"
+    )
+    scope = str(
+        response_payload.get("scope")
+        or token_state.get("scope")
+        or settings.poe_account_oauth_scope
+    ).strip()
+    expires_in = response_payload.get("expires_in")
+    try:
+        expires_seconds = int(expires_in) if expires_in is not None else 1800
+    except (TypeError, ValueError):
+        expires_seconds = 1800
+    expires_at = (
+        (_utcnow() + timedelta(seconds=max(expires_seconds, 0)))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    return save_oauth_token_state(
+        settings,
+        account_name=account_name,
+        access_token=access_token,
+        refresh_token=refresh_value,
+        token_type=token_type,
+        scope=scope,
+        expires_at=expires_at,
+        status=str(token_state.get("status") or "connected"),
+    )
+
+
 def _scan_price_item_factory(clickhouse_client: ClickHouseClient, *, league: str):
     def _price_item(item: dict[str, object]) -> dict[str, object]:
         from poe_trade.stash_scan import serialize_stash_item_to_clipboard
@@ -135,31 +267,23 @@ def start_private_stash_scan(
                 "deduplicated": True,
             }
 
-        credential_state = load_credential_state(settings)
-        poe_session_id = str(credential_state.get("poe_session_id") or "").strip()
-        cf_clearance = str(credential_state.get("cf_clearance") or "").strip()
-        credential_account = str(credential_state.get("account_name") or "").strip()
-        if not poe_session_id or credential_account != account_name:
+        token_state = load_oauth_token_state(settings, account_name=account_name)
+        if token_state is None:
             raise ApiError(
                 status=401,
                 code="auth_required",
-                message="session required",
+                message="oauth session required",
             )
-        try:
-            resolved_account = resolve_account_name(
-                settings, poe_session_id=poe_session_id
-            )
-        except AccountResolutionError as exc:
+
+        if _oauth_token_needs_refresh(token_state):
+            token_state = _refresh_oauth_token_state(settings, token_state)
+
+        access_token = str(token_state.get("access_token") or "").strip()
+        if not access_token:
             raise ApiError(
-                status=exc.status,
-                code=exc.code,
-                message=str(exc),
-            ) from None
-        if resolved_account != account_name:
-            raise ApiError(
-                status=400,
-                code="invalid_poe_session",
-                message="invalid POESESSID or account profile unavailable",
+                status=401,
+                code="auth_required",
+                message="oauth session required",
             )
 
         policy = RateLimitPolicy(
@@ -174,6 +298,15 @@ def start_private_stash_scan(
             settings.poe_user_agent,
             settings.poe_request_timeout,
         )
+        poe_client.set_bearer_token(access_token)
+
+        def _refresh_access_token() -> str:
+            nonlocal token_state
+            token_state = _refresh_oauth_token_state(settings, token_state)
+            refreshed_access_token = str(token_state.get("access_token") or "").strip()
+            poe_client.set_bearer_token(refreshed_access_token or None)
+            return refreshed_access_token
+
         reporter = StatusReporter(clickhouse_client, "account_stash_harvester")
         harvester = AccountStashHarvester(
             poe_client,
@@ -181,12 +314,8 @@ def start_private_stash_scan(
             reporter,
             service_name="account_stash_harvester",
             account_name=account_name,
-            request_headers={
-                "Cookie": build_private_stash_cookie_header(
-                    poe_session_id=poe_session_id,
-                    cf_clearance=cf_clearance,
-                )
-            },
+            access_token=access_token,
+            refresh_access_token=_refresh_access_token,
         )
 
         scan_id = uuid.uuid4().hex
@@ -1099,12 +1228,38 @@ class ApiApp:
             exchange = exchange_oauth_code(self.settings, code=code, state=state)
         except OAuthExchangeError as exc:
             raise ApiError(status=exc.status, code=exc.code, message=str(exc)) from None
+        if not exchange.access_token.strip():
+            raise ApiError(
+                status=502,
+                code="oauth_missing_access_token",
+                message="oauth token response missing access token",
+            )
 
         existing_session_id = _session_cookie_from_headers(
             _headers_from_context(context),
             cookie_name=self.settings.auth_cookie_name,
         )
         clear_session(self.settings, session_id=existing_session_id)
+        expires_at = ""
+        if exchange.expires_in is not None:
+            expires_at = (
+                (
+                    datetime.now(timezone.utc)
+                    + timedelta(seconds=max(exchange.expires_in, 0))
+                )
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+        _ = save_oauth_token_state(
+            self.settings,
+            account_name=exchange.account_name,
+            access_token=exchange.access_token,
+            refresh_token=exchange.refresh_token,
+            token_type=exchange.token_type,
+            scope=exchange.scope,
+            expires_at=expires_at,
+            status="connected",
+        )
         session = create_session(self.settings, account_name=exchange.account_name)
         cookie = _session_set_cookie(
             self.settings.auth_cookie_name,
@@ -1163,8 +1318,25 @@ class ApiApp:
             _headers_from_context(context),
             cookie_name=self.settings.auth_cookie_name,
         )
+        session = get_session(self.settings, session_id=session_id)
         clear_session(self.settings, session_id=session_id)
-        _ = clear_credential_state(self.settings)
+        account_name = str(session.get("account_name") or "") if session else ""
+        should_clear_account_state = (
+            account_name
+            and not has_connected_session_for_account(
+                self.settings,
+                account_name=account_name,
+                exclude_session_id=session_id,
+            )
+        )
+        if should_clear_account_state:
+            clear_oauth_token_state(self.settings, account_name=account_name)
+        credential_state = load_credential_state(self.settings)
+        credential_account_name = str(credential_state.get("account_name") or "")
+        if (not account_name and not credential_account_name) or (
+            should_clear_account_state and credential_account_name == account_name
+        ):
+            _ = clear_credential_state(self.settings)
         clear_cookie = _session_clear_cookie(
             self.settings.auth_cookie_name,
             secure=self.settings.auth_cookie_secure,
