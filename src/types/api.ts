@@ -345,12 +345,21 @@ export interface StashScanStartResponse {
   deduplicated?: boolean;
 }
 
+export interface StashTabMeta {
+  id: string;
+  tabIndex: number;
+  name: string;
+  type: string;
+}
+
 export interface StashTabsResponse {
   scanId: string | null;
   publishedAt: string | null;
   isStale: boolean;
   scanStatus: StashScanStatus | null;
   stashTabs: StashTab[];
+  tabsMeta: StashTabMeta[];
+  numTabs: number;
 }
 
 export interface StashItemHistoryEntry {
@@ -605,6 +614,6 @@ export interface ApiService {
   startStashScan(): Promise<StashScanStartResponse>;
   getStashScanStatus(): Promise<StashScanStatus>;
   getStashItemHistory(fingerprint: string): Promise<StashItemHistoryResponse>;
-  getStashTabs(): Promise<StashTabsResponse>;
+  getStashTabs(tabIndex?: number): Promise<StashTabsResponse>;
   getMessages(): Promise<AppMessage[]>;
 }

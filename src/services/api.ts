@@ -27,6 +27,7 @@ import type {
   StashScanStartResponse,
   StashScanStatus,
   StashStatus,
+  StashTabMeta,
   StashTabsResponse,
   PoeItem,
   StashTab,
@@ -793,10 +794,25 @@ function normalizeStashTab(raw: unknown): StashTab {
   };
 }
 
+function normalizeTabsMeta(rawTabs: unknown[]): StashTabMeta[] {
+  return rawTabs.map((entry) => {
+    const t = asObject(entry);
+    return {
+      id: optString(t.id) ?? '',
+      tabIndex: optNumber(t.tab_index ?? t.tabIndex ?? t.index) ?? 0,
+      name: optString(t.name) ?? 'Tab',
+      type: optString(t.type) ?? 'NormalStash',
+    };
+  });
+}
+
 function normalizeStashTabsResponse(payload: unknown): StashTabsResponse {
   const source = asObject(payload);
+  const rawTabsMeta = Array.isArray(source.tabs) ? source.tabs as unknown[] : [];
+  const tabsMeta = normalizeTabsMeta(rawTabsMeta);
+  const numTabs = optNumber(source.numTabs ?? source.num_tabs) ?? tabsMeta.length;
 
-  // New raw PoE schema: { stash: {single tab object}, tabs: [], items: [], numTabs: 0 }
+  // New raw PoE schema: { stash: {single tab object}, tabs: [...], numTabs }
   if (source.stash && typeof source.stash === 'object' && !Array.isArray(source.stash)) {
     const tab = normalizeStashTab(source.stash);
     return {
@@ -805,6 +821,8 @@ function normalizeStashTabsResponse(payload: unknown): StashTabsResponse {
       isStale: false,
       scanStatus: null,
       stashTabs: [tab],
+      tabsMeta,
+      numTabs,
     };
   }
 
@@ -817,6 +835,8 @@ function normalizeStashTabsResponse(payload: unknown): StashTabsResponse {
     isStale: typeof source.isStale === 'boolean' ? source.isStale : Boolean(source.is_stale),
     scanStatus: (source.scanStatus ?? source.scan_status) as StashTabsResponse['scanStatus'],
     stashTabs: rawTabs.map(normalizeStashTab),
+    tabsMeta,
+    numTabs,
   };
 }
 
@@ -1163,10 +1183,11 @@ export const api: ApiService = {
     return normalizeMlPredictOneResponse(payload);
   },
 
-  async getStashTabs() {
+  async getStashTabs(tabIndex?: number) {
     const league = await primaryLeague();
+    const tabParam = tabIndex != null ? `&tabIndex=${tabIndex}` : '';
     const payload = await request<unknown>(
-      `/api/v1/stash/tabs?league=${encodeURIComponent(league)}&realm=pc`
+      `/api/v1/stash/tabs?league=${encodeURIComponent(league)}&realm=pc${tabParam}`
     );
     return normalizeStashTabsResponse(payload);
   },

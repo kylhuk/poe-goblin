@@ -10,6 +10,7 @@ import type {
   StashScanStatus,
   StashStatus,
   StashTab,
+  StashTabMeta,
   PriceEvaluation,
   SpecialLayout,
 } from '@/types/api';
@@ -65,9 +66,11 @@ function getSpecialLayout(tab: StashTab): SpecialLayout | null {
 }
 
 const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(function StashViewerTab(_props, ref) {
-  const [tabs, setTabs] = useState<StashTab[]>([]);
+  const [tabsMeta, setTabsMeta] = useState<StashTabMeta[]>([]);
+  const [activeTab, setActiveTab] = useState<StashTab | null>(null);
+  const [activeTabIndex, setActiveTabIndex] = useState(0);
+  const [tabLoading, setTabLoading] = useState(false);
   const [status, setStatus] = useState<StashStatus['status'] | 'loading' | 'degraded'>('loading');
-  const [activeTab, setActiveTab] = useState(0);
   const [schemaOpen, setSchemaOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [publishedScanId, setPublishedScanId] = useState<string | null>(null);
@@ -78,6 +81,26 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyPayload, setHistoryPayload] = useState<StashItemHistoryResponse | null>(null);
 
+  const loadTab = useCallback(async (tabIndex: number) => {
+    setTabLoading(true);
+    try {
+      const payload = await api.getStashTabs(tabIndex);
+      if (payload.stashTabs.length > 0) {
+        setActiveTab(payload.stashTabs[0]);
+      } else {
+        setActiveTab(null);
+      }
+      // Update tabsMeta if returned (first load or refresh)
+      if (payload.tabsMeta.length > 0) {
+        setTabsMeta(payload.tabsMeta);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to load tab');
+    } finally {
+      setTabLoading(false);
+    }
+  }, []);
+
   const loadPublished = useCallback(async () => {
     const stashStatus = await api.getStashStatus();
     setStatus(stashStatus.status);
@@ -85,20 +108,24 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
     setPublishedAt(stashStatus.publishedAt ?? null);
     setScanStatus(stashStatus.scanStatus ?? EMPTY_SCAN_STATUS);
     if (stashStatus.connected) {
-      const payload = await api.getStashTabs();
-      setTabs(payload.stashTabs);
+      const payload = await api.getStashTabs(activeTabIndex);
+      if (payload.tabsMeta.length > 0) {
+        setTabsMeta(payload.tabsMeta);
+      }
+      if (payload.stashTabs.length > 0) {
+        setActiveTab(payload.stashTabs[0]);
+      }
       setPublishedScanId(payload.scanId ?? stashStatus.publishedScanId ?? null);
       setPublishedAt(payload.publishedAt ?? stashStatus.publishedAt ?? null);
       if (payload.scanStatus) {
         setScanStatus(payload.scanStatus);
       }
-      setActiveTab((current) => (payload.stashTabs[current] ? current : 0));
     } else {
-      setTabs([]);
-      setActiveTab(0);
+      setActiveTab(null);
+      setTabsMeta([]);
     }
     setError(null);
-  }, []);
+  }, [activeTabIndex]);
 
   useEffect(() => {
     loadPublished().catch((err: unknown) => {
@@ -181,13 +208,12 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
     return () => clearInterval(iv);
   }, [loadPublished]);
 
-  const tab = tabs[activeTab];
+  const tab = activeTab;
   const specialLayout = tab ? getSpecialLayout(tab) : null;
   const isGrid = tab && !specialLayout;
   const gridSize = (() => {
     if (!tab) return 12;
     if (tab.quadLayout || tab.type === 'quad') return 24;
-    // Auto-detect from item positions
     const maxCoord = tab.items.reduce((max, item) => Math.max(max, item.x + item.w, item.y + item.h), 0);
     return maxCoord > 12 ? 24 : 12;
   })();
@@ -216,22 +242,25 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
         </Button>
       </div>
 
-      <div className="flex items-end gap-0">
-        {tabs.map((t, i) => (
+      <div className="flex items-end gap-0 flex-wrap">
+        {tabsMeta.map((t, i) => (
           <button
             type="button"
             data-testid={`stash-tab-${t.id}`}
             key={t.id}
-            onClick={() => setActiveTab(i)}
+            onClick={() => {
+              setActiveTabIndex(t.tabIndex);
+              loadTab(t.tabIndex);
+            }}
             className={cn(
               'px-4 py-1.5 text-xs font-display tracking-wide border border-b-0 transition-all relative -mb-px',
-              i === activeTab
+              t.tabIndex === activeTabIndex
                 ? 'bg-gold-dim/30 text-gold-bright border-gold-dim z-10'
                 : 'bg-card text-muted-foreground border-gold-dim/30 hover:text-gold hover:bg-gold-dim/10'
             )}
           >
             {t.name}
-            {t.type === 'quad' && <span className="ml-1 text-[9px] opacity-50">(Q)</span>}
+            {t.type === 'QuadStash' && <span className="ml-1 text-[9px] opacity-50">(Q)</span>}
           </button>
         ))}
       </div>
@@ -241,7 +270,8 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
       {!error && status === 'disconnected' && <RenderState kind="disconnected" message="Connect account to view stash" />}
       {!error && status === 'session_expired' && <RenderState kind="session_expired" message="Session expired, login again" />}
       {!error && status === 'feature_unavailable' && <RenderState kind="feature_unavailable" message="Stash feature unavailable" />}
-      {!error && tabs.length === 0 && status === 'connected_empty' && <RenderState kind="empty" message="Connected but stash is empty" />}
+      {!error && tabsMeta.length === 0 && !tab && status === 'connected_empty' && <RenderState kind="empty" message="Connected but stash is empty" />}
+      {tabLoading && <RenderState kind="loading" message="Loading tab..." />}
       {/* Grid / Special layout rendering */}
       {tab && specialLayout && (
         <SpecialLayoutGrid items={tab.items} layout={specialLayout} />
