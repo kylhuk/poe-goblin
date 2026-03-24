@@ -27,6 +27,7 @@ import type {
   StashScanStartResponse,
   StashScanStatus,
   StashStatus,
+  StashTabMeta,
   StashTabsResponse,
   PoeItem,
   StashTab,
