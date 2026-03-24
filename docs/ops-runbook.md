@@ -44,6 +44,21 @@
 - `ml_trainer` now always runs the single pricing pipeline; use the automation status/history APIs to watch stage progress and evaluation trends.
 - Raw retention contract: never drop `poe_trade.raw_*`; if replay data is wrong, rebuild derived `silver_v3_*` / `ml_v3_*` from raw.
 
+## Cohort pricing checks (implemented)
+- Cohort evaluation writes to `poe_trade.ml_v3_cohort_eval`; verify latest run coverage and quality slices with: `clickhouse-client --query "SELECT run_id, strategy_family, cohort_key, sample_count, fair_value_mdape, fast_sale_24h_hit_rate, confidence_calibration_error, recorded_at FROM poe_trade.ml_v3_cohort_eval WHERE league='Mirage' ORDER BY recorded_at DESC LIMIT 20"`.
+- Verify global promotion gate state from run-level records with: `clickhouse-client --query "SELECT run_id, gate_passed, gate_reason, global_fair_value_mdape, global_fast_sale_24h_hit_rate, global_confidence_calibration_error, recorded_at FROM poe_trade.ml_v3_eval_runs WHERE league='Mirage' ORDER BY recorded_at DESC LIMIT 10"`.
+- Verify promotion verdict history with: `clickhouse-client --query "SELECT candidate_run_id, verdict, stop_reason, candidate_model_version, incumbent_model_version, recorded_at FROM poe_trade.ml_v3_promotion_audit WHERE league='Mirage' ORDER BY recorded_at DESC LIMIT 10"`.
+- Verify currently promoted serving bundles with: `clickhouse-client --query "SELECT route, model_version, promoted, promoted_at FROM poe_trade.ml_v3_model_registry WHERE league='Mirage' AND promoted=1 ORDER BY promoted_at DESC LIMIT 20"`.
+- Verify API-visible promotion state with: `curl -i -H "Authorization: Bearer $POE_API_OPERATOR_TOKEN" "http://127.0.0.1:8080/api/v1/ml/leagues/Mirage/automation/status"` and check `promotionVerdict` plus `activeModelVersion`.
+
+## Rollback verification path (implemented)
+- After rollback, verify deterministic evidence shape and rollback marker with: `.venv/bin/python scripts/verify_ml_deterministic_pack.py --evidence-root .sisyphus/evidence --output-log .sisyphus/evidence/task-12-deterministic-pack.log --required task-10-promotion-gates.json task-11-rollout-rollback.json`.
+- Confirm rollback action marker is present with: `rg -n '"lastAction"\s*:\s*"rollback_to_incumbent"' .sisyphus/evidence/task-11-rollout-rollback.json`.
+
+## Rollout control surface (planned/non-runtime)
+- The runbook consumes rollout artifacts (`task-11-rollout-cutover.json`, `task-11-rollout-rollback.json`) as evidence inputs; this branch does not expose a dedicated `poe-ledger-cli` rollout toggle command.
+- Keep rollout/cutover decisions in the deterministic evidence gate flow (`scripts/verify_ml_deterministic_pack.py`, `scripts/final_release_gate.py`) until a first-class runtime control endpoint is added.
+
 ## Mod-rollup governance (32GB shared host)
 - Baseline evidence must exist at `.sisyphus/evidence/task-1-baseline-shared-host.json` before any rollup cutover decision.
 - Shadow parity evidence must exist at `.sisyphus/evidence/task-5-shadow-read.json`; strict-order diagnostics can be inspected at `.sisyphus/evidence/task-5-shadow-read-strict.json`.

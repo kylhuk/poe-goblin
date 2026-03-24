@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from typing import Any
 
 import json
@@ -21,6 +22,7 @@ class SearchResult:
 
 _DEFAULT_STAGE_SUPPORT_TARGETS = {1: 8, 2: 12, 3: 18, 4: 24}
 _MAX_CANDIDATES = 64
+_DEFAULT_LATENCY_BUDGET_MS = 150
 _RECENCY_WINDOW_DAYS = 14
 
 _SEARCH_WEIGHTS = {
@@ -184,11 +186,14 @@ def _parse_row_datetime(raw: Any) -> datetime | None:
     return parsed
 
 
-def _recency_score(raw_ts: Any) -> float:
+def _recency_score(raw_ts: Any, *, now_utc: datetime | None = None) -> float:
     parsed = _parse_row_datetime(raw_ts)
     if parsed is None:
         return 0.0
-    age = datetime.now(UTC) - parsed
+    effective_now = now_utc or datetime.now(UTC)
+    if effective_now.tzinfo is None:
+        effective_now = effective_now.replace(tzinfo=UTC)
+    age = effective_now - parsed
     if age <= timedelta(0):
         return 1.0
     age_days = age.total_seconds() / (24.0 * 3600.0)
@@ -227,6 +232,160 @@ def _sort_identity(item: Mapping[str, Any]) -> tuple:
     observed = _parse_row_datetime(_row_field(item, "as_of_ts", "candidate_as_of_ts"))
     observed_at = int(observed.timestamp()) if observed is not None else 0
     return (-float(item.get("score", 0.0) or 0.0), -observed_at, identity)
+
+
+def _sort_row_identity(item: Mapping[str, Any]) -> tuple:
+    identity = str(
+        _row_field(item, "identity_key", "candidate_identity_key", "identity") or ""
+    )
+    observed = _parse_row_datetime(_row_field(item, "as_of_ts", "candidate_as_of_ts"))
+    observed_at = int(observed.timestamp()) if observed is not None else 0
+    return (identity, -observed_at)
+
+
+def _state_key_from_material_signature(signature: str) -> str | None:
+    normalized = _normalize_text(signature)
+    if not normalized.startswith("v1|"):
+        return None
+    parts = normalized.split("|")
+    values: dict[str, str] = {}
+    for token in parts[1:]:
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        values[key] = value
+
+    rarity = values.get("rarity")
+    corrupted = values.get("corrupted")
+    fractured = values.get("fractured")
+    synthesised = values.get("synthesised")
+    if not all([rarity, corrupted, fractured, synthesised]):
+        return None
+    return f"{rarity}|corrupted={corrupted}|fractured={fractured}|synthesised={synthesised}"
+
+
+def _material_state_compatible(
+    row: Mapping[str, Any],
+    *,
+    target_material_state_signature: str,
+    target_item_state_key: str,
+) -> bool:
+    row_material_state_signature = _normalize_text(
+        _row_field(
+            row, "material_state_signature", "candidate_material_state_signature"
+        )
+    )
+    row_item_state_key = _normalize_text(
+        _row_field(row, "item_state_key", "candidate_item_state_key")
+    )
+
+    if target_material_state_signature and not row_material_state_signature:
+        return False
+    if (
+        target_item_state_key
+        and not row_item_state_key
+        and not row_material_state_signature
+    ):
+        return False
+
+    if target_material_state_signature and row_material_state_signature:
+        return row_material_state_signature == target_material_state_signature
+    if target_item_state_key and row_item_state_key:
+        return row_item_state_key == target_item_state_key
+
+    target_state_from_signature = _state_key_from_material_signature(
+        target_material_state_signature
+    )
+    row_state_from_signature = _state_key_from_material_signature(
+        row_material_state_signature
+    )
+    if target_item_state_key and row_state_from_signature:
+        return target_item_state_key == row_state_from_signature
+    if row_item_state_key and target_state_from_signature:
+        return row_item_state_key == target_state_from_signature
+    return False
+
+
+def _row_matches_cohort_contract(
+    row: Mapping[str, Any], parsed_item: Mapping[str, Any]
+) -> bool:
+    target_league = _normalize_text(parsed_item.get("league"))
+    target_strategy_family = _normalize_text(
+        parsed_item.get("strategy_family")
+        or parsed_item.get("route_family")
+        or parsed_item.get("route")
+    )
+    target_cohort_key = _normalize_text(parsed_item.get("cohort_key"))
+    target_material_state_signature = _normalize_text(
+        parsed_item.get("material_state_signature")
+    )
+    target_item_state_key = _normalize_text(parsed_item.get("item_state_key"))
+
+    row_league = _normalize_text(_row_field(row, "league", "candidate_league"))
+    row_strategy_family = _normalize_text(
+        _row_field(
+            row,
+            "strategy_family",
+            "candidate_strategy_family",
+            "route",
+            "candidate_route",
+        )
+    )
+    row_cohort_key = _normalize_text(
+        _row_field(row, "cohort_key", "candidate_cohort_key")
+    )
+
+    if target_league and not row_league:
+        return False
+    if target_strategy_family and not row_strategy_family:
+        return False
+    if target_cohort_key and not row_cohort_key:
+        return False
+
+    if target_league and row_league != target_league:
+        return False
+    if target_strategy_family and row_strategy_family != target_strategy_family:
+        return False
+    if target_cohort_key and row_cohort_key != target_cohort_key:
+        return False
+    return _material_state_compatible(
+        row,
+        target_material_state_signature=target_material_state_signature,
+        target_item_state_key=target_item_state_key,
+    )
+
+
+def _deterministic_latency_fallback(
+    *, rows: Sequence[Mapping[str, Any]], max_candidates: int
+) -> SearchResult:
+    scored = [
+        {
+            "identity_key": str(
+                _row_field(row, "identity_key", "candidate_identity_key") or ""
+            ),
+            "price": _to_float(
+                _row_field(row, "target_price_chaos", "candidate_price_chaos")
+            ),
+            "score": 0.01,
+            "matched_affixes": [],
+            "missing_affixes": [],
+            "observed_at": _row_field(row, "as_of_ts", "candidate_as_of_ts"),
+            "support": _to_float(
+                _row_field(
+                    row, "support_count_recent", "target_support_count", "support"
+                )
+            ),
+        }
+        for row in sorted(rows, key=_sort_row_identity)
+    ]
+    return SearchResult(
+        stage=4,
+        candidates=scored[:max_candidates],
+        dropped_affixes=[],
+        effective_support=len(scored),
+        candidate_count=len(scored),
+        degradation_reason="latency_budget_exceeded",
+    )
 
 
 def _row_matches_core_state(
@@ -275,6 +434,7 @@ def _score_candidate(
     parsed_item: Mapping[str, Any],
     important_affixes: list[tuple[str, float, int]],
     stage: int,
+    now_utc: datetime | None = None,
 ) -> dict[str, Any]:
     candidate_payload = _coerce_mod_payload(
         _row_field(row, "mod_features_json", "mods", "mod_features")
@@ -347,7 +507,10 @@ def _score_candidate(
         roll_score = _SEARCH_WEIGHTS["roll_closeness"]
         penalty = 0.0
 
-    recency = _recency_score(_row_field(row, "as_of_ts", "candidate_as_of_ts"))
+    recency = _recency_score(
+        _row_field(row, "as_of_ts", "candidate_as_of_ts"),
+        now_utc=now_utc,
+    )
     quality = _extract_support(row)
 
     score = (
@@ -406,6 +569,9 @@ def _matches_stage(
         candidate_value = _to_float(candidate_payload.get(affix))
 
         if stage in {1, 2} and candidate_value == 0.0:
+            return False
+
+        if stage == 1 and target_value != 0.0 and candidate_value != target_value:
             return False
 
         if (
@@ -489,6 +655,8 @@ def run_search(
     ranked_affixes: list[dict[str, Any]] | None = None,
     stage_support_targets: Mapping[int, int] | None = None,
     max_candidates: int = _MAX_CANDIDATES,
+    latency_budget_ms: int = _DEFAULT_LATENCY_BUDGET_MS,
+    now_utc: datetime | None = None,
 ) -> SearchResult:
     important_affixes = _normalize_important_affixes(ranked_affixes)
     stage_support_targets = {
@@ -498,26 +666,61 @@ def run_search(
         4: 24,
         **(stage_support_targets or {}),
     }
+    safe_max_candidates = min(_MAX_CANDIDATES, max(0, int(max_candidates)))
+    budget_ms = max(0, int(latency_budget_ms))
+    started_at = monotonic()
+    effective_now_utc = now_utc or datetime.now(UTC)
+    if effective_now_utc.tzinfo is None:
+        effective_now_utc = effective_now_utc.replace(tzinfo=UTC)
 
-    rows = list(candidate_rows)
+    rows = [
+        row
+        for row in candidate_rows
+        if _row_matches_cohort_contract(row=row, parsed_item=parsed_item)
+    ]
     dropped_affixes: list[str] = []
 
+    def _budget_exceeded() -> bool:
+        return ((monotonic() - started_at) * 1000.0) > float(budget_ms)
+
+    if _budget_exceeded():
+        return _deterministic_latency_fallback(
+            rows=rows, max_candidates=safe_max_candidates
+        )
+
     for stage in (1, 2, 3, 4):
+        if _budget_exceeded():
+            return _deterministic_latency_fallback(
+                rows=rows,
+                max_candidates=safe_max_candidates,
+            )
         matching_rows = _search_stage(
             stage=stage,
             parsed_item=parsed_item,
             rows=rows,
             important_affixes=important_affixes,
         )
-        scored = [
-            _score_candidate(
-                row=row,
-                parsed_item=parsed_item,
-                important_affixes=important_affixes,
-                stage=stage,
+        scored: list[dict[str, Any]] = []
+        for row in matching_rows:
+            if _budget_exceeded():
+                return _deterministic_latency_fallback(
+                    rows=rows,
+                    max_candidates=safe_max_candidates,
+                )
+            scored.append(
+                _score_candidate(
+                    row=row,
+                    parsed_item=parsed_item,
+                    important_affixes=important_affixes,
+                    stage=stage,
+                    now_utc=effective_now_utc,
+                )
             )
-            for row in matching_rows
-        ]
+        if _budget_exceeded():
+            return _deterministic_latency_fallback(
+                rows=rows,
+                max_candidates=safe_max_candidates,
+            )
         scored.sort(key=_sort_identity)
         candidate_count = len(scored)
         effective_support = sum(
@@ -535,7 +738,7 @@ def run_search(
             if effective_support > 0:
                 return SearchResult(
                     stage=4,
-                    candidates=scored[: max(0, int(max_candidates))],
+                    candidates=scored[:safe_max_candidates],
                     dropped_affixes=dropped_affixes,
                     effective_support=effective_support,
                     candidate_count=candidate_count,
@@ -548,7 +751,7 @@ def run_search(
         if effective_support >= threshold:
             return SearchResult(
                 stage=stage,
-                candidates=scored[: max(0, int(max_candidates))],
+                candidates=scored[:safe_max_candidates],
                 dropped_affixes=dropped_affixes,
                 effective_support=effective_support,
                 candidate_count=candidate_count,

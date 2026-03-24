@@ -10,6 +10,7 @@ SNAPSHOTS_TABLE = "poe_trade.silver_v3_stash_snapshots"
 EVENTS_TABLE = "poe_trade.silver_v3_item_events"
 SALE_LABELS_TABLE = "poe_trade.ml_v3_sale_proxy_labels"
 TRAINING_TABLE = "poe_trade.ml_v3_training_examples"
+ROLLOUT_STATE_TABLE = "poe_trade.ml_v3_cohort_rollout_state"
 
 
 def _quote(value: str) -> str:
@@ -26,6 +27,19 @@ def _item_state_sql(
     return (
         "concat("
         f"lowerUTF8(ifNull({rarity_expr}, '')),"
+        "'|corrupted=', toString(toUInt8(ifNull(" + corrupted_expr + ", 0) != 0)),"
+        "'|fractured=', toString(toUInt8(ifNull(" + fractured_expr + ", 0) != 0)),"
+        "'|synthesised=', toString(toUInt8(ifNull(" + synthesised_expr + ", 0) != 0))"
+        ")"
+    )
+
+
+def _material_state_signature_sql(
+    *, rarity_expr: str, corrupted_expr: str, fractured_expr: str, synthesised_expr: str
+) -> str:
+    return (
+        "concat("
+        "'v1|rarity=', lowerUTF8(ifNull(" + rarity_expr + ", 'unknown')),"
         "'|corrupted=', toString(toUInt8(ifNull(" + corrupted_expr + ", 0) != 0)),"
         "'|fractured=', toString(toUInt8(ifNull(" + fractured_expr + ", 0) != 0)),"
         "'|synthesised=', toString(toUInt8(ifNull(" + synthesised_expr + ", 0) != 0))"
@@ -171,9 +185,69 @@ def build_training_examples_insert_query(*, league: str, day: date) -> str:
         fractured_expr="obs.fractured",
         synthesised_expr="obs.synthesised",
     )
+    material_state_signature_expr = _material_state_signature_sql(
+        rarity_expr="obs.rarity",
+        corrupted_expr="obs.corrupted",
+        fractured_expr="obs.fractured",
+        synthesised_expr="obs.synthesised",
+    )
+    family_scope_expr = (
+        "multiIf("
+        "obs.category = 'cluster_jewel', 'cluster_jewel',"
+        "obs.category IN ('fossil', 'logbook', 'scarab'), obs.category,"
+        "obs.rarity = 'Unique' AND obs.category IN ('amulet', 'belt', 'jewel', 'ring'), obs.category,"
+        "obs.rarity = 'Unique', 'default',"
+        "obs.rarity = 'Rare', ifNull(obs.category, 'other'),"
+        "'default'"
+        ")"
+    )
+    cohort_key_expr = (
+        "concat("
+        + route_expr
+        + ", '|', "
+        + family_scope_expr
+        + ", '|', "
+        + material_state_signature_expr
+        + ")"
+    )
     return " ".join(
         [
-            f"INSERT INTO {TRAINING_TABLE}",
+            f"INSERT INTO {TRAINING_TABLE} (",
+            "as_of_ts,",
+            "realm,",
+            "league,",
+            "stash_id,",
+            "item_id,",
+            "identity_key,",
+            "route,",
+            "strategy_family,",
+            "cohort_key,",
+            "material_state_signature,",
+            "category,",
+            "item_name,",
+            "item_type_line,",
+            "base_type,",
+            "rarity,",
+            "ilvl,",
+            "stack_size,",
+            "corrupted,",
+            "fractured,",
+            "synthesised,",
+            "item_state_key,",
+            "support_count_recent,",
+            "feature_vector_json,",
+            "mod_features_json,",
+            "target_price_chaos,",
+            "target_fast_sale_24h_price,",
+            "target_sale_probability_24h,",
+            "target_likely_sold,",
+            "target_time_to_exit_hours,",
+            "target_sale_price_anchor_chaos,",
+            "label_weight,",
+            "label_source,",
+            "split_bucket,",
+            "inserted_at",
+            ")",
             "SELECT",
             "obs.observed_at AS as_of_ts,",
             "obs.realm AS realm,",
@@ -182,6 +256,9 @@ def build_training_examples_insert_query(*, league: str, day: date) -> str:
             "obs.item_id AS item_id,",
             "obs.identity_key AS identity_key,",
             f"{route_expr} AS route,",
+            f"{family_scope_expr} AS strategy_family,",
+            f"{cohort_key_expr} AS cohort_key,",
+            f"{material_state_signature_expr} AS material_state_signature,",
             "obs.category AS category,",
             "obs.item_name AS item_name,",
             "obs.item_type_line AS item_type_line,",
@@ -199,6 +276,9 @@ def build_training_examples_insert_query(*, league: str, day: date) -> str:
             "obs.parsed_amount AS target_price_chaos,",
             "if(labels.sold_probability >= 0.75, obs.parsed_amount * 0.95, obs.parsed_amount * 0.88) AS target_fast_sale_24h_price,",
             "labels.sold_probability AS target_sale_probability_24h,",
+            "labels.likely_sold AS target_likely_sold,",
+            "labels.time_to_exit_hours AS target_time_to_exit_hours,",
+            "labels.sale_price_anchor_chaos AS target_sale_price_anchor_chaos,",
             "ifNull(labels.label_weight, toFloat32(0.25)) AS label_weight,",
             "ifNull(labels.label_source, 'observation_only') AS label_source,",
             "toUInt16(cityHash64(obs.identity_key) % 1000) AS split_bucket,",

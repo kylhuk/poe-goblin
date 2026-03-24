@@ -59,6 +59,31 @@ def _query_rows(client: ClickHouseClient, query: str) -> list[dict[str, object]]
     return [json.loads(line) for line in payload.splitlines() if line.strip()]
 
 
+def _assert_stage_completed(*, stage: str, payload: dict[str, object]) -> None:
+    raw_status = payload.get("status")
+    status = str(raw_status or "").strip().lower()
+    if not status:
+        if stage == "train_models":
+            trained_count = payload.get("trained_count")
+            has_results = isinstance(payload.get("results"), list)
+            if has_results:
+                return
+            try:
+                if trained_count is not None and int(trained_count) >= 0:
+                    return
+            except (TypeError, ValueError):
+                pass
+        if stage == "evaluate_models":
+            run_id = str(payload.get("run_id") or "").strip()
+            has_summary = isinstance(payload.get("summary"), dict)
+            has_metrics = isinstance(payload.get("metrics"), dict)
+            if run_id and (has_summary or has_metrics):
+                return
+        raise RuntimeError(f"{stage} failed with missing status")
+    if status not in {"completed", "success", "succeeded", "ok"}:
+        raise RuntimeError(f"{stage} failed with status={status}")
+
+
 def _refresh_v3_training_examples(
     client: ClickHouseClient, *, league: str
 ) -> dict[str, object]:
@@ -92,6 +117,7 @@ def _refresh_v3_training_examples(
     )
     if not latest_source_at:
         return {
+            "status": "completed",
             "latest_source_at": None,
             "latest_training_at": latest_training_at or None,
             "replayed_days": [],
@@ -131,6 +157,13 @@ def _refresh_v3_training_examples(
                 start_day=start_day,
                 end_day=source_day,
             )
+            requested_days = int(v3_backfill_result.get("days_requested") or 0)
+            processed_days = int(v3_backfill_result.get("days_processed") or 0)
+            if requested_days and processed_days < requested_days:
+                raise RuntimeError(
+                    "replay backfill incomplete "
+                    f"league={league} requested={requested_days} processed={processed_days}"
+                )
             replayed_days = [
                 str(row.get("day") or "")
                 for row in v3_backfill_result.get("results", [])
@@ -138,6 +171,7 @@ def _refresh_v3_training_examples(
             ]
 
     return {
+        "status": "completed",
         "latest_source_at": latest_source_at,
         "latest_training_at": latest_training_at or None,
         "replayed_days": replayed_days,
@@ -177,6 +211,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 league=league, stage="refresh_training_examples", status="running"
             )
             data_refresh = _refresh_v3_training_examples(client, league=league)
+            _assert_stage_completed(
+                stage="refresh_training_examples", payload=data_refresh
+            )
             _write_stage(
                 league=league,
                 stage="refresh_training_examples",
@@ -190,6 +227,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 league=league,
                 model_dir=str(args.model_dir),
             )
+            _assert_stage_completed(stage="train_models", payload=v3_result)
             _write_stage(
                 league=league,
                 stage="train_models",
@@ -215,6 +253,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     league=league,
                     run_id=run_id,
                 )
+                _assert_stage_completed(stage="evaluate_models", payload=eval_result)
                 _write_stage(
                     league=league,
                     stage="evaluate_models",

@@ -116,7 +116,7 @@ _MODEL_BUNDLE_CACHE: dict[str, dict[str, Any]] = {}
 _ACTIVE_ROUTE_MODEL_DIRS: dict[tuple[str, str], str] = {}
 _ACTIVE_ROUTE_MODEL_META: dict[tuple[str, str], dict[str, Any]] = {}
 _ACTIVE_MODEL_VERSION_HINT: dict[str, str] = {}
-_SERVING_PROFILE_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
+_SERVING_PROFILE_CACHE: dict[tuple[str, str, str, str], dict[str, Any]] = {}
 _SERVING_PROFILE_SNAPSHOT_META: dict[str, dict[str, str]] = {}
 _WARMUP_STATE: dict[str, "WarmupState"] = {}
 _WARMUP_LOCK = Lock()
@@ -139,6 +139,7 @@ class WarmupState:
 
 
 _DEFAULT_SERVING_PROFILE_TABLE = "poe_trade.ml_serving_profile_v1"
+_DEFAULT_REFERENCE_SNAPSHOT_TABLE = "poe_trade.ml_v3_reference_snapshots"
 _DEFAULT_DATASET_TABLE = "poe_trade.ml_price_dataset_v2"
 _LEGACY_DATASET_TABLE = "poe_trade.ml_price_dataset_v1"
 _DEFAULT_LABELS_TABLE = "poe_trade.ml_price_labels_v2"
@@ -2202,6 +2203,55 @@ def build_serving_profile(
     return result
 
 
+def build_reference_snapshots(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    as_of_ts: str,
+    dataset_table: str = _DEFAULT_DATASET_TABLE,
+    output_table: str = _DEFAULT_REFERENCE_SNAPSHOT_TABLE,
+) -> dict[str, Any]:
+    _ensure_supported_league(league)
+    _ensure_reference_snapshot_table(client, output_table)
+    delete_sql = " ".join(
+        [
+            f"ALTER TABLE {output_table}",
+            f"DELETE WHERE league = {_quote(league)}",
+            f"AND snapshot_as_of_ts = toDateTime64({_quote(as_of_ts)}, 3, 'UTC')",
+            "SETTINGS mutations_sync = 2",
+        ]
+    )
+    try:
+        client.execute(delete_sql)
+    except ClickHouseClientError:
+        pass
+    client.execute(
+        _build_reference_snapshot_insert_query(
+            league=league,
+            as_of_ts=as_of_ts,
+            dataset_table=dataset_table,
+            output_table=output_table,
+        )
+    )
+    rows_written = _scalar_count(
+        client,
+        " ".join(
+            [
+                "SELECT count() AS value",
+                f"FROM {output_table}",
+                f"WHERE league = {_quote(league)}",
+                f"AND snapshot_as_of_ts = toDateTime64({_quote(as_of_ts)}, 3, 'UTC')",
+            ]
+        ),
+    )
+    return {
+        "league": league,
+        "output_table": output_table,
+        "as_of_ts": as_of_ts,
+        "rows_written": rows_written,
+    }
+
+
 def run_full_snapshot_rebuild_backfill(
     client: ClickHouseClient,
     *,
@@ -2251,6 +2301,12 @@ def run_full_snapshot_rebuild_backfill(
         dataset_table=dataset_table,
         snapshot_window_id=rebuild_window_id,
     )
+    reference_snapshot_result = build_reference_snapshots(
+        client,
+        league=league,
+        as_of_ts=str(serving_profile_result.get("profile_as_of_ts") or _now_ts()),
+        dataset_table=dataset_table,
+    )
     return {
         "league": league,
         "mode": "explicit_full_rebuild_backfill",
@@ -2268,6 +2324,10 @@ def run_full_snapshot_rebuild_backfill(
         ),
         "serving_profile_as_of_ts": str(
             serving_profile_result.get("profile_as_of_ts") or ""
+        ),
+        "reference_snapshot_rows": _to_int(
+            reference_snapshot_result.get("rows_written"),
+            0,
         ),
         "rebuild_window": rebuild_window,
     }
@@ -5373,15 +5433,32 @@ def predict_one(
 ) -> dict[str, Any]:
     _ensure_supported_league(league)
     parsed = _parse_clipboard_item(clipboard_text)
-    profile = _serving_profile_lookup(
+    support = _support_count_recent(
         client,
         league=league,
         category=parsed["category"],
         base_type=parsed["base_type"],
     )
+    parsed["support_count_recent"] = support
+    route_bundle = _route_for_item(parsed)
+    route = route_bundle["route"]
+    profile_lookup_ts = _now_ts()
+    profile = _serving_profile_lookup(
+        client,
+        league=league,
+        category=parsed["category"],
+        base_type=parsed["base_type"],
+        route=route,
+        parent_route=str(route_bundle.get("fallback_parent_route") or ""),
+        as_of_ts=profile_lookup_ts,
+    )
     if profile["hit"]:
-        support = _to_int(profile.get("support_count_recent"), 0)
+        support = max(
+            support,
+            _to_int(profile.get("support_count_recent"), 0),
+        )
         base_price = max(0.1, _to_float(profile.get("reference_price"), 1.0))
+        reference_fallback_reason = str(profile.get("fallback_reason") or "")
     else:
         logger.info(
             "predict_one serving profile miss; using deterministic fallback "
@@ -5391,21 +5468,14 @@ def predict_one(
             parsed["category"],
             parsed["base_type"],
         )
-        support = _support_count_recent(
-            client,
-            league=league,
-            category=parsed["category"],
-            base_type=parsed["base_type"],
-        )
         base_price = _reference_price(
             client,
             league=league,
             category=parsed["category"],
             base_type=parsed["base_type"],
         )
+        reference_fallback_reason = ""
     parsed["support_count_recent"] = support
-    route_bundle = _route_for_item(parsed)
-    route = route_bundle["route"]
 
     incumbent_model_version = (
         ""
@@ -5443,6 +5513,8 @@ def predict_one(
             if route == "fallback_abstain"
             else "ml_no_prediction_static_fallback"
         )
+        if reference_fallback_reason:
+            fallback_reason = reference_fallback_reason
     else:
         price_p10 = max(0.1, float(model_prediction["price_p10"]))
         price_p50 = max(price_p10, float(model_prediction["price_p50"]))
@@ -5455,7 +5527,7 @@ def predict_one(
             support=support,
             train_row_count=_to_int(artifact.get("train_row_count"), 0),
         )
-        fallback_reason = ""
+        fallback_reason = reference_fallback_reason
         if confidence < _low_confidence_threshold(route):
             incumbent_prediction = None
             active_version = str(artifact.get("active_model_version") or "").strip()
@@ -7498,6 +7570,57 @@ def _ensure_comps_table(client: ClickHouseClient, table: str) -> None:
     )
 
 
+def _ensure_reference_snapshot_table(client: ClickHouseClient, table: str) -> None:
+    client.execute(
+        " ".join(
+            [
+                f"CREATE TABLE IF NOT EXISTS {table}(",
+                "snapshot_as_of_ts DateTime64(3, 'UTC') CODEC(Delta(8), ZSTD(1)),",
+                "league LowCardinality(String),",
+                "route LowCardinality(String),",
+                "category LowCardinality(String),",
+                "base_type String,",
+                "window_kind LowCardinality(String),",
+                "window_hours UInt16,",
+                "min_support UInt32,",
+                "support_count_recent UInt64,",
+                "reference_price_p10 Nullable(Float64),",
+                "reference_price_p50 Nullable(Float64),",
+                "reference_price_p90 Nullable(Float64),",
+                "source_max_as_of_ts Nullable(DateTime64(3, 'UTC')) CODEC(Delta(8), ZSTD(1)),",
+                "is_sufficient_support UInt8,",
+                "updated_at DateTime64(3, 'UTC') CODEC(Delta(8), ZSTD(1))",
+                ") ENGINE = ReplacingMergeTree(updated_at)",
+                "PARTITION BY toYYYYMMDD(snapshot_as_of_ts)",
+                "ORDER BY (league, route, category, base_type, window_kind, snapshot_as_of_ts)",
+                "SETTINGS index_granularity = 8192",
+            ]
+        )
+    )
+    client.execute(
+        " ".join(
+            [
+                f"ALTER TABLE {table}",
+                "ADD COLUMN IF NOT EXISTS snapshot_as_of_ts DateTime64(3, 'UTC') CODEC(Delta(8), ZSTD(1)),",
+                "ADD COLUMN IF NOT EXISTS league LowCardinality(String),",
+                "ADD COLUMN IF NOT EXISTS route LowCardinality(String),",
+                "ADD COLUMN IF NOT EXISTS category LowCardinality(String),",
+                "ADD COLUMN IF NOT EXISTS base_type String,",
+                "ADD COLUMN IF NOT EXISTS window_kind LowCardinality(String),",
+                "ADD COLUMN IF NOT EXISTS window_hours UInt16,",
+                "ADD COLUMN IF NOT EXISTS min_support UInt32,",
+                "ADD COLUMN IF NOT EXISTS support_count_recent UInt64,",
+                "ADD COLUMN IF NOT EXISTS reference_price_p10 Nullable(Float64),",
+                "ADD COLUMN IF NOT EXISTS reference_price_p50 Nullable(Float64),",
+                "ADD COLUMN IF NOT EXISTS reference_price_p90 Nullable(Float64),",
+                "ADD COLUMN IF NOT EXISTS source_max_as_of_ts Nullable(DateTime64(3, 'UTC')) CODEC(Delta(8), ZSTD(1)),",
+                "ADD COLUMN IF NOT EXISTS is_sufficient_support UInt8,",
+                "ADD COLUMN IF NOT EXISTS updated_at DateTime64(3, 'UTC') CODEC(Delta(8), ZSTD(1))",
+            ]
+        )
+    )
+
+
 def _ensure_route_eval_table(client: ClickHouseClient) -> None:
     client.execute(
         "CREATE TABLE IF NOT EXISTS poe_trade.ml_route_eval_v1(run_id String, route String, family String, variant String, league String, split_kind String, sample_count UInt64, mdape Nullable(Float64), wape Nullable(Float64), rmsle Nullable(Float64), abstain_rate Nullable(Float64), interval_80_coverage Nullable(Float64), freshness_minutes Nullable(Float64), support_bucket String, recorded_at DateTime64(3, 'UTC')) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(recorded_at) ORDER BY (league, route, family, variant, recorded_at)"
@@ -8115,6 +8238,280 @@ def _route_for_item(item: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _reference_snapshot_policy(*, route: str, category: object) -> dict[str, int]:
+    normalized_category = str(category or "").strip().lower()
+    if normalized_category in {"logbook", "map"}:
+        return {
+            "target_window_hours": 12,
+            "fallback_window_hours": 48,
+            "min_support": 40,
+        }
+    if str(route or "").strip().lower() == "fungible_reference":
+        return {
+            "target_window_hours": 6,
+            "fallback_window_hours": 24,
+            "min_support": 100,
+        }
+    return {
+        "target_window_hours": 12,
+        "fallback_window_hours": 48,
+        "min_support": 40,
+    }
+
+
+def _build_reference_snapshot_insert_query(
+    *,
+    league: str,
+    as_of_ts: str,
+    dataset_table: str = _DEFAULT_DATASET_TABLE,
+    output_table: str = _DEFAULT_REFERENCE_SNAPSHOT_TABLE,
+) -> str:
+    league_sql = _quote(league)
+    as_of_ts_sql = _quote(as_of_ts)
+    target_window_expr = (
+        "multiIf(category IN ('logbook', 'map'), toUInt16(12), "
+        "route = 'fungible_reference', toUInt16(6), toUInt16(12))"
+    )
+    fallback_window_expr = (
+        "multiIf(category IN ('logbook', 'map'), toUInt16(48), "
+        "route = 'fungible_reference', toUInt16(24), toUInt16(48))"
+    )
+    min_support_expr = (
+        "multiIf(category IN ('logbook', 'map'), toUInt32(40), "
+        "route = 'fungible_reference', toUInt32(100), toUInt32(40))"
+    )
+    base_rows_sql = " ".join(
+        [
+            "SELECT",
+            "as_of_ts,",
+            "league,",
+            "lowerUTF8(ifNull(category, '')) AS category,",
+            "ifNull(base_type, '') AS base_type,",
+            "lowerUTF8(ifNull(route_candidate, 'fallback_abstain')) AS route,",
+            "toFloat64(normalized_price_chaos) AS normalized_price_chaos",
+            f"FROM {dataset_table}",
+            f"WHERE league = {league_sql}",
+            "AND normalized_price_chaos IS NOT NULL",
+            "AND normalized_price_chaos > 0",
+            f"AND as_of_ts <= toDateTime64({as_of_ts_sql}, 3, 'UTC')",
+        ]
+    )
+
+    def _window_sql(window_kind: str, window_expr: str) -> str:
+        return " ".join(
+            [
+                "SELECT",
+                f"toDateTime64({as_of_ts_sql}, 3, 'UTC') AS snapshot_as_of_ts,",
+                "league,",
+                "route,",
+                "category,",
+                "base_type,",
+                f"'{window_kind}' AS window_kind,",
+                f"{window_expr} AS window_hours,",
+                f"{min_support_expr} AS min_support,",
+                "count() AS support_count_recent,",
+                "quantileTDigest(0.1)(normalized_price_chaos) AS reference_price_p10,",
+                "quantileTDigest(0.5)(normalized_price_chaos) AS reference_price_p50,",
+                "quantileTDigest(0.9)(normalized_price_chaos) AS reference_price_p90,",
+                "max(as_of_ts) AS source_max_as_of_ts,",
+                "toUInt8(count() >= min_support) AS is_sufficient_support,",
+                "now64(3) AS updated_at",
+                f"FROM ({base_rows_sql})",
+                "WHERE as_of_ts >= toDateTime64("
+                + as_of_ts_sql
+                + ", 3, 'UTC') - INTERVAL "
+                + window_expr
+                + " HOUR",
+                "GROUP BY league, route, category, base_type, window_kind, window_hours, min_support",
+            ]
+        )
+
+    return " ".join(
+        [
+            f"INSERT INTO {output_table}",
+            _window_sql("target", target_window_expr),
+            "UNION ALL",
+            _window_sql("fallback", fallback_window_expr),
+        ]
+    )
+
+
+def _parse_utc_datetime(value: object) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = raw
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        if " " in normalized:
+            try:
+                parsed = datetime.fromisoformat(normalized.replace(" ", "T", 1))
+            except ValueError:
+                return None
+        else:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _reference_snapshot_row_is_usable(
+    row: dict[str, Any],
+    *,
+    as_of_ts: str,
+    required_min_support: int,
+    required_window_hours: int,
+) -> bool:
+    support = _to_int(row.get("support_count_recent"), 0)
+    price = _to_float(row.get("reference_price_p50"), 0.0)
+    if support < max(1, required_min_support) or price <= 0.0:
+        return False
+    snapshot_max = _parse_utc_datetime(row.get("source_max_as_of_ts"))
+    requested_as_of = _parse_utc_datetime(as_of_ts)
+    if snapshot_max is None or requested_as_of is None:
+        return False
+    freshness_hours = (requested_as_of - snapshot_max).total_seconds() / 3600.0
+    return 0.0 <= freshness_hours <= max(1, required_window_hours)
+
+
+def _poeninja_reference_price(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    base_type: object,
+) -> dict[str, Any]:
+    rows = _query_rows(
+        client,
+        " ".join(
+            [
+                "SELECT chaos_equivalent, sample_time_utc",
+                "FROM poe_trade.raw_poeninja_currency_overview",
+                f"WHERE league = {_quote(league)}",
+                "AND lowerUTF8(currency_type_name) = lowerUTF8("
+                + _quote(str(base_type or ""))
+                + ")",
+                "ORDER BY sample_time_utc DESC",
+                "LIMIT 1",
+                "FORMAT JSONEachRow",
+            ]
+        ),
+    )
+    if not rows:
+        return {"hit": False, "reference_price": 0.0, "sample_time_utc": ""}
+    row = rows[0]
+    price = _to_float(row.get("chaos_equivalent"), 0.0)
+    if price <= 0.0:
+        return {"hit": False, "reference_price": 0.0, "sample_time_utc": ""}
+    return {
+        "hit": True,
+        "reference_price": price,
+        "sample_time_utc": str(row.get("sample_time_utc") or ""),
+    }
+
+
+def _reference_snapshot_lookup(
+    client: ClickHouseClient,
+    *,
+    league: str,
+    route: str,
+    parent_route: str,
+    category: object,
+    base_type: object,
+    as_of_ts: str,
+    table: str = _DEFAULT_REFERENCE_SNAPSHOT_TABLE,
+) -> dict[str, Any]:
+    normalized_route = str(route or "").strip().lower()
+    normalized_parent = str(parent_route or "").strip().lower()
+    normalized_category = str(category or "").strip().lower()
+    normalized_base_type = str(base_type or "")
+    candidate_steps: list[tuple[str, str, bool]] = [(normalized_route, "target", False)]
+    has_parent_fallback = (
+        normalized_parent
+        and normalized_parent != normalized_route
+        and normalized_parent != "fallback_abstain"
+    )
+    if has_parent_fallback:
+        candidate_steps.append((normalized_parent, "fallback", True))
+    candidate_steps.append((normalized_route, "fallback", False))
+
+    for candidate_route, window_kind, is_parent in candidate_steps:
+        candidate_policy = _reference_snapshot_policy(
+            route=candidate_route,
+            category=normalized_category,
+        )
+        required_window_hours = (
+            candidate_policy["target_window_hours"]
+            if window_kind == "target"
+            else candidate_policy["fallback_window_hours"]
+        )
+        rows = _query_rows(
+            client,
+            " ".join(
+                [
+                    "SELECT route, window_kind, window_hours, min_support, support_count_recent, reference_price_p50, source_max_as_of_ts",
+                    f"FROM {table}",
+                    f"WHERE league = {_quote(league)}",
+                    f"AND route = {_quote(candidate_route)}",
+                    f"AND category = {_quote(normalized_category)}",
+                    f"AND base_type = {_quote(normalized_base_type)}",
+                    f"AND window_kind = {_quote(window_kind)}",
+                    f"AND snapshot_as_of_ts <= toDateTime64({_quote(as_of_ts)}, 3, 'UTC')",
+                    "ORDER BY snapshot_as_of_ts DESC, updated_at DESC",
+                    "LIMIT 1",
+                    "FORMAT JSONEachRow",
+                ]
+            ),
+        )
+        if not rows:
+            continue
+        row = rows[0]
+        if not _reference_snapshot_row_is_usable(
+            row,
+            as_of_ts=as_of_ts,
+            required_min_support=candidate_policy["min_support"],
+            required_window_hours=required_window_hours,
+        ):
+            continue
+        fallback_reason = "parent_snapshot_fallback" if is_parent else ""
+        return {
+            "hit": True,
+            "source": "stash_snapshot",
+            "route": candidate_route,
+            "window_kind": window_kind,
+            "reference_price": _to_float(row.get("reference_price_p50"), 0.0),
+            "support_count_recent": _to_int(row.get("support_count_recent"), 0),
+            "fallback_reason": fallback_reason,
+        }
+
+    poeninja = _poeninja_reference_price(
+        client,
+        league=league,
+        base_type=normalized_base_type,
+    )
+    if poeninja.get("hit"):
+        return {
+            "hit": True,
+            "source": "poeninja",
+            "route": normalized_route,
+            "window_kind": "fallback",
+            "reference_price": _to_float(poeninja.get("reference_price"), 0.0),
+            "support_count_recent": 0,
+            "fallback_reason": "temporary_poeninja_fallback",
+        }
+    return {
+        "hit": False,
+        "source": "none",
+        "route": normalized_route,
+        "window_kind": "",
+        "reference_price": 0.0,
+        "support_count_recent": 0,
+        "fallback_reason": "",
+    }
+
+
 def _reference_price(
     client: ClickHouseClient, *, league: str, category: object, base_type: object
 ) -> float:
@@ -8144,11 +8541,44 @@ def _serving_profile_lookup(
     league: str,
     category: object,
     base_type: object,
+    route: str = "",
+    parent_route: str = "",
+    as_of_ts: str = "",
     table: str = _DEFAULT_SERVING_PROFILE_TABLE,
 ) -> dict[str, Any]:
     cat = str(category)
     btype = str(base_type)
-    key = (league, cat, btype)
+    normalized_route = str(route or "").strip().lower()
+    key = (league, normalized_route, cat, btype)
+
+    lookup_as_of_ts = as_of_ts or _now_ts()
+    if normalized_route:
+        snapshot_lookup = _reference_snapshot_lookup(
+            client,
+            league=league,
+            route=normalized_route,
+            parent_route=parent_route,
+            category=cat,
+            base_type=btype,
+            as_of_ts=lookup_as_of_ts,
+        )
+        if bool(snapshot_lookup.get("hit")):
+            return {
+                "hit": True,
+                "reason": "snapshot_hit",
+                "support_count_recent": _to_int(
+                    snapshot_lookup.get("support_count_recent"),
+                    0,
+                ),
+                "reference_price": max(
+                    0.1,
+                    _to_float(snapshot_lookup.get("reference_price"), 0.1),
+                ),
+                "snapshot_window_id": "",
+                "profile_as_of_ts": lookup_as_of_ts,
+                "fallback_reason": str(snapshot_lookup.get("fallback_reason") or ""),
+                "source": str(snapshot_lookup.get("source") or "stash_snapshot"),
+            }
 
     with _SERVING_PROFILE_CACHE_LOCK:
         cached = _SERVING_PROFILE_CACHE.get(key)
