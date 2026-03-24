@@ -28,7 +28,10 @@ import {
   getAnalyticsSearchHistory,
   getAnalyticsSearchSuggestions,
   type IngestionRow, 
-  type ScannerRow, 
+  type ScannerRow,
+  type ScannerAnalyticsResponse,
+  type GateRejection,
+  type ComplexityTier,
   type AlertRow, 
   type BacktestAnalytics, 
   type ReportAnalytics,
@@ -120,30 +123,130 @@ function IngestionPanel() {
 }
 
 function ScannerPanel() {
-  const [items, setItems] = useState<ScannerRow[]>([]);
+  const [data, setData] = useState<ScannerAnalyticsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
     getAnalyticsScanner()
-      .then(setItems)
+      .then(setData)
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load scanner analytics'));
   }, []);
   useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
 
   if (error) return <RenderState kind="degraded" message={error} />;
-  if (items.length === 0) return <RenderState kind="empty" message="No scanner data available" />;
+  if (!data || data.rows.length === 0) return <RenderState kind="empty" message="No scanner data available" />;
+
+  const totalRecs = data.rows.reduce((s, r) => s + r.recommendation_count, 0);
+  const totalCandidates = data.rows.reduce((s, r) => s + r.candidate_count, 0);
+  const enabledCount = data.rows.filter(r => r.enabled).length;
 
   return (
-    <div className="space-y-2">
-      {items.map((item, i) => (
-        <Card key={i} className="card-game">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-foreground">{item.strategy_id}</span>
-              <span className="text-xs text-muted-foreground">Recommendations: <span className="font-mono text-foreground">{item.recommendation_count}</span></span>
+    <div className="space-y-4">
+      {/* Summary bar */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Card className="card-game">
+          <CardContent className="p-3 text-center">
+            <p className="text-[10px] text-muted-foreground">Strategies</p>
+            <p className="text-lg font-mono text-foreground">{enabledCount}<span className="text-xs text-muted-foreground">/{data.rows.length}</span></p>
+          </CardContent>
+        </Card>
+        <Card className="card-game">
+          <CardContent className="p-3 text-center">
+            <p className="text-[10px] text-muted-foreground">Recommendations</p>
+            <p className="text-lg font-mono text-warning">{totalRecs}</p>
+          </CardContent>
+        </Card>
+        <Card className="card-game">
+          <CardContent className="p-3 text-center">
+            <p className="text-[10px] text-muted-foreground">Candidates</p>
+            <p className="text-lg font-mono text-foreground">{totalCandidates}</p>
+          </CardContent>
+        </Card>
+        {data.latestRunId && (
+          <Card className="card-game">
+            <CardContent className="p-3 text-center">
+              <p className="text-[10px] text-muted-foreground">Latest Run</p>
+              <p className="text-xs font-mono text-foreground truncate">{data.latestRunId.slice(0, 12)}…</p>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* Strategy rows */}
+      <Card className="card-game">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-sans">Strategies</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-xs">Strategy</TableHead>
+                <TableHead className="text-xs text-center">Enabled</TableHead>
+                <TableHead className="text-xs text-right">Recs</TableHead>
+                <TableHead className="text-xs text-right">Accepted</TableHead>
+                <TableHead className="text-xs text-right">Rejected</TableHead>
+                <TableHead className="text-xs text-right">Candidates</TableHead>
+                <TableHead className="text-xs">Top Rejection</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.rows.map((item, i) => (
+                <TableRow key={i}>
+                  <TableCell className="text-xs font-mono">{item.strategy_id}</TableCell>
+                  <TableCell className="text-center">
+                    {item.enabled
+                      ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 mx-auto" />
+                      : <XCircle className="h-3.5 w-3.5 text-muted-foreground mx-auto" />}
+                  </TableCell>
+                  <TableCell className="text-xs text-right font-mono">{item.recommendation_count}</TableCell>
+                  <TableCell className="text-xs text-right font-mono">{item.accepted_count}</TableCell>
+                  <TableCell className="text-xs text-right font-mono">{item.rejected_count}</TableCell>
+                  <TableCell className="text-xs text-right font-mono">{item.candidate_count}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{item.top_rejection_reason ?? '—'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {/* Gate Rejections */}
+      {data.gateRejections.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Gate Rejections</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {data.gateRejections.map((g, i) => (
+                <div key={i} className="flex items-center justify-between text-xs rounded border border-border bg-secondary/30 px-3 py-2">
+                  <span className="font-mono text-foreground">{g.decision_reason.replace(/_/g, ' ')}</span>
+                  <Badge variant="outline" className="text-[10px] font-mono">{g.rejection_count}</Badge>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
-      ))}
+      )}
+
+      {/* Complexity Tiers */}
+      {data.complexityTiers.length > 0 && (
+        <Card className="card-game">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-sans">Complexity Tiers</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-3">
+              {data.complexityTiers.map((t, i) => (
+                <div key={i} className="text-xs text-center">
+                  <span className="text-muted-foreground">{t.complexity_tier ?? 'unset'}</span>
+                  <p className="font-mono text-foreground">{t.tier_count}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
