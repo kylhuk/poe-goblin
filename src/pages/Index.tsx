@@ -6,7 +6,8 @@ import PriceCheckTab from "@/components/tabs/PriceCheckTab";
 import StashViewerTab from "@/components/tabs/StashViewerTab";
 import MessagesTab from "@/components/tabs/MessagesTab";
 import OpportunitiesTab from "@/components/tabs/OpportunitiesTab";
-import { LayoutDashboard, Server, BarChart3, Search, Grid3X3, MessageSquare, TrendingUp } from "lucide-react";
+import DebugTrafficTab from "@/components/tabs/DebugTrafficTab";
+import { LayoutDashboard, Server, BarChart3, Search, Grid3X3, MessageSquare, TrendingUp, Bug } from "lucide-react";
 import UserMenu from "@/components/UserMenu";
 import ApiErrorPanel from "@/components/ApiErrorPanel";
 import { useAuth, type UserRole } from "@/services/auth";
@@ -68,6 +69,13 @@ const makeTabs = (subtab?: string, onSubtabChange?: (s: string) => void): TabDef
     label: "Messages",
     icon: <MessageSquare className="h-3.5 w-3.5" />,
     content: <MessagesTab />,
+    roles: ["admin"],
+  },
+  {
+    id: "traffic",
+    label: "API Traffic",
+    icon: <Bug className="h-3.5 w-3.5" />,
+    content: <DebugTrafficTab />,
     roles: ["admin"],
   },
 ];
