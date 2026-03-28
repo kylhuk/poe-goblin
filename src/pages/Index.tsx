@@ -78,13 +78,6 @@ const makeTabs = (subtab?: string, onSubtabChange?: (s: string) => void): TabDef
     content: <MessagesTab />,
     roles: ["admin"],
   },
-  {
-    id: "traffic",
-    label: "API Traffic",
-    icon: <Bug className="h-3.5 w-3.5" />,
-    content: <DebugTrafficTab />,
-    roles: ["admin"],
-  },
 ];
 
 const DEFAULT_TAB: Record<UserRole, string> = {
