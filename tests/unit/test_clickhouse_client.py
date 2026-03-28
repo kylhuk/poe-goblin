@@ -62,3 +62,23 @@ def test_execute_marks_400_as_non_retryable(monkeypatch) -> None:
 
     assert exc_info.value.retryable is False
     assert exc_info.value.status_code == 400
+
+
+def test_query_df_parses_json_each_row_payload(monkeypatch) -> None:
+    client = ClickHouseClient(endpoint="http://clickhouse")
+
+    monkeypatch.setattr(
+        ClickHouseClient,
+        "execute",
+        lambda self, query, settings=None: (
+            '{"item_id":"1","price_chaos":12.5}\n{"item_id":"2","price_chaos":8.0}'
+        ),
+    )
+
+    frame = client.query_df("SELECT * FROM test_table")
+
+    assert list(frame.columns) == ["item_id", "price_chaos"]
+    assert frame.to_dict(orient="records") == [
+        {"item_id": 1, "price_chaos": 12.5},
+        {"item_id": 2, "price_chaos": 8.0},
+    ]

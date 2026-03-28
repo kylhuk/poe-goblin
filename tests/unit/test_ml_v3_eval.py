@@ -125,6 +125,77 @@ def test_promotion_gate_accepts_exact_cutoff_values() -> None:
     assert gate["decision"] == "auto"
 
 
+def test_promotion_gate_rejects_when_serving_path_parity_fails() -> None:
+    gate = v3_eval.promotion_gate(
+        sample_count=600,
+        global_fair_value_mdape=0.2,
+        incumbent_fair_value_mdape=0.3,
+        global_fast_sale_hit_rate=0.62,
+        incumbent_fast_sale_hit_rate=0.63,
+        global_sale_probability_calibration_error=0.1,
+        global_confidence_calibration_error=0.1,
+        global_abstain_rate=0.03,
+        incumbent_abstain_rate=0.01,
+        consecutive_pass_windows=3,
+        worst_slice_mdape=0.3,
+        serving_path_parity_ok=False,
+    )
+
+    assert gate["passed"] is False
+    assert gate["decision"] == "reject"
+    assert "serving_path_parity" in str(gate["reason"])
+
+
+def test_consecutive_pass_windows_counts_current_history_streak(monkeypatch) -> None:
+    monkeypatch.setattr(
+        v3_eval,
+        "_query_rows",
+        lambda *_args, **_kwargs: [
+            {"gate_passed": 1, "recorded_at": "2026-03-24 00:00:00.000"},
+            {"gate_passed": 1, "recorded_at": "2026-03-23 00:00:00.000"},
+            {"gate_passed": 0, "recorded_at": "2026-03-22 00:00:00.000"},
+        ],
+    )
+
+    assert (
+        v3_eval._consecutive_pass_windows(
+            object(),
+            league="Mirage",
+            model_version="v3-mirage-sparse_retrieval",
+            split_kind="rolling",
+        )
+        == 3
+    )
+
+
+def test_evaluate_run_marks_serving_path_parity_false_without_engine_versions(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        v3_eval,
+        "_query_rows",
+        lambda *_args, **_kwargs: [
+            {
+                "route": "sparse_retrieval",
+                "strategy_family": "sparse_retrieval",
+                "cohort_key": "sparse_retrieval|default|v1|rare|0|0|0",
+                "sample_count": 600,
+                "fair_value_mdape": 0.25,
+                "fair_value_wape": 0.3,
+                "fast_sale_24h_hit_rate": 0.6,
+                "fast_sale_24h_mdape": 0.18,
+                "sale_probability_calibration_error": 0.1,
+                "confidence_calibration_error": 0.12,
+            }
+        ],
+    )
+    monkeypatch.setattr(v3_eval, "_insert_json_rows", lambda *_args, **_kwargs: None)
+
+    payload = v3_eval.evaluate_run(object(), league="Mirage", run_id="run-123")
+
+    assert payload["summary"]["serving_path_parity_ok"] == 0
+
+
 def test_promotion_gate_treats_sample_count_150_as_candidate_manual() -> None:
     gate = v3_eval.promotion_gate(
         sample_count=150,
@@ -307,6 +378,7 @@ def test_evaluate_run_records_route_and_summary_rows(monkeypatch) -> None:
 
     assert payload["summary"]["run_id"] == "run-123"
     assert payload["summary"]["model_version"] == "run-123"
+    assert payload["summary"]["split_kind"] == "forward"
     assert payload["summary"]["gate_passed"] == 0
     assert "consecutive_windows_required" in str(payload["summary"]["gate_reason"])
     assert payload["metrics"]["global_fast_sale_24h_mdape"] == 0.18
@@ -381,6 +453,8 @@ def test_evaluate_run_passes_gate_with_history_and_incumbent_baseline_across_run
     assert payload["summary"]["gate_reason"] == "pass"
     assert payload["summary"]["run_id"] == "run-promote"
     assert payload["summary"]["model_version"] == stable_model_version
+    assert payload["summary"]["split_kind"] == "forward"
+    assert payload["summary"]["serving_path_parity_ok"] == 1
     eval_rows = next(
         rows for table, rows in inserted if table == v3_eval.EVAL_RUNS_TABLE
     )

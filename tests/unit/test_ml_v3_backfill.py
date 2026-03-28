@@ -77,7 +77,7 @@ def test_guard_disk_budget_raises_when_disk_telemetry_unavailable() -> None:
         backfill.guard_disk_budget(_TelemetryErrorClient(), max_bytes=100)
 
 
-def test_replay_day_executes_event_label_and_training_queries() -> None:
+def test_replay_day_executes_episode_event_label_and_training_queries() -> None:
     client = _RecordingClient(bytes_on_disk=10)
 
     result = backfill.replay_day(
@@ -88,9 +88,12 @@ def test_replay_day_executes_event_label_and_training_queries() -> None:
     )
 
     joined = "\n".join(client.queries)
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.ml_v3_listing_episodes" in joined
+    assert "INSERT INTO poe_trade.ml_v3_listing_episodes" in joined
     assert "INSERT INTO poe_trade.silver_v3_item_events" in joined
     assert "INSERT INTO poe_trade.ml_v3_sale_proxy_labels" in joined
     assert "INSERT INTO poe_trade.ml_v3_training_examples" in joined
+    assert "sale_confidence_flag" in joined
     assert result.day == "2026-03-20"
 
 
@@ -224,6 +227,7 @@ def test_replay_day_clears_target_day_slice_before_inserts() -> None:
     )
 
     joined = "\n".join(client.queries)
+    assert "DELETE FROM poe_trade.ml_v3_listing_episodes" in joined
     assert "DELETE FROM poe_trade.silver_v3_item_events" in joined
     assert "DELETE FROM poe_trade.ml_v3_sale_proxy_labels" in joined
     assert "DELETE FROM poe_trade.ml_v3_training_examples" in joined

@@ -74,3 +74,14 @@ def test_daily_report_returns_zeroed_contract_when_backend_payload_is_empty() ->
         "gold_set_ref_hour_rows": 0,
         "realized_pnl_chaos": 0.0,
     }
+
+
+def test_daily_report_escapes_league_literal_in_query() -> None:
+    client = _RecordingClickHouse(
+        """{"league":"Mirage' OR 1=1","recommendations":0,"alerts":0,"journal_events":0,"journal_positions":0,"backtest_summary_rows":0,"backtest_detail_rows":0,"gold_currency_ref_hour_rows":0,"gold_listing_ref_hour_rows":0,"gold_liquidity_ref_hour_rows":0,"gold_bulk_premium_hour_rows":0,"gold_set_ref_hour_rows":0,"realized_pnl_chaos":0.0}\n"""
+    )
+
+    report = daily_report(client, league="Mirage' OR 1=1")
+
+    assert report["league"] == "Mirage' OR 1=1"
+    assert "Mirage'' OR 1=1" in client.queries[0]

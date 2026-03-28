@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 
+import pytest
+
+from poe_trade.db import ClickHouseClient
 from poe_trade.ml.v3 import serve
 from poe_trade.ml.v3 import hybrid_search
 from poe_trade.ml.v3.hybrid_search import SearchResult, run_search
 
 
-class _Client:
+class _Client(ClickHouseClient):
+    def __init__(self) -> None:
+        super().__init__(endpoint="http://localhost")
+
     def execute(self, query: str, settings=None) -> str:  # noqa: ANN001
         if "quantileTDigest(0.5)(target_price_chaos)" in query:
             return json.dumps({"p50": 120.0, "rows": 32}) + "\n"
@@ -259,6 +266,120 @@ def test_load_promoted_rollout_rows_uses_shared_sql_table_constant(
     assert f"FROM {serve.sql.ROLLOUT_STATE_TABLE}" in captured["query"]
 
 
+def test_predict_one_v3_uses_route_bundle_when_rollout_state_is_empty(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        serve.workflows,
+        "_parse_clipboard_item",
+        lambda _text: _parsed_payload(),
+    )
+    monkeypatch.setattr(
+        serve.sql,
+        "build_retrieval_candidate_query",
+        lambda **_kwargs: "RETRIEVE",
+    )
+    monkeypatch.setattr(
+        serve, "_load_promoted_rollout_rows", lambda *_args, **_kwargs: []
+    )
+    monkeypatch.setattr(
+        serve,
+        "_load_bundle_if_present",
+        lambda **_kwargs: {
+            "vectorizer": _DummyVectorizer(),
+            "models": {
+                "p10": _DummyRegressor(95.0),
+                "p50": _DummyRegressor(120.0),
+                "p90": _DummyRegressor(140.0),
+                "fast_sale_24h": _DummyRegressor(109.0),
+                "sale_probability": _DummyClassifier(),
+            },
+            "fallback_fast_sale_multiplier": 0.9,
+            "metadata": {
+                "model_version": "v3-mirage-sparse_retrieval",
+                "row_count": 1200,
+            },
+            "cohort_bundles": {
+                "sparse_retrieval::sparse_retrieval|helmet|v1|rarity=rare|corrupted=0|fractured=0|synthesised=0": {
+                    "vectorizer": _DummyVectorizer(),
+                    "models": {
+                        "p10": _DummyRegressor(94.0),
+                        "p50": _DummyRegressor(118.0),
+                        "p90": _DummyRegressor(142.0),
+                        "fast_sale_24h": _DummyRegressor(108.0),
+                        "sale_probability": _DummyClassifier(),
+                    },
+                    "metadata": {"model_version": "v3-mirage-sparse_retrieval"},
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(serve, "_query_rows", lambda _client, _query: [])
+
+    payload = serve.predict_one_v3(
+        _Client(),
+        league="Mirage",
+        clipboard_text="dummy",
+        model_dir="/unused",
+    )
+
+    assert payload["prediction_source"] == "v3_model"
+    assert payload["fair_value_p50"] == 120.0
+    assert payload["fast_sale_24h_price"] == 103.55
+    assert payload["confidence"] == 0.1
+
+
+def test_predict_one_v3_decodes_log1p_price_bundle_outputs(monkeypatch) -> None:
+    monkeypatch.setattr(
+        serve.workflows,
+        "_parse_clipboard_item",
+        lambda _text: _parsed_payload(),
+    )
+    monkeypatch.setattr(
+        serve.sql,
+        "build_retrieval_candidate_query",
+        lambda **_kwargs: "RETRIEVE",
+    )
+    monkeypatch.setattr(
+        serve, "_load_promoted_rollout_rows", lambda *_args, **_kwargs: []
+    )
+    monkeypatch.setattr(
+        serve,
+        "_load_bundle_if_present",
+        lambda **_kwargs: {
+            "vectorizer": _DummyVectorizer(),
+            "models": {
+                "p10": _DummyRegressor(4.564348191467836),
+                "p50": _DummyRegressor(4.795790545596741),
+                "p90": _DummyRegressor(4.948759890378168),
+                "fast_sale_24h": _DummyRegressor(4.709530201312334),
+                "sale_probability": _DummyRegressor(0.77),
+            },
+            "fallback_fast_sale_multiplier": 0.9,
+            "metadata": {
+                "model_version": "v3-mirage-sparse_retrieval",
+                "row_count": 1200,
+                "prediction_space": "log1p_price",
+            },
+        },
+    )
+    monkeypatch.setattr(serve, "_query_rows", lambda _client, _query: [])
+
+    payload = serve.predict_one_v3(
+        _Client(),
+        league="Mirage",
+        clipboard_text="dummy",
+        model_dir="/unused",
+    )
+
+    assert payload["prediction_source"] == "v3_model"
+    assert payload["fair_value_p50"] == pytest.approx(120.0, rel=1e-6)
+    assert payload["fair_value_p10"] == pytest.approx(95.0, rel=1e-6)
+    assert payload["fair_value_p90"] == pytest.approx(140.0, rel=1e-6)
+    assert payload["fast_sale_24h_price"] == pytest.approx(104.5, rel=1e-6)
+    assert payload["sale_probability_24h"] == pytest.approx(0.77, rel=1e-6)
+
+
 def test_predict_one_v3_fallback_returns_dual_prices(monkeypatch) -> None:
     monkeypatch.setattr(
         serve.workflows,
@@ -275,7 +396,7 @@ def test_predict_one_v3_fallback_returns_dual_prices(monkeypatch) -> None:
 
     assert payload["route"] == "sparse_retrieval"
     assert payload["fair_value_p50"] == 120.0
-    assert payload["fast_sale_24h_price"] == 108.0
+    assert payload["fast_sale_24h_price"] == 102.6
     assert payload["prediction_source"] == "v3_median_fallback"
     assert payload["uncertainty_tier"] == "high"
     assert payload["price_recommendation_eligible"] is False
@@ -339,7 +460,7 @@ def test_predict_one_v3_fallback_survives_median_query_failure(monkeypatch) -> N
     assert payload["prediction_source"] == "v3_median_fallback"
     assert payload["fair_value_p50"] == 1.0
     assert payload["support_count_recent"] == 0
-    assert payload["fast_sale_24h_price"] == 0.9
+    assert payload["fast_sale_24h_price"] == 0.855
     assert payload["confidence"] == 0.1
 
 
@@ -399,8 +520,53 @@ def test_predict_one_v3_uses_direct_fast_sale_model_when_bundle_exists(
 
     assert payload["prediction_source"] == "v3_model"
     assert payload["fair_value_p50"] == 120.0
-    assert payload["fast_sale_24h_price"] == 109.0
+    assert payload["fast_sale_24h_price"] == 103.55
     assert payload["sale_probability_24h"] == 0.8
+
+
+def test_predict_one_v3_converts_divine_bundle_outputs_to_chaos(monkeypatch) -> None:
+    monkeypatch.setattr(
+        serve.workflows,
+        "_parse_clipboard_item",
+        lambda _text: _parsed_payload(),
+    )
+    monkeypatch.setattr(
+        serve,
+        "_latest_fx_rate",
+        lambda _client, *, league: 100.0,
+    )
+    monkeypatch.setattr(
+        serve,
+        "_load_bundle_if_present",
+        lambda **_kwargs: {
+            "vectorizer": _DummyVectorizer(),
+            "models": {
+                "p10": _DummyRegressor(1.0),
+                "p50": _DummyRegressor(2.0),
+                "p90": _DummyRegressor(3.0),
+                "fast_sale_24h": _DummyRegressor(1.5),
+                "sale_probability": _DummyClassifier(),
+            },
+            "fallback_fast_sale_multiplier": 0.9,
+            "metadata": {
+                "model_version": "v3-mirage-sparse_retrieval",
+                "row_count": 1200,
+                "price_unit": "divine",
+            },
+        },
+    )
+    monkeypatch.setattr(serve, "_query_rows", lambda _client, _query: [])
+
+    payload = serve.predict_one_v3(
+        _Client(),
+        league="Mirage",
+        clipboard_text="dummy",
+        model_dir="/unused",
+    )
+
+    assert payload["prediction_source"] == "v3_model"
+    assert payload["fair_value_p50"] == 200.0
+    assert payload["fast_sale_24h_price"] == pytest.approx(142.5, rel=1e-6)
     assert payload["confidence"] == 0.1
 
 
@@ -461,7 +627,7 @@ def test_predict_one_v3_ignores_malformed_fast_sale_model(monkeypatch) -> None:
     )
 
     assert payload["prediction_source"] == "v3_model"
-    assert payload["fast_sale_24h_price"] == 108.0
+    assert payload["fast_sale_24h_price"] == 102.6
 
 
 def test_predict_one_v3_ignores_malformed_sale_probability_model(monkeypatch) -> None:
@@ -526,7 +692,7 @@ def test_predict_one_v3_defaults_on_malformed_fast_sale_multiplier(monkeypatch) 
     )
 
     assert payload["prediction_source"] == "v3_model"
-    assert payload["fast_sale_24h_price"] == 108.0
+    assert payload["fast_sale_24h_price"] == 102.6
 
 
 def test_predict_one_v3_runs_retrieval_search_and_attaches_diagnostics(
@@ -536,7 +702,7 @@ def test_predict_one_v3_runs_retrieval_search_and_attaches_diagnostics(
     parsed_item["mod_features_json"] = (
         '{"explicit.crit_chance": 10, "explicit.life": 5}'
     )
-    retrieval_calls: dict[str, object] = {}
+    retrieval_calls: dict[str, Any] = {}
 
     def _fake_parse(_text: str) -> dict[str, object]:
         return parsed_item
@@ -571,7 +737,7 @@ def test_predict_one_v3_runs_retrieval_search_and_attaches_diagnostics(
         )
 
     monkeypatch.setattr(serve.hybrid_search, "run_search", _fake_run_search)
-    retrieval_query = {
+    retrieval_query: dict[str, Any] = {
         "built": False,
         "args": {},
     }

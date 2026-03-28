@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import cast
 
 import pytest
 
+from poe_trade.db import ClickHouseClient
+from poe_trade.ml.contract import PRICING_BENCHMARK_CONTRACT
 from poe_trade.ml import workflows
 from poe_trade.ml.v3 import sql
 from poe_trade.ml.v3 import routes
@@ -43,9 +46,43 @@ def test_build_sale_proxy_labels_insert_query_uses_event_table() -> None:
     assert f"INSERT INTO {sql.SALE_LABELS_TABLE}" in query
     assert f"FROM {sql.EVENTS_TABLE}" in query
     assert "sold_probability" in query
+    assert PRICING_BENCHMARK_CONTRACT.label_source in query
 
 
-def test_build_training_examples_insert_query_uses_observations_and_labels() -> None:
+class _NoopClickHouseClient:
+    def execute(self, query: str, settings=None) -> str:  # noqa: ANN001
+        del query, settings
+        return ""
+
+
+def test_pricing_benchmark_contract_freezes_non_exchange_scope() -> None:
+    assert PRICING_BENCHMARK_CONTRACT.name == "non_exchange_disappearance_benchmark_v1"
+    assert PRICING_BENCHMARK_CONTRACT.confirmation_horizon_hours == 48
+    assert PRICING_BENCHMARK_CONTRACT.exchange_routes == ("fungible_reference",)
+    assert "sparse_retrieval" in PRICING_BENCHMARK_CONTRACT.non_exchange_routes
+    assert "fallback_abstain" in PRICING_BENCHMARK_CONTRACT.non_exchange_routes
+
+
+def test_build_listing_episodes_insert_query_collapses_snapshot_bursts() -> None:
+    query = sql.build_listing_episodes_insert_query(
+        league="Mirage", day=date(2026, 3, 20)
+    )
+
+    assert f"INSERT INTO {sql.LISTING_EPISODES_TABLE}" in query
+    assert "lagInFrame(observed_at) OVER w" in query
+    assert "sum(is_new_episode) OVER" in query
+    assert "first_seen" in query
+    assert "last_seen" in query
+    assert "snapshot_count" in query
+    assert "latest_price" in query
+    assert "min_price" in query
+    assert "latest_price_divine" in query
+    assert "min_price_divine" in query
+    assert "fx_chaos_per_divine" in query
+    assert "target_price_divine" in query
+
+
+def test_build_training_examples_insert_query_uses_listing_episodes() -> None:
     query = sql.build_training_examples_insert_query(
         league="Mirage", day=date(2026, 3, 20)
     )
@@ -53,9 +90,13 @@ def test_build_training_examples_insert_query_uses_observations_and_labels() -> 
     assert f"INSERT INTO {sql.TRAINING_TABLE}" in query
     assert f"INSERT INTO {sql.TRAINING_TABLE} (" in query
     assert ") SELECT" in query
-    assert f"FROM {sql.OBSERVATIONS_TABLE} AS obs" in query
-    assert f"LEFT JOIN {sql.SALE_LABELS_TABLE} AS labels" in query
+    assert f"FROM {sql.LISTING_EPISODES_TABLE} AS episode" in query
+    assert "listing_episode_id" in query
+    assert "snapshot_count" in query
     assert "target_fast_sale_24h_price" in query
+    assert "target_fast_sale_24h_price_divine" in query
+    assert "target_price_divine" in query
+    assert "sale_confidence_flag" in query
 
 
 def test_training_sql_emits_route_and_item_state_search_keys() -> None:
@@ -65,12 +106,10 @@ def test_training_sql_emits_route_and_item_state_search_keys() -> None:
 
     assert "AS route" in query
     assert "AS item_state_key" in query
-    assert "lowerUTF8(ifNull(obs.rarity, ''))" in query
-    assert "'|corrupted=', toString(toUInt8(ifNull(obs.corrupted, 0) != 0))" in query
-    assert "'|fractured=', toString(toUInt8(ifNull(obs.fractured, 0) != 0))" in query
-    assert (
-        "'|synthesised=', toString(toUInt8(ifNull(obs.synthesised, 0) != 0))" in query
-    )
+    assert "episode.item_state_key AS item_state_key" in query
+    assert "episode.corrupted AS corrupted" in query
+    assert "episode.fractured AS fractured" in query
+    assert "episode.synthesised AS synthesised" in query
 
 
 def test_training_sql_emits_cohort_identity_projections() -> None:
@@ -81,6 +120,10 @@ def test_training_sql_emits_cohort_identity_projections() -> None:
     assert "AS strategy_family" in query
     assert "AS cohort_key" in query
     assert "AS material_state_signature" in query
+    assert "episode.strategy_family AS strategy_family" in query
+    assert "episode.cohort_key AS cohort_key" in query
+    assert "episode.material_state_signature AS material_state_signature" in query
+    assert "episode.fx_chaos_per_divine AS fx_chaos_per_divine" in query
 
 
 def test_training_sql_strategy_family_uses_family_scope_logic_not_route_alias() -> None:
@@ -88,11 +131,7 @@ def test_training_sql_strategy_family_uses_family_scope_logic_not_route_alias() 
         league="Mirage", day=date(2026, 3, 20)
     )
 
-    strategy_projection_idx = query.index(" AS strategy_family,")
-    strategy_projection_window = query[
-        max(0, strategy_projection_idx - 260) : strategy_projection_idx
-    ]
-    assert "ifNull(obs.category, 'other')" in strategy_projection_window
+    assert "episode.strategy_family AS strategy_family" in query
 
 
 def test_training_sql_emits_target_metadata_projections() -> None:
@@ -100,9 +139,11 @@ def test_training_sql_emits_target_metadata_projections() -> None:
         league="Mirage", day=date(2026, 3, 20)
     )
 
-    assert "labels.likely_sold AS target_likely_sold" in query
-    assert "labels.time_to_exit_hours AS target_time_to_exit_hours" in query
-    assert "labels.sale_price_anchor_chaos AS target_sale_price_anchor_chaos" in query
+    assert "toUInt8(episode.snapshot_count >= 2) AS target_likely_sold" in query
+    assert "CAST(NULL AS Nullable(Float64)) AS target_time_to_exit_hours" in query
+    assert "episode.min_price AS target_sale_price_anchor_chaos" in query
+    assert "episode.latest_price_divine AS target_price_divine" in query
+    assert "episode.min_price_divine AS target_fast_sale_24h_price_divine" in query
 
 
 def test_training_sql_keeps_insert_column_order_for_new_contract_fields() -> None:
@@ -112,12 +153,25 @@ def test_training_sql_keeps_insert_column_order_for_new_contract_fields() -> Non
 
     assert query.index("strategy_family,") < query.index("cohort_key,")
     assert query.index("cohort_key,") < query.index("material_state_signature,")
+    assert query.index("listing_episode_id,") < query.index("first_seen,")
+    assert query.index("first_seen,") < query.index("last_seen,")
+    assert query.index("last_seen,") < query.index("snapshot_count,")
     assert query.index("target_likely_sold,") < query.index(
         "target_time_to_exit_hours,"
     )
     assert query.index("target_time_to_exit_hours,") < query.index(
         "target_sale_price_anchor_chaos,"
     )
+
+
+def test_listing_episode_sql_normalizes_chaos_and_divine_prices() -> None:
+    query = sql.build_listing_episodes_insert_query(
+        league="Mirage", day=date(2026, 3, 20)
+    )
+
+    assert "normalized_price_chaos" in query
+    assert "normalized_price_divine" in query
+    assert "multiIf(" in query
 
 
 def test_retrieval_candidate_sql_can_partition_by_route_and_state() -> None:
@@ -155,6 +209,111 @@ def test_sql_select_route_matches_routes_module() -> None:
     parsed = {"category": "cluster_jewel", "rarity": "Rare"}
 
     assert sql.select_route(parsed) == routes.select_route(parsed)
+
+
+def test_pricing_benchmark_contract_spec_freezes_non_exchange_columns() -> None:
+    spec = sql.pricing_benchmark_contract_spec()
+
+    assert spec["name"] == PRICING_BENCHMARK_CONTRACT.name
+    assert spec["confirmation_horizon_hours"] == 48
+    assert spec["row_grain"] == "one row per listing episode at first_seen"
+    assert "sale_confidence_flag" in spec["allowed_columns"]
+    assert "future_snapshot" in spec["forbidden_feature_patterns"]
+
+
+def test_fast_sale_benchmark_contract_spec_freezes_target_and_split_policy() -> None:
+    spec = sql.fast_sale_benchmark_contract_spec()
+
+    assert spec["name"] == "fast_sale_24h_price_benchmark_v1"
+    assert spec["target_name"] == "target_fast_sale_24h_price"
+    assert spec["candidate_count"] == 3
+    assert spec["split_kind"] == "grouped_forward"
+    assert spec["tail_metric_quantile"] == 0.9
+    assert "target_fast_sale_24h_price" in spec["allowed_columns"]
+    assert "future_snapshot" in spec["forbidden_feature_patterns"]
+
+
+def test_pricing_benchmark_extract_query_filters_non_exchange_routes() -> None:
+    query = sql.build_pricing_benchmark_extract_query(
+        league="Mirage",
+        as_of_ts="2026-03-24 10:00:00",
+    )
+
+    assert f"INSERT INTO {sql.BENCHMARK_EXTRACT_TABLE}" in query
+    assert (
+        "route IN ('cluster_jewel_retrieval', 'structured_boosted', 'structured_boosted_other', 'sparse_retrieval', 'fallback_abstain')"
+        in query
+    )
+    assert "sale_confidence_flag" in query
+    assert "target_price_chaos" in query
+    assert "ORDER BY as_of_ts ASC, identity_key ASC, item_id ASC" in query
+    assert "listing_episode_id" in query
+
+
+def test_mirage_iron_ring_benchmark_sample_query_uses_branch_view() -> None:
+    query = sql.build_mirage_iron_ring_benchmark_sample_query(
+        league="Mirage",
+        sample_size=10_000,
+    )
+
+    assert "FROM poe_trade.v_ml_v3_mirage_iron_ring_item_features_v1" in query
+    assert "category = 'ring'" in query
+    assert "base_type = 'Iron Ring'" in query
+    assert "parsed_amount IS NOT NULL" in query
+    assert "parsed_amount > 0" in query
+    assert "normalized_affix_hash" in query
+    assert "hash_rank = 1" in query
+    assert "influence_mask" in query
+    assert "catalyst_type" in query
+    assert "catalyst_quality" in query
+    assert "synth_imp_count" in query
+    assert "synth_implicit_mods_json" in query
+    assert "corrupted_implicit_mods_json" in query
+    assert "veiled_count" in query
+    assert "crafted_count" in query
+    assert "prefix_count" in query
+    assert "suffix_count" in query
+    assert "open_prefixes" in query
+    assert "open_suffixes" in query
+    assert "mod_features_json" in query
+    assert "target_price_chaos" in query
+    assert "support_count_recent" in query
+    assert "affixes" in query
+    assert "observed_at AS as_of_ts" in query
+
+
+def test_mirage_iron_ring_affix_catalog_query_reads_ring_mod_catalog() -> None:
+    query = sql.build_mirage_iron_ring_affix_catalog_query()
+
+    assert "FROM poe_trade.ml_ring_mod_catalog_v1" in query
+    assert "mod_text_pattern" in query
+    assert "mod_base_name" in query
+    assert "mod_max_value" in query
+
+
+def test_lgbm_neo_training_query_targets_the_wide_rare_item_table() -> None:
+    query = sql.build_lgbm_neo_training_query()
+
+    assert f"FROM {sql.POE_RARE_ITEM_TRAIN_TABLE}" in query
+    assert "price_chaos > 0" in query
+    assert "ORDER BY observed_at ASC, item_fingerprint ASC, item_id ASC" in query
+    assert "observed_at" in query
+    assert "item_fingerprint" in query
+    assert "league" in query
+    assert "category" in query
+    assert "base_type" in query
+    assert "has_exp_dex_flat" in query
+    assert "val_exp_mana_flat" in query
+    assert "has_exp_all_attributes" in query
+    assert "has_exp_strength" in query
+    assert "has_fract_all_attributes" in query
+    assert "has_craft_strength" in query
+    assert "has_enchant_intelligence" in query
+    assert "support_count_recent" not in query
+    assert "strategy_family" not in query
+    assert "cohort_key" not in query
+    assert "item_state_key" not in query
+    assert "base_identity_key" not in query
 
 
 def test_reference_snapshot_policy_enforces_route_and_category_thresholds() -> None:
@@ -240,9 +399,10 @@ def test_reference_snapshot_lookup_uses_parent_route_fallback(
         return responses.pop(0)
 
     monkeypatch.setattr(workflows, "_query_rows", _fake_query_rows)
+    client = cast(ClickHouseClient, cast(object, _NoopClickHouseClient()))
 
     payload = workflows._reference_snapshot_lookup(
-        object(),
+        client,
         league="Mirage",
         route="fallback_abstain",
         parent_route="sparse_retrieval",
@@ -299,9 +459,10 @@ def test_reference_snapshot_lookup_uses_poeninja_when_stash_snapshots_stale_or_t
         return responses.pop(0)
 
     monkeypatch.setattr(workflows, "_query_rows", _fake_query_rows)
+    client = cast(ClickHouseClient, cast(object, _NoopClickHouseClient()))
 
     payload = workflows._reference_snapshot_lookup(
-        object(),
+        client,
         league="Mirage",
         route="fungible_reference",
         parent_route="fallback_abstain",
@@ -347,9 +508,10 @@ def test_reference_snapshot_lookup_applies_policy_per_candidate_route(
         return responses.pop(0)
 
     monkeypatch.setattr(workflows, "_query_rows", _fake_query_rows)
+    client = cast(ClickHouseClient, cast(object, _NoopClickHouseClient()))
 
     payload = workflows._reference_snapshot_lookup(
-        object(),
+        client,
         league="Mirage",
         route="fallback_abstain",
         parent_route="fungible_reference",
@@ -374,9 +536,10 @@ def test_reference_snapshot_lookup_constrains_snapshot_as_of_ts_no_future_leakag
         return []
 
     monkeypatch.setattr(workflows, "_query_rows", _fake_query_rows)
+    client = cast(ClickHouseClient, cast(object, _NoopClickHouseClient()))
 
     _ = workflows._reference_snapshot_lookup(
-        object(),
+        client,
         league="Mirage",
         route="fungible_reference",
         parent_route="fallback_abstain",
