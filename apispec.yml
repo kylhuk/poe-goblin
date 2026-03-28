@@ -1,0 +1,942 @@
+openapi: 3.0.3
+info:
+  title: poe_trade API
+  version: v1
+  description: OpenAPI specification for the current poe_trade HTTP API.
+servers:
+  - url: /
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/v1/ops/contract:
+    get:
+      summary: Ops contract
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Ops contract payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsContractResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ops/services:
+    get:
+      summary: List services
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Service snapshots
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServicesResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ops/dashboard:
+    get:
+      summary: Ops dashboard
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Dashboard payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsDashboardResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ops/messages:
+    get:
+      summary: Ops messages
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Messages payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsMessagesResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ops/scanner/summary:
+    get:
+      summary: Scanner summary
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Scanner summary payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScannerSummaryResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ops/scanner/recommendations:
+    get:
+      summary: Scanner recommendations
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: sort
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200 }
+        - in: query
+          name: min_confidence
+          schema: { type: number }
+        - in: query
+          name: league
+          schema: { type: string }
+        - in: query
+          name: strategy_id
+          schema: { type: string }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        '200':
+          description: Recommendation payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScannerRecommendationsResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ops/alerts/{alert_id}/ack:
+    post:
+      summary: Acknowledge alert
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        '200':
+          description: Acknowledged alert
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AckAlertResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ops/analytics/{kind}:
+    get:
+      summary: Generic analytics dispatcher
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AnalyticsKind'
+      responses:
+        '200':
+          description: Analytics payload
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/AnalyticsIngestionResponse'
+                  - $ref: '#/components/schemas/AnalyticsScannerResponse'
+                  - $ref: '#/components/schemas/AnalyticsOpportunitiesResponse'
+                  - $ref: '#/components/schemas/AnalyticsSearchSuggestionsResponse'
+                  - $ref: '#/components/schemas/AnalyticsSearchHistoryResponse'
+                  - $ref: '#/components/schemas/AnalyticsPricingOutliersResponse'
+                  - $ref: '#/components/schemas/GenericObject'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ops/analytics/search-suggestions:
+    get:
+      summary: Search suggestions
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Search suggestions payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsSearchSuggestionsResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ops/analytics/search-history:
+    get:
+      summary: Search history
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: query
+          schema: { type: string }
+        - in: query
+          name: league
+          schema: { type: string }
+        - in: query
+          name: sort
+          schema: { type: string }
+        - in: query
+          name: order
+          schema: { type: string }
+        - in: query
+          name: price_min
+          schema: { type: number }
+        - in: query
+          name: price_max
+          schema: { type: number }
+        - in: query
+          name: time_from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: time_to
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500 }
+      responses:
+        '200':
+          description: Search history payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsSearchHistoryResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ops/analytics/pricing-outliers:
+    get:
+      summary: Pricing outliers
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: league
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500 }
+        - in: query
+          name: min_total
+          schema: { type: integer, minimum: 1, maximum: 5000 }
+        - in: query
+          name: sort
+          schema: { type: string }
+        - in: query
+          name: order
+          schema: { type: string }
+        - in: query
+          name: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Pricing outliers payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsPricingOutliersResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/actions/services/{service_id}/{verb}:
+    post:
+      summary: Service control action
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+        - $ref: '#/components/parameters/ServiceVerb'
+      responses:
+        '200':
+          description: Service snapshot after action
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceActionResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '403':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ops/leagues/{league}/price-check:
+    post:
+      summary: Price check
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/League'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceCheckRequest'
+      responses:
+        '200':
+          description: Price check payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceCheckResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '503':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/stash/tabs:
+    get:
+      summary: Published stash tabs
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/League'
+        - $ref: '#/components/parameters/Realm'
+      responses:
+        '200':
+          description: Stash tabs payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StashTabsResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '503':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/stash/status:
+    get:
+      summary: Stash connection status
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/League'
+        - $ref: '#/components/parameters/Realm'
+      responses:
+        '200':
+          description: Stash status payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StashStatusResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/stash/scan:
+    post:
+      summary: Start stash scan
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/League'
+        - $ref: '#/components/parameters/Realm'
+      responses:
+        '202':
+          description: Scan started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StashScanStartResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '503':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/stash/scan/status:
+    get:
+      summary: Stash scan status
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/League'
+        - $ref: '#/components/parameters/Realm'
+      responses:
+        '200':
+          description: Scan status payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StashScanStatusResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/stash/items/{fingerprint}/history:
+    get:
+      summary: Stash item history
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/Fingerprint'
+        - $ref: '#/components/parameters/League'
+        - $ref: '#/components/parameters/Realm'
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Item history payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StashItemHistoryResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/stash/scan/valuations:
+    post:
+      summary: Valuate stash scan items
+      description: New endpoint that prices scanned stash items against historical comparables.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/League'
+        - $ref: '#/components/parameters/Realm'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StashScanValuationsRequest'
+      responses:
+        '200':
+          description: Stash valuation payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StashScanValuationsResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '404':
+          $ref: '#/components/responses/ApiError'
+        '503':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/auth/login:
+    get:
+      summary: Start OAuth login
+      responses:
+        '200':
+          description: OAuth authorize URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthLoginResponse'
+
+  /api/v1/auth/callback:
+    get:
+      summary: OAuth callback
+      parameters:
+        - in: query
+          name: code
+          schema: { type: string }
+        - in: query
+          name: state
+          schema: { type: string }
+        - in: query
+          name: error
+          schema: { type: string }
+        - in: query
+          name: error_description
+          schema: { type: string }
+      responses:
+        '200':
+          description: Connected session payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthCallbackResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/auth/session:
+    get:
+      summary: Current session
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Session payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/auth/logout:
+    post:
+      summary: Logout
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthLogoutResponse'
+
+  /api/v1/ml/contract:
+    get:
+      summary: ML contract
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: ML contract payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MLContractResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ml/leagues/{league}/status:
+    get:
+      summary: ML status
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/League'
+      responses:
+        '200':
+          description: ML status payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MLStatusResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ml/leagues/{league}/predict-one:
+    post:
+      summary: Predict one item
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/League'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MLPredictOneRequest'
+      responses:
+        '200':
+          description: Predict-one payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MLPredictOneResponse'
+        '400':
+          $ref: '#/components/responses/ApiError'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '503':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ml/leagues/{league}/automation/status:
+    get:
+      summary: ML automation status
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/League'
+      responses:
+        '200':
+          description: Automation status payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MLAutomationStatusResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/ml/leagues/{league}/automation/history:
+    get:
+      summary: ML automation history
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/League'
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: Automation history payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MLAutomationHistoryResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: token
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: poe_session
+
+  parameters:
+    League:
+      in: path
+      name: league
+      required: true
+      schema:
+        type: string
+    Realm:
+      in: query
+      name: realm
+      schema:
+        type: string
+        default: pc
+    Fingerprint:
+      in: path
+      name: fingerprint
+      required: true
+      schema:
+        type: string
+    AlertId:
+      in: path
+      name: alert_id
+      required: true
+      schema:
+        type: string
+    ServiceId:
+      in: path
+      name: service_id
+      required: true
+      schema:
+        type: string
+    ServiceVerb:
+      in: path
+      name: verb
+      required: true
+      schema:
+        type: string
+        enum: [start, stop, restart]
+    AnalyticsKind:
+      in: path
+      name: kind
+      required: true
+      schema:
+        type: string
+        enum: [ingestion, scanner, opportunities, search-suggestions, search-history, pricing-outliers]
+
+  responses:
+    ApiError:
+      description: Structured API error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+
+  schemas:
+    GenericObject:
+      type: object
+      additionalProperties: true
+
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          nullable: true
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: array
+              items: {}
+
+    HealthResponse:
+      type: object
+      required: [status, service, version, ml]
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        version:
+          type: string
+        ml:
+          type: object
+          additionalProperties: true
+
+    OpsContractResponse:
+      type: object
+      required: [version, auth_mode, allowed_leagues, primary_league, deployment, routes, tabs, visible_service_ids, controllable_service_ids]
+      properties:
+        version: { type: string }
+        auth_mode: { type: string }
+        allowed_leagues:
+          type: array
+          items: { type: string }
+        primary_league: { type: string }
+        deployment:
+          type: object
+          additionalProperties: true
+        routes:
+          type: object
+          additionalProperties: { type: string }
+        tabs:
+          type: array
+          items: { type: string }
+        visible_service_ids:
+          type: array
+          items: { type: string }
+        controllable_service_ids:
+          type: array
+          items: { type: string }
+
+    ServicesResponse:
+      type: object
+      required: [services]
+      properties:
+        services:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    OpsDashboardResponse:
+      type: object
+      additionalProperties: true
+
+    OpsMessagesResponse:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+
+    ScannerSummaryResponse:
+      type: object
+      additionalProperties: true
+
+    ScannerRecommendationsResponse:
+      type: object
+      additionalProperties: true
+
+    AckAlertResponse:
+      type: object
+      additionalProperties: true
+
+    AnalyticsIngestionResponse:
+      type: object
+      additionalProperties: true
+
+    AnalyticsScannerResponse:
+      type: object
+      additionalProperties: true
+
+    AnalyticsOpportunitiesResponse:
+      type: object
+      additionalProperties: true
+
+    AnalyticsSearchSuggestionsResponse:
+      type: object
+      additionalProperties: true
+
+    AnalyticsSearchHistoryResponse:
+      type: object
+      additionalProperties: true
+
+    AnalyticsPricingOutliersResponse:
+      type: object
+      additionalProperties: true
+
+    ServiceActionResponse:
+      type: object
+      properties:
+        service:
+          type: object
+          additionalProperties: true
+      required: [service]
+
+    PriceCheckRequest:
+      type: object
+      required: [itemText]
+      properties:
+        itemText:
+          type: string
+
+    PriceCheckResponse:
+      type: object
+      additionalProperties: true
+
+    StashTabsResponse:
+      type: object
+      additionalProperties: true
+
+    StashStatusResponse:
+      type: object
+      additionalProperties: true
+
+    StashScanStartResponse:
+      type: object
+      additionalProperties: true
+
+    StashScanStatusResponse:
+      type: object
+      additionalProperties: true
+
+    StashItemHistoryResponse:
+      type: object
+      additionalProperties: true
+
+    StashScanValuationsRequest:
+      type: object
+      required: [scanId, minThreshold, maxThreshold, maxAgeDays]
+      properties:
+        scanId:
+          type: string
+        itemId:
+          type: string
+        structuredMode:
+          type: boolean
+          default: false
+        minThreshold:
+          type: number
+        maxThreshold:
+          type: number
+        maxAgeDays:
+          type: integer
+          minimum: 1
+
+    StashScanValuationsResponse:
+      type: object
+      required: [structuredMode, stashId, items]
+      properties:
+        structuredMode:
+          type: boolean
+        stashId:
+          type: string
+        itemId:
+          type: string
+          nullable: true
+        scanDatetime:
+          type: string
+          nullable: true
+        chaosMedian:
+          type: number
+          nullable: true
+        daySeries:
+          type: array
+          items:
+            type: object
+            required: [date, chaosMedian]
+            properties:
+              date:
+                type: string
+              chaosMedian:
+                type: number
+                nullable: true
+        affixFallbackMedians:
+          type: array
+          items:
+            type: object
+            required: [affix, chaosMedian]
+            properties:
+              affix:
+                type: string
+              chaosMedian:
+                type: number
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    AuthLoginResponse:
+      type: object
+      required: [authorizeUrl]
+      properties:
+        authorizeUrl:
+          type: string
+
+    AuthCallbackResponse:
+      type: object
+      additionalProperties: true
+
+    AuthSessionResponse:
+      type: object
+      additionalProperties: true
+
+    AuthLogoutResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+
+    MLContractResponse:
+      type: object
+      additionalProperties: true
+
+    MLStatusResponse:
+      type: object
+      additionalProperties: true
+
+    MLPredictOneRequest:
+      type: object
+      additionalProperties: true
+
+    MLPredictOneResponse:
+      type: object
+      additionalProperties: true
+
+    MLAutomationStatusResponse:
+      type: object
+      additionalProperties: true
+
+    MLAutomationHistoryResponse:
+      type: object
+      additionalProperties: true
