@@ -369,6 +369,76 @@ def test_v3_training_store_migration_creates_prediction_registry_tables() -> Non
     assert "CREATE TABLE IF NOT EXISTS poe_trade.ml_v3_price_predictions" in sql
 
 
+def test_v3_sale_confidence_migration_adds_training_example_flag() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0064_ml_v3_sale_confidence_flag.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE poe_trade.ml_v3_training_examples" in sql
+    assert "ADD COLUMN IF NOT EXISTS sale_confidence_flag UInt8" in sql
+
+
+def test_v3_divine_price_migration_adds_listing_and_training_columns() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0087_ml_v3_divine_price_columns.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE poe_trade.ml_v3_listing_episodes" in sql
+    assert "ADD COLUMN IF NOT EXISTS latest_price_divine Nullable(Float64)" in sql
+    assert "ADD COLUMN IF NOT EXISTS fx_chaos_per_divine Nullable(Float64)" in sql
+    assert "ALTER TABLE poe_trade.ml_v3_training_examples" in sql
+    assert "ADD COLUMN IF NOT EXISTS target_price_divine Nullable(Float64)" in sql
+    assert (
+        "ADD COLUMN IF NOT EXISTS target_fast_sale_24h_price_divine Nullable(Float64)"
+        in sql
+    )
+
+
+def test_mod_registry_migration_creates_canonical_mod_table() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0069_ml_mod_registry_v1.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.ml_mod_registry_v1" in sql
+    assert "mod_id String" in sql
+    assert "spawn_weight_tags Array(String)" in sql
+    assert "source_json String" in sql
+    assert "ReplacingMergeTree(updated_at)" in sql
+
+
+def test_iron_ring_wide_migration_uses_full_registry_family_set() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0070_ml_v3_iron_ring_wide_training_poc_registry.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE OR REPLACE VIEW poe_trade.v_ml_v3_iron_ring_wide_training_poc" in sql
+    assert "ml_mod_registry_v1" not in sql
+    assert "intelligence_value" in sql
+    assert "light_radius_to_accuracy_rating_value" in sql
+    assert "item_found_rarity_increase_value" in sql
+    assert "countIf(mod_value > 0) AS recognized_affix_count" in sql
+
+
 def test_v3_eval_migration_creates_slice_gates_and_audit_tables() -> None:
     migration = (
         Path(__file__).resolve().parents[2]
@@ -529,3 +599,159 @@ def test_single_solution_cleanup_migration_drops_legacy_ml_tables() -> None:
     assert "DROP TABLE IF EXISTS poe_trade.ml_model_registry_v1" in sql
     assert "DROP TABLE IF EXISTS poe_trade.ml_serving_profile_v1" in sql
     assert "DROP TABLE IF EXISTS poe_trade.ml_train_runs" in sql
+
+
+def test_mirage_iron_ring_branch_migration_is_additive() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0079_ml_v3_mirage_iron_ring_branch_v1.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert (
+        "CREATE TABLE IF NOT EXISTS poe_trade.ml_v3_mirage_iron_ring_branch_v1" in sql
+    )
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "poe_trade.mv_silver_v3_item_observations_to_ml_v3_mirage_iron_ring_branch_v1"
+        in sql
+    )
+    assert "FROM poe_trade.silver_v3_item_observations" in sql
+    assert "league = 'Mirage'" in sql
+    assert "category = 'ring'" in sql
+    assert "base_type = 'Iron Ring'" in sql
+    assert "v_ml_v3_mirage_iron_ring_wide" not in sql
+    assert "poc" not in sql
+
+
+def test_lgbm_neo_migration_defines_wide_rare_item_training_table() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0081_poe_rare_item_train_v1.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.poe_rare_item_train" in sql
+    assert "league LowCardinality(String)" in sql
+    assert "base_type LowCardinality(String)" in sql
+    assert "has_exp_dex_flat UInt8 DEFAULT 0" in sql
+    assert "val_exp_dex_flat Nullable(Float32) DEFAULT NULL" in sql
+    assert "tier_exp_dex_flat Nullable(UInt8) DEFAULT NULL" in sql
+    assert "ENGINE = MergeTree()" in sql
+    assert "ORDER BY (league, category, base_type, observed_at, item_id)" in sql
+
+
+def test_lgbm_neo_ring_widening_migration_adds_canonical_family_columns() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0082_poe_rare_item_train_ring_family_widening.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE poe_trade.poe_rare_item_train" in sql
+    assert "has_exp_all_attributes UInt8 DEFAULT 0" in sql
+    assert "val_exp_all_attributes Nullable(Float32) DEFAULT NULL" in sql
+    assert "tier_exp_all_attributes Nullable(UInt8) DEFAULT NULL" in sql
+    assert "has_exp_strength UInt8 DEFAULT 0" in sql
+    assert "tier_exp_strength Nullable(UInt8) DEFAULT NULL" in sql
+
+
+def test_lgbm_neo_context_drop_migration_rebuilds_lean_table() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0084_poe_rare_item_train_drop_context_columns.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE poe_trade.poe_rare_item_train_v2" in sql
+    assert "SELECT * EXCEPT(league, category, base_type, observed_at)" in sql
+    assert "RENAME TABLE" in sql
+    assert "poe_trade.poe_rare_item_train_v1_context_legacy" in sql
+
+
+def test_lgbm_neo_temporal_context_migration_restores_split_metadata() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0085_poe_rare_item_train_restore_temporal_context.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE poe_trade.poe_rare_item_train_v3" in sql
+    assert "PARTITION BY toYYYYMM(observed_at)" in sql
+    assert (
+        "ORDER BY (league, category, base_type, observed_at, item_fingerprint, item_id)"
+        in sql
+    )
+    assert "poe_trade.poe_rare_item_train_v1_context_legacy" in sql
+    assert "item_fingerprint" in sql
+    assert "cityHash64" in sql
+    assert "RENAME TABLE" in sql
+
+
+def test_mirage_iron_ring_branch_views_migration_aggregates_affixes() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0080_ml_v3_mirage_iron_ring_branch_views_v1.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert (
+        "CREATE OR REPLACE VIEW poe_trade.v_ml_v3_mirage_iron_ring_affix_rows_v1" in sql
+    )
+    assert "FROM poe_trade.ml_v3_mirage_iron_ring_branch_v1" in sql
+    assert "JSONExtractArrayRaw(item.item_json, 'explicitMods')" in sql
+    assert "ARRAY JOIN affix_tuples AS affix_tuple" in sql
+    assert (
+        "CREATE OR REPLACE VIEW poe_trade.v_ml_v3_mirage_iron_ring_item_features_v1"
+        in sql
+    )
+    assert "groupArray(tuple(affix_kind, affix_text)) AS affixes" in sql
+    assert "affix_count" in sql
+    assert "parsed_amount" in sql
+    assert "v_ml_v3_mirage_iron_ring_wide" not in sql
+
+
+def test_mirage_iron_ring_context_migration_adds_ring_context_columns() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0086_ml_v3_mirage_iron_ring_context_columns_v1.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert (
+        "CREATE OR REPLACE VIEW poe_trade.v_ml_v3_mirage_iron_ring_item_features_v1"
+        in sql
+    )
+    assert "influence_mask" in sql
+    assert "catalyst_type" in sql
+    assert "catalyst_quality" in sql
+    assert "synth_imp_count" in sql
+    assert "synth_implicit_mods_json" in sql
+    assert "corrupted_implicit_mods_json" in sql
+    assert "veiled_count" in sql
+    assert "crafted_count" in sql
+    assert "prefix_count" in sql
+    assert "suffix_count" in sql
+    assert "open_prefixes" in sql
+    assert "open_suffixes" in sql
