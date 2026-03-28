@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone
 from io import BytesIO
 from threading import Event
-from typing import cast
+from collections.abc import Mapping
 from unittest import mock
 
 import pytest
@@ -107,6 +107,7 @@ def test_ops_contract_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.status == 200
     assert body["primary_league"] == "Mirage"
     assert "/api/v1/ops/services" == body["routes"]["ops_services"]
+    assert body["routes"]["stash_scan_valuations"] == "/api/v1/stash/scan/valuations"
     assert body["visible_service_ids"] == ["market_harvester", "api"]
     assert body["controllable_service_ids"] == ["market_harvester"]
     assert "opportunities" in body["tabs"]
@@ -308,8 +309,12 @@ def test_stash_route_returns_scoped_rows_when_enabled(
 def test_price_check_payload_includes_hybrid_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class _Client:
-        def execute(self, query: str) -> str:
+    class _Client(ClickHouseClient):
+        def __init__(self) -> None:
+            super().__init__(endpoint="http://clickhouse")
+
+        def execute(self, query: str, settings: Mapping[str, str] | None = None) -> str:  # type: ignore[override]
+            del settings
             if "FROM poe_trade.ml_v3_training_examples" in query:
                 return "[]\n"
             return ""
@@ -338,11 +343,7 @@ def test_price_check_payload_includes_hybrid_diagnostics(
         },
     )
 
-    payload = price_check_payload(
-        cast(ClickHouseClient, _Client()),
-        league="Mirage",
-        item_text="Rarity: Rare",
-    )
+    payload = price_check_payload(_Client(), league="Mirage", item_text="Rarity: Rare")
 
     assert payload["searchDiagnostics"]["stage"] == 2
     assert payload["comparablesSummary"]["anchorPrice"] == 95
