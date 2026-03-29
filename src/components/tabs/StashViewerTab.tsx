@@ -200,6 +200,8 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
 
   const startScan = useCallback(async () => {
     try {
+      setValuationPhase('idle');
+      setValuationResult(null);
       const next = await api.startStashScan();
       setScanStatus((current) => ({
         ...current,
