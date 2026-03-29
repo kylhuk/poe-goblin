@@ -225,8 +225,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new Error('Not authenticated');
     }
 
-    const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-    const url = `https://${projectId}.supabase.co/functions/v1/api-proxy`;
+    const url = `https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/api-proxy`;
 
     response = await fetch(url, {
       ...init,
