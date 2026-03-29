@@ -210,7 +210,7 @@ type ContractPayload = {
 };
 
 import { logApiError } from './apiErrorLog';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, SUPABASE_PROJECT_ID } from '@/lib/supabaseClient';
 
 
 let cachedPrimaryLeague: string | null = null;
@@ -225,8 +225,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new Error('Not authenticated');
     }
 
-    const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-    const url = `https://${projectId}.supabase.co/functions/v1/api-proxy`;
+    const url = `https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/api-proxy`;
 
     response = await fetch(url, {
       ...init,

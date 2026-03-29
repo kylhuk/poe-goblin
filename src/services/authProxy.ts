@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, SUPABASE_PROJECT_ID } from '@/lib/supabaseClient';
 
 export const POE_OAUTH_MESSAGE = 'poe-oauth-result';
 export const POE_OAUTH_RESULT_STORAGE_KEY = 'poe-oauth-result';
@@ -13,8 +13,7 @@ export type OAuthRelayResult = {
 };
 
 export function getAuthProxyUrl(): string {
-  const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-  return `https://${projectId}.supabase.co/functions/v1/api-proxy`;
+  return `https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/api-proxy`;
 }
 
 export async function authProxyFetch(path: string, init?: RequestInit): Promise<Response> {
