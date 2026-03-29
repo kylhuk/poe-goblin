@@ -1233,6 +1233,24 @@ export const api: ApiService = {
     return normalizeStashTabsResponse(payload);
   },
 
+  async startStashValuations(req: StashScanValuationsRequest) {
+    const league = await primaryLeague();
+    return request<StashScanValuationsResponse>(
+      `/api/v1/stash/scan/valuations?league=${encodeURIComponent(league)}&realm=pc`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          scanId: req.scanId,
+          minThreshold: req.minThreshold,
+          maxThreshold: req.maxThreshold,
+          maxAgeDays: req.maxAgeDays,
+          ...(req.itemId ? { itemId: req.itemId } : {}),
+          ...(req.structuredMode != null ? { structuredMode: req.structuredMode } : {}),
+        }),
+      }
+    );
+  },
+
   async getMessages() {
     const payload = await request<{ messages: AppMessage[] }>('/api/v1/ops/messages');
     return payload.messages;
