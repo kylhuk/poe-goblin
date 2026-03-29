@@ -591,6 +591,37 @@ export interface MlLeagueStatusResponse {
   [key: string]: unknown;
 }
 
+// ========== Stash Scan Valuations ==========
+export interface StashScanValuationsRequest {
+  scanId: string;
+  minThreshold: number;
+  maxThreshold: number;
+  maxAgeDays: number;
+  itemId?: string;
+  structuredMode?: boolean;
+}
+
+export interface StashScanValuationDaySeries {
+  date: string;
+  chaosMedian: number | null;
+}
+
+export interface StashScanValuationAffixFallback {
+  affix: string;
+  chaosMedian: number;
+}
+
+export interface StashScanValuationsResponse {
+  structuredMode: boolean;
+  stashId: string;
+  itemId?: string | null;
+  scanDatetime?: string | null;
+  chaosMedian?: number | null;
+  daySeries?: StashScanValuationDaySeries[];
+  affixFallbackMedians?: StashScanValuationAffixFallback[];
+  items: Record<string, unknown>[];
+}
+
 // ========== API Service Interface ==========
 export interface ApiService {
   getHealthz(): Promise<HealthResponse>;
@@ -618,5 +649,6 @@ export interface ApiService {
   getStashScanStatus(): Promise<StashScanStatus>;
   getStashItemHistory(fingerprint: string): Promise<StashItemHistoryResponse>;
   getStashTabs(tabIndex?: number): Promise<StashTabsResponse>;
+  startStashValuations(req: StashScanValuationsRequest): Promise<StashScanValuationsResponse>;
   getMessages(): Promise<AppMessage[]>;
 }

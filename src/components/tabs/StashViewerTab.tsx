@@ -8,6 +8,7 @@ import type {
   StashItem,
   StashItemHistoryResponse,
   StashScanStatus,
+  StashScanValuationsResponse,
   StashStatus,
   StashTab,
   StashTabMeta,
@@ -85,6 +86,8 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
   const [publishedAt, setPublishedAt] = useState<string | null>(null);
   const [scanStatus, setScanStatus] = useState<StashScanStatus>(EMPTY_SCAN_STATUS);
   const [scanBusy, setScanBusy] = useState(false);
+  const [valuationPhase, setValuationPhase] = useState<'idle' | 'running' | 'done' | 'failed'>('idle');
+  const [valuationResult, setValuationResult] = useState<StashScanValuationsResponse | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyPayload, setHistoryPayload] = useState<StashItemHistoryResponse | null>(null);
@@ -159,6 +162,25 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
           window.clearInterval(timer);
           setScanBusy(false);
           await loadTab(activeTabIndex);
+          // Phase 2: trigger valuations
+          const scanId = next.publishedScanId ?? scanStatus.activeScanId;
+          if (scanId) {
+            setValuationPhase('running');
+            try {
+              const valResult = await api.startStashValuations({
+                scanId,
+                minThreshold: 0,
+                maxThreshold: 99999,
+                maxAgeDays: 7,
+              });
+              setValuationResult(valResult);
+              setValuationPhase('done');
+              toast.success('Valuations complete');
+            } catch (valErr) {
+              setValuationPhase('failed');
+              toast.error(valErr instanceof Error ? valErr.message : 'Valuation failed');
+            }
+          }
         }
         if (next.status === 'failed') {
           window.clearInterval(timer);
@@ -174,10 +196,12 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
       }
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [scanBusy, loadTab, activeTabIndex]);
+  }, [scanBusy, loadTab, activeTabIndex, scanStatus.activeScanId]);
 
   const startScan = useCallback(async () => {
     try {
+      setValuationPhase('idle');
+      setValuationResult(null);
       const next = await api.startStashScan();
       setScanStatus((current) => ({
         ...current,
@@ -242,6 +266,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
     return maxCoord > 12 ? 24 : 12;
   })();
   const runningScan = scanBusy || scanStatus.status === 'running' || scanStatus.status === 'publishing';
+  const anyPhaseBusy = runningScan || valuationPhase === 'running';
 
   return (
     <div ref={ref} className="space-y-3" data-testid="panel-stash-root">
@@ -257,13 +282,28 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
               {scanStatus.status === 'failed'
                 ? `Last scan failed${scanStatus.error ? `: ${scanStatus.error}` : ''}`
                 : tab
-                  ? `Scan ${scanStatus.status} — showing last available stash data`
-                  : `Scan ${scanStatus.status}: ${scanStatus.progress.tabsProcessed}/${scanStatus.progress.tabsTotal} tabs · ${scanStatus.progress.itemsProcessed}/${scanStatus.progress.itemsTotal} items`}
+                  ? `Phase 1: Scanning items — ${scanStatus.status} (showing last available stash data)`
+                  : `Phase 1: Scanning items — ${scanStatus.progress.tabsProcessed}/${scanStatus.progress.tabsTotal} tabs · ${scanStatus.progress.itemsProcessed}/${scanStatus.progress.itemsTotal} items`}
             </p>
           )}
+          {valuationPhase === 'running' && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Phase 2: Valuating items…
+            </p>
+          )}
+          {valuationPhase === 'done' && (
+            <p className="text-xs text-success">
+              Valuations complete{valuationResult?.items?.length ? ` · ${valuationResult.items.length} items priced` : ''}
+              {valuationResult?.chaosMedian != null ? ` · median ${valuationResult.chaosMedian}c` : ''}
+            </p>
+          )}
+          {valuationPhase === 'failed' && (
+            <p className="text-xs text-destructive">Valuation failed</p>
+          )}
         </div>
-        <Button onClick={startScan} disabled={runningScan} className="gap-2" aria-label="Scan">
-          {runningScan ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />}
+        <Button onClick={startScan} disabled={anyPhaseBusy} className="gap-2" aria-label="Scan">
+          {anyPhaseBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />}
           Scan
         </Button>
       </div>

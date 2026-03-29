@@ -26,6 +26,8 @@ import type {
   StashItemHistoryResponse,
   StashScanStartResponse,
   StashScanStatus,
+  StashScanValuationsRequest,
+  StashScanValuationsResponse,
   StashStatus,
   StashTabMeta,
   StashTabsResponse,
@@ -1229,6 +1231,24 @@ export const api: ApiService = {
       `/api/v1/stash/tabs?league=${encodeURIComponent(league)}&realm=pc${tabParam}`
     );
     return normalizeStashTabsResponse(payload);
+  },
+
+  async startStashValuations(req: StashScanValuationsRequest) {
+    const league = await primaryLeague();
+    return request<StashScanValuationsResponse>(
+      `/api/v1/stash/scan/valuations?league=${encodeURIComponent(league)}&realm=pc`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          scanId: req.scanId,
+          minThreshold: req.minThreshold,
+          maxThreshold: req.maxThreshold,
+          maxAgeDays: req.maxAgeDays,
+          ...(req.itemId ? { itemId: req.itemId } : {}),
+          ...(req.structuredMode != null ? { structuredMode: req.structuredMode } : {}),
+        }),
+      }
+    );
   },
 
   async getMessages() {
