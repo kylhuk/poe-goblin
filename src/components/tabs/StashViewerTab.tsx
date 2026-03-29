@@ -8,6 +8,7 @@ import type {
   StashItem,
   StashItemHistoryResponse,
   StashScanStatus,
+  StashScanValuationsResponse,
   StashStatus,
   StashTab,
   StashTabMeta,
