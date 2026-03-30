@@ -1,4 +1,4 @@
-import type { PoeItem, StashTabMeta, StashItemHistoryEntry } from '@/types/api';
+import type { PoeItem, StashTab, StashTabMeta, StashItemHistoryEntry } from '@/types/api';
 import { api } from './api';
 import type { SparklinePoint } from '@/components/economy/PriceSparkline';
 
@@ -105,6 +105,16 @@ export function categorizeItems(items: PoeItem[]): ItemCategory[] {
   });
 
   return categories;
+}
+
+function pickReturnedTab(payload: { stashTabs: StashTab[] }, requestedIndex: number): StashTab | null {
+  if (payload.stashTabs.length === 0) {
+    return null;
+  }
+  return payload.stashTabs.find((tab) => tab.returnedIndex === requestedIndex)
+    ?? payload.stashTabs[requestedIndex]
+    ?? payload.stashTabs[0]
+    ?? null;
 }
 
 // ── Cache ─────────────────────────────────────────
@@ -231,8 +241,9 @@ export async function loadAllStashItems(
     onProgress?.({ loaded: i, total });
     try {
       const resp = await api.getStashTabs(tabsMeta[i].tabIndex);
-      if (resp.stashTabs.length > 0) {
-        allItems.push(...resp.stashTabs[0].items);
+      const requestedTab = pickReturnedTab(resp, tabsMeta[i].tabIndex);
+      if (requestedTab) {
+        allItems.push(...requestedTab.items);
       }
     } catch {
       // Skip failed tabs
