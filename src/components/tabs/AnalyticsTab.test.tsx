@@ -116,11 +116,7 @@ vi.mock('recharts', () => ({
 vi.mock('@/services/api', () => ({
   getAnalyticsIngestion: vi.fn(),
   getAnalyticsScanner: vi.fn(),
-  getAnalyticsAlerts: vi.fn(),
-  getAnalyticsBacktests: vi.fn(),
-  getAnalyticsMl: getAnalyticsMlMock,
   getAnalyticsPricingOutliers: getAnalyticsPricingOutliersMock,
-  getAnalyticsReport: vi.fn(),
   getAnalyticsSearchHistory: getAnalyticsSearchHistoryMock,
   getAnalyticsSearchSuggestions: getAnalyticsSearchSuggestionsMock,
   api: {
