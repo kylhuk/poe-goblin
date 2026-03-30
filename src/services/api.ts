@@ -897,7 +897,6 @@ export async function getAnalyticsPricingOutliers(params: PricingOutliersRequest
     sort: params.sort,
     order: params.order,
     min_total: params.minTotal,
-    max_buy_in: params.maxBuyIn,
     limit: params.limit,
   });
   return normalizePricingOutliersResponse(
