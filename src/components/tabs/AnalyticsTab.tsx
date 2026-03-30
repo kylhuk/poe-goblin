@@ -1163,7 +1163,7 @@ function PricingOutliersPanel() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, league, sort, order, minTotal, maxBuyIn]);
+  }, [query, league, sort, order, minTotal]);
 
   const hasMissingOpportunityMetrics = Boolean(
     data?.rows.some(row => row.entryPrice == null || row.expectedProfit == null || row.roi == null || row.underpricedRate == null)
