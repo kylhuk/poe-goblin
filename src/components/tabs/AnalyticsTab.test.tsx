@@ -12,14 +12,12 @@ const {
   getAnalyticsSearchSuggestionsMock,
   getAnalyticsSearchHistoryMock,
   getAnalyticsPricingOutliersMock,
-  getAnalyticsMlMock,
   getMlAutomationStatusMock,
   getMlAutomationHistoryMock,
 } = vi.hoisted(() => ({
   getAnalyticsSearchSuggestionsMock: vi.fn(),
   getAnalyticsSearchHistoryMock: vi.fn(),
   getAnalyticsPricingOutliersMock: vi.fn(),
-  getAnalyticsMlMock: vi.fn(),
   getMlAutomationStatusMock: vi.fn(),
   getMlAutomationHistoryMock: vi.fn(),
 }));
