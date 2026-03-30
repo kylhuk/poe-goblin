@@ -21,19 +21,11 @@ import {
 import { 
   getAnalyticsIngestion, 
   getAnalyticsScanner, 
-  getAnalyticsAlerts, 
-  getAnalyticsBacktests, 
   getAnalyticsPricingOutliers,
-  getAnalyticsReport,
   getAnalyticsSearchHistory,
   getAnalyticsSearchSuggestions,
   type IngestionRow,
   type ScannerAnalyticsResponse,
-  type AlertRow, 
-  type BacktestAnalytics, 
-  type ReportAnalytics,
-  type ReportData,
-  type GoldDiagnosticsResponse,
 } from '@/services/api';
 import { api } from '@/services/api';
 import type { MlAutomationStatus, MlAutomationHistory, MlAutomationObservability, PricingOutliersResponse, SearchHistoryResponse, SearchSuggestion } from '@/types/api';
