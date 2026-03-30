@@ -717,9 +717,16 @@ function normalizeStashTabsResponse(payload: unknown): StashTabsResponse {
   const rawTabsMeta = Array.isArray(source.tabs) ? source.tabs as unknown[] : [];
   const tabsMeta = normalizeTabsMeta(rawTabsMeta);
 
-  // New raw PoE schema: { stash: {single tab object}, tabs: [...], numTabs }
+  // Top-level items array (per API spec: items is a required top-level field)
+  const topLevelItems = Array.isArray(source.items) ? (source.items as unknown[]).map(normalizePoeItem) : [];
+
+  // New raw PoE schema: { stash: {single tab object}, tabs: [...], items: [...], numTabs }
   if (source.stash && typeof source.stash === 'object' && !Array.isArray(source.stash)) {
     const tab = normalizeStashTab(source.stash, 0);
+    // Merge top-level items if the stash object itself had none
+    if (tab.items.length === 0 && topLevelItems.length > 0) {
+      tab.items = topLevelItems;
+    }
     const effectiveTabsMeta = tabsMeta.length > 0
       ? tabsMeta
       : [{ id: tab.id, tabIndex: 0, name: tab.name, type: tab.type }];
