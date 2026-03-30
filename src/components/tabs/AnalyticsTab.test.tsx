@@ -399,7 +399,7 @@ beforeEach(() => {
   getAnalyticsSearchSuggestionsMock.mockResolvedValue(createSuggestionsResponse());
   getAnalyticsSearchHistoryMock.mockResolvedValue(createSearchHistoryResponse());
   getAnalyticsPricingOutliersMock.mockResolvedValue(createPricingOutliersResponse());
-  getAnalyticsMlMock.mockResolvedValue({});
+  getMlAutomationStatusMock.mockResolvedValue(createMlAutomationStatus());
   getMlAutomationStatusMock.mockResolvedValue(createMlAutomationStatus());
   getMlAutomationHistoryMock.mockResolvedValue(createMlAutomationHistory());
 });
