@@ -5,6 +5,49 @@ import { buildForwardHeaders, getCorsHeaders } from "./contract.ts";
 
 const API_BASE = "https://api.poe.lama-lan.ch";
 
+const ALLOWED_PATH_PREFIX = "/api/v1/";
+
+// Paths that require the admin role (ops-only)
+const ADMIN_PATH_PREFIXES = [
+  "/api/v1/ops/",
+  "/api/v1/actions/",
+];
+
+// Public endpoints that don't require auth
+const PUBLIC_PATH_PATTERNS = [
+  /^\/healthz$/,
+  /^\/api\/v1\/ops\/leagues\/[^/]+\/price-check/,
+  /^\/api\/v1\/ml\/leagues\/[^/]+\/predict-one/,
+  /^\/api\/v1\/auth\//,
+  /^\/api\/v1\/stash\//,
+];
+
+function isPublicEndpoint(path: string): boolean {
+  return PUBLIC_PATH_PATTERNS.some((p) => p.test(path));
+}
+
+function isAdminPath(path: string): boolean {
+  return ADMIN_PATH_PREFIXES.some((p) => path.startsWith(p));
+}
+
+function validateProxyPath(raw: string): string | null {
+  // Reject encoded traversal attempts
+  if (raw.includes("..") || /%2e/i.test(raw)) {
+    return null;
+  }
+  // Must start with allowed prefix or be /healthz
+  if (raw === "/healthz") return raw;
+  if (!raw.startsWith(ALLOWED_PATH_PREFIX)) return null;
+  // Normalise and re-check
+  try {
+    const normalised = new URL(raw, API_BASE).pathname;
+    if (!normalised.startsWith(ALLOWED_PATH_PREFIX)) return null;
+    return normalised;
+  } catch {
+    return null;
+  }
+}
+
 // Debug: save request/response to debug_traffic table
 async function captureTraffic(
   method: string,
@@ -41,27 +84,27 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  // 0. Get the target path early for public endpoint check
-  const proxyPath = req.headers.get("x-proxy-path");
-  if (!proxyPath) {
+  // 0. Get and validate the target path
+  const rawPath = req.headers.get("x-proxy-path");
+  if (!rawPath) {
     return new Response(JSON.stringify({ error: "Missing x-proxy-path header" }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  // Public endpoints that don't require auth (ML Price)
-  const isPublicEndpoint =
-    proxyPath === '/healthz' ||
-    /^\/api\/v1\/ops\/leagues\/[^/]+\/price-check/.test(proxyPath) ||
-    /^\/api\/v1\/ml\/leagues\/[^/]+\/predict-one/.test(proxyPath) ||
-    /^\/api\/v1\/auth\//.test(proxyPath) ||
-    /^\/api\/v1\/stash\//.test(proxyPath);
+  const proxyPath = validateProxyPath(rawPath);
+  if (!proxyPath) {
+    return new Response(JSON.stringify({ error: "Forbidden path" }), {
+      status: 403,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   // 1. Validate Supabase JWT (skip for public endpoints)
   const authHeader = req.headers.get("authorization");
 
-  if (!isPublicEndpoint) {
+  if (!isPublicEndpoint(proxyPath)) {
     if (!authHeader) {
       return new Response(JSON.stringify({ error: "Missing authorization" }), {
         status: 401,
@@ -100,9 +143,28 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // 3. Enforce admin role for ops/actions paths
+    if (isAdminPath(proxyPath)) {
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const adminSb = createClient(supabaseUrl, serviceRoleKey);
+      const { data: roleRow } = await adminSb
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id)
+        .eq("role", "admin")
+        .maybeSingle();
+
+      if (!roleRow) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
   }
 
-  // 3. Forward request to backend with server-side API key
+  // 4. Forward request to backend with server-side API key
   const apiKey = Deno.env.get("VITE_API_KEY");
   const targetUrl = `${API_BASE}${proxyPath}`;
 
@@ -155,9 +217,9 @@ Deno.serve(async (req) => {
       headers: responseHeaders,
     });
   } catch (err) {
-    console.error(`[api-proxy] fetch error: ${err instanceof Error ? err.message : err}`);
+    console.error(`[api-proxy] fetch error:`, err);
     return new Response(
-      JSON.stringify({ error: "Backend request failed", message: err instanceof Error ? err.message : "Unknown error" }),
+      JSON.stringify({ error: "Service unavailable" }),
       { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
