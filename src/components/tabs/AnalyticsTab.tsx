@@ -1127,7 +1127,7 @@ function PricingOutliersPanel() {
   const [sort, setSort] = useState(OUTLIERS_DEFAULTS.sort);
   const [order, setOrder] = useState<'asc' | 'desc'>(OUTLIERS_DEFAULTS.order);
   const [minTotal, setMinTotal] = useState(OUTLIERS_DEFAULTS.minTotal);
-  const [maxBuyIn, setMaxBuyIn] = useState(OUTLIERS_DEFAULTS.maxBuyIn);
+  
   const [data, setData] = useState<PricingOutliersResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
