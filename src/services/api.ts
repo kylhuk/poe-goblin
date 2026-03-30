@@ -420,10 +420,6 @@ export async function getAnalyticsMl() {
   return normalizeMlAnalytics(raw);
 }
 
-export async function getAnalyticsReport() {
-  const raw = await request<Record<string, unknown>>('/api/v1/ops/analytics/report');
-  return normalizeReportAnalytics(raw);
-}
 
 function normalizeGoldDiagnostics(raw: unknown): GoldDiagnosticsResponse | null {
   const o = asObject(raw);
