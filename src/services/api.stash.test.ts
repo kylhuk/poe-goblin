@@ -60,6 +60,47 @@ describe('stash api methods', () => {
     expect(result.accountName).toBe('qa-exile');
   });
 
+  test('falls back to the legacy stash scan route when the new route is missing', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ primary_league: 'Mirage' }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: async () => ({
+          error: {
+            code: 'route_not_found',
+            message: 'route not found',
+            details: null,
+          },
+        }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: async () => ({
+          scanId: 'scan-legacy',
+          status: 'running',
+          startedAt: '2026-03-21T12:02:00Z',
+          accountName: 'qa-exile',
+          league: 'Mirage',
+          realm: 'pc',
+        }),
+      } as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const api = await loadApi();
+    const result = await api.startStashScan();
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.scanId).toBe('scan-legacy');
+    expect(result.accountName).toBe('qa-exile');
+  });
+
   test('fetches stash scan status and item history', async () => {
     const fetchMock = vi
       .fn()

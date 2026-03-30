@@ -143,6 +143,13 @@ import { supabase, SUPABASE_PROJECT_ID } from '@/lib/supabaseClient';
 
 let cachedPrimaryLeague: string | null = null;
 
+function isMissingRouteError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.message.startsWith('route_not_found:') || error.message.includes('route not found');
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = init?.method || 'GET';
   let response: Response;
@@ -997,9 +1004,20 @@ export const api: ApiService = {
 
   async startStashScan() {
     const league = await primaryLeague();
-    return request<StashScanStartResponse>(`/api/v1/stash/scan/start?league=${encodeURIComponent(league)}&realm=pc`, {
-      method: 'POST',
-    });
+    const startPath = `/api/v1/stash/scan/start?league=${encodeURIComponent(league)}&realm=pc`;
+    const legacyPath = `/api/v1/stash/scan?league=${encodeURIComponent(league)}&realm=pc`;
+    try {
+      return await request<StashScanStartResponse>(startPath, {
+        method: 'POST',
+      });
+    } catch (error) {
+      if (!isMissingRouteError(error)) {
+        throw error;
+      }
+      return request<StashScanStartResponse>(legacyPath, {
+        method: 'POST',
+      });
+    }
   },
 
   async getStashScanStatus() {

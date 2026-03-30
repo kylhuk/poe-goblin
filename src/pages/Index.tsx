@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import DashboardTab from "@/components/tabs/DashboardTab";
 import ServicesTab from "@/components/tabs/ServicesTab";
@@ -94,6 +95,14 @@ const DEFAULT_TAB: Record<UserRole, string> = {
   admin: "dashboard",
 };
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable;
+}
+
 const Index = () => {
   const { userRole } = useAuth();
   const { tab, subtab } = useParams<{ tab?: string; subtab?: string }>();
@@ -109,10 +118,48 @@ const Index = () => {
 
   // Resolve active tab: use URL param if valid, otherwise default
   const activeTab = tab && visibleTabs.some((t) => t.id === tab) ? tab : defaultTab;
+  const visibleTabIds = visibleTabs.map((t) => t.id);
 
   const handleTabChange = (value: string) => {
     navigate(`/${value}`, { replace: false });
   };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) {
+        return;
+      }
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      const currentIndex = visibleTabIds.indexOf(activeTab);
+      if (currentIndex < 0 || visibleTabIds.length === 0) {
+        return;
+      }
+
+      let nextIndex = -1;
+      if (event.key === 'ArrowRight') {
+        nextIndex = (currentIndex + 1) % visibleTabIds.length;
+      } else if (event.key === 'ArrowLeft') {
+        nextIndex = (currentIndex - 1 + visibleTabIds.length) % visibleTabIds.length;
+      } else if (event.key === 'Home') {
+        nextIndex = 0;
+      } else if (event.key === 'End') {
+        nextIndex = visibleTabIds.length - 1;
+      }
+
+      if (nextIndex < 0) {
+        return;
+      }
+
+      event.preventDefault();
+      handleTabChange(visibleTabIds[nextIndex]);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTab, visibleTabIds]);
 
   return (
     <div className="min-h-screen bg-background vignette">
