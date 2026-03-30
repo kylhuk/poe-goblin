@@ -12,14 +12,12 @@ const {
   getAnalyticsSearchSuggestionsMock,
   getAnalyticsSearchHistoryMock,
   getAnalyticsPricingOutliersMock,
-  getAnalyticsMlMock,
   getMlAutomationStatusMock,
   getMlAutomationHistoryMock,
 } = vi.hoisted(() => ({
   getAnalyticsSearchSuggestionsMock: vi.fn(),
   getAnalyticsSearchHistoryMock: vi.fn(),
   getAnalyticsPricingOutliersMock: vi.fn(),
-  getAnalyticsMlMock: vi.fn(),
   getMlAutomationStatusMock: vi.fn(),
   getMlAutomationHistoryMock: vi.fn(),
 }));
@@ -118,11 +116,7 @@ vi.mock('recharts', () => ({
 vi.mock('@/services/api', () => ({
   getAnalyticsIngestion: vi.fn(),
   getAnalyticsScanner: vi.fn(),
-  getAnalyticsAlerts: vi.fn(),
-  getAnalyticsBacktests: vi.fn(),
-  getAnalyticsMl: getAnalyticsMlMock,
   getAnalyticsPricingOutliers: getAnalyticsPricingOutliersMock,
-  getAnalyticsReport: vi.fn(),
   getAnalyticsSearchHistory: getAnalyticsSearchHistoryMock,
   getAnalyticsSearchSuggestions: getAnalyticsSearchSuggestionsMock,
   api: {
@@ -338,7 +332,6 @@ function createPricingOutliersResponse(
 const DEFAULT_OUTLIERS_REQUEST = {
   sort: 'expected_profit',
   order: 'desc',
-  maxBuyIn: 100,
 };
 
 const OUTLIER_SORT_OPTION_VALUES = [
@@ -405,7 +398,7 @@ beforeEach(() => {
   getAnalyticsSearchSuggestionsMock.mockResolvedValue(createSuggestionsResponse());
   getAnalyticsSearchHistoryMock.mockResolvedValue(createSearchHistoryResponse());
   getAnalyticsPricingOutliersMock.mockResolvedValue(createPricingOutliersResponse());
-  getAnalyticsMlMock.mockResolvedValue({});
+  getMlAutomationStatusMock.mockResolvedValue(createMlAutomationStatus());
   getMlAutomationStatusMock.mockResolvedValue(createMlAutomationStatus());
   getMlAutomationHistoryMock.mockResolvedValue(createMlAutomationHistory());
 });
@@ -718,7 +711,7 @@ describe('AnalyticsTab ML panel', () => {
     });
     await flushMicrotasks();
 
-    expect(getAnalyticsMlMock).not.toHaveBeenCalled();
+    expect(getMlAutomationStatusMock).toHaveBeenCalledTimes(1);
     expect(getMlAutomationStatusMock).toHaveBeenCalledTimes(1);
     expect(getMlAutomationHistoryMock).toHaveBeenCalledTimes(1);
 

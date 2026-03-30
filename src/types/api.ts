@@ -612,6 +612,7 @@ export interface StashScanValuationAffixFallback {
 
 export interface StashScanValuationsResponse {
   structuredMode: boolean;
+  scanId: string;
   stashId: string;
   itemId?: string | null;
   scanDatetime?: string | null;
