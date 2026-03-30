@@ -349,65 +349,6 @@ export async function getAnalyticsMl() {
 }
 
 
-function normalizeGoldDiagnostics(raw: unknown): GoldDiagnosticsResponse | null {
-  const o = asObject(raw);
-  if (Object.keys(o).length === 0) return null;
-  const summary = asObject(o.summary);
-  const marts = Array.isArray(o.marts) ? o.marts : [];
-  return {
-    league: optString(o.league) ?? '',
-    summary: {
-      status: optString(summary.status) ?? 'unknown',
-      martCount: optNumber(summary.martCount ?? summary.mart_count) ?? 0,
-      problemMarts: optNumber(summary.problemMarts ?? summary.problem_marts) ?? 0,
-      goldEmptyMarts: optNumber(summary.goldEmptyMarts ?? summary.gold_empty_marts) ?? 0,
-      staleMarts: optNumber(summary.staleMarts ?? summary.stale_marts) ?? 0,
-      missingLeagueMarts: optNumber(summary.missingLeagueMarts ?? summary.missing_league_marts) ?? 0,
-    },
-    marts: marts.map((entry) => {
-      const m = asObject(entry);
-      return {
-        martName: optString(m.martName ?? m.mart_name) ?? 'unknown',
-        sourceName: optString(m.sourceName ?? m.source_name),
-        diagnosticState: optString(m.diagnosticState ?? m.diagnostic_state) ?? 'unknown',
-        sourceRowCount: optNumber(m.sourceRowCount ?? m.source_row_count) ?? 0,
-        goldRowCount: optNumber(m.goldRowCount ?? m.gold_row_count) ?? 0,
-        sourceLatestAt: optString(m.sourceLatestAt ?? m.source_latest_at),
-        goldLatestAt: optString(m.goldLatestAt ?? m.gold_latest_at),
-        goldFreshnessMinutes: optNumber(m.goldFreshnessMinutes ?? m.gold_freshness_minutes),
-        sourceToGoldLagMinutes: optNumber(m.sourceToGoldLagMinutes ?? m.source_to_gold_lag_minutes),
-        leagueVisibility: optString(m.leagueVisibility ?? m.league_visibility),
-        sourceLeagueRows: optNumber(m.sourceLeagueRows ?? m.source_league_rows),
-        goldLeagueRows: optNumber(m.goldLeagueRows ?? m.gold_league_rows),
-      };
-    }),
-  };
-}
-
-function normalizeReportAnalytics(raw: unknown): ReportAnalytics {
-  const o = asObject(raw);
-  const report = asObject(o.report);
-  return {
-    status: optString(o.status) ?? 'unknown',
-    report: {
-      league: optString(report.league) ?? '',
-      recommendations: optNumber(report.recommendations) ?? 0,
-      alerts: optNumber(report.alerts) ?? 0,
-      journal_events: optNumber(report.journal_events ?? report.journalEvents) ?? 0,
-      journal_positions: optNumber(report.journal_positions ?? report.journalPositions) ?? 0,
-      backtest_summary_rows: optNumber(report.backtest_summary_rows ?? report.backtestSummaryRows) ?? 0,
-      backtest_detail_rows: optNumber(report.backtest_detail_rows ?? report.backtestDetailRows) ?? 0,
-      gold_currency_ref_hour_rows: optNumber(report.gold_currency_ref_hour_rows ?? report.goldCurrencyRefHourRows) ?? 0,
-      gold_listing_ref_hour_rows: optNumber(report.gold_listing_ref_hour_rows ?? report.goldListingRefHourRows) ?? 0,
-      gold_liquidity_ref_hour_rows: optNumber(report.gold_liquidity_ref_hour_rows ?? report.goldLiquidityRefHourRows) ?? 0,
-      gold_bulk_premium_hour_rows: optNumber(report.gold_bulk_premium_hour_rows ?? report.goldBulkPremiumHourRows) ?? 0,
-      gold_set_ref_hour_rows: optNumber(report.gold_set_ref_hour_rows ?? report.goldSetRefHourRows) ?? 0,
-      realized_pnl_chaos: optNumber(report.realized_pnl_chaos ?? report.realizedPnlChaos) ?? 0,
-    },
-    goldDiagnostics: normalizeGoldDiagnostics(o.goldDiagnostics ?? o.gold_diagnostics),
-  };
-}
-
 function normalizeTrustFields(source: Record<string, unknown>) {
   return {
     mlPredicted: typeof (source.mlPredicted ?? source.ml_predicted) === 'boolean'
