@@ -21,10 +21,8 @@ def test_api_settings_defaults() -> None:
     assert cfg.api_max_body_bytes == 32768
     assert cfg.api_league_allowlist == ("Mirage",)
     assert cfg.enable_account_stash is False
-    assert cfg.account_stash_access_token == ""
     assert cfg.account_stash_realm == "pc"
     assert cfg.account_stash_league == "Mirage"
-    assert cfg.account_stash_poll_interval == 300.0
     assert cfg.auth_cookie_name == "poe_session"
     assert cfg.poe_account_redirect_uri == ""
     assert cfg.ml_automation_league == "Mirage"
@@ -40,10 +38,8 @@ def test_api_settings_parse_values() -> None:
         "POE_API_MAX_BODY_BYTES": "16384",
         "POE_API_LEAGUE_ALLOWLIST": "Mirage, Keepers ",
         "POE_ENABLE_ACCOUNT_STASH": "true",
-        "POE_ACCOUNT_STASH_ACCESS_TOKEN": "stash-token",
         "POE_ACCOUNT_STASH_REALM": "xbox",
         "POE_ACCOUNT_STASH_LEAGUE": "Settlers",
-        "POE_ACCOUNT_STASH_POLL_INTERVAL": "120",
         "POE_ACCOUNT_STASH_SCAN_STALE_TIMEOUT_SECONDS": "45",
         "POE_AUTH_COOKIE_NAME": "session_cookie",
         "POE_ACCOUNT_REDIRECT_URI": "https://api.example.com/api/v1/auth/callback",
@@ -63,10 +59,8 @@ def test_api_settings_parse_values() -> None:
     assert cfg.api_max_body_bytes == 16384
     assert cfg.api_league_allowlist == ("Mirage", "Keepers")
     assert cfg.enable_account_stash is True
-    assert cfg.account_stash_access_token == "stash-token"
     assert cfg.account_stash_realm == "xbox"
     assert cfg.account_stash_league == "Settlers"
-    assert cfg.account_stash_poll_interval == 120.0
     assert cfg.account_stash_scan_stale_timeout_seconds == 45
     assert cfg.auth_cookie_name == "session_cookie"
     assert (

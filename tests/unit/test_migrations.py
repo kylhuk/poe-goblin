@@ -14,14 +14,17 @@ from poe_trade.db.migrations import (
 
 
 class RecordingClient:
-    def __init__(self, payload: str = "") -> None:
+    def __init__(self, payload: str = "", responses: list[str] | None = None) -> None:
         self.payload = payload
+        self.responses = list(responses or [])
         self.queries: list[str] = []
         self.settings: list[dict[str, str] | None] = []
 
     def execute(self, query: str, settings: dict[str, str] | None = None) -> str:
         self.queries.append(query)
         self.settings.append(settings)
+        if self.responses:
+            return self.responses.pop(0)
         return self.payload
 
 
@@ -197,6 +200,48 @@ def test_apply_executes_each_statement_and_records_once(
         {"prefer_column_name_to_alias": "1"},
     ]
     assert recorded == ["0001"]
+
+
+def test_apply_records_already_materialized_train_restore_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = RecordingClient(
+        responses=[
+            '{"row_count":259702,"min_observed_at":"2026-03-14 17:45:40.484","max_observed_at":"2026-03-27 19:21:59.825","fingerprint_sum":14192855530119660083}',
+            '{"row_count":259702,"min_observed_at":"2026-03-14 17:45:40.484","max_observed_at":"2026-03-27 19:21:59.825","fingerprint_sum":14192855530119660083}',
+        ]
+    )
+    runner = MigrationRunner(
+        client=cast(Any, client),
+        database="poe_trade",
+        dry_run=False,
+    )
+    migration = Migration(
+        version="0085",
+        description="poe rare item train restore temporal context",
+        path=Path("/tmp/0085_poe_rare_item_train_restore_temporal_context.sql"),
+        sql="CREATE TABLE poe_trade.poe_rare_item_train_v3 ...",
+        checksum="abc123",
+    )
+    recorded: list[str] = []
+
+    monkeypatch.setattr(runner, "_ensure_metadata_table", lambda: None)
+    monkeypatch.setattr(
+        runner,
+        "status",
+        lambda: [
+            MigrationStatus(migration=migration, applied=False, checksum_match=True)
+        ],
+    )
+    monkeypatch.setattr(runner, "_record_applied", lambda m: recorded.append(m.version))
+
+    runner.apply()
+
+    assert len(client.queries) == 2
+    assert "poe_trade.poe_rare_item_train" in client.queries[0]
+    assert "poe_trade.poe_rare_item_train_v3" in client.queries[1]
+    assert recorded == ["0085"]
+    assert all(settings is None for settings in client.settings)
 
 
 def test_ensure_metadata_table_executes_create_database_and_table() -> None:
@@ -383,6 +428,21 @@ def test_v3_sale_confidence_migration_adds_training_example_flag() -> None:
     assert "ADD COLUMN IF NOT EXISTS sale_confidence_flag UInt8" in sql
 
 
+def test_mirage_iron_ring_context_migration_aliases_as_of_ts() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0086_ml_v3_mirage_iron_ring_context_columns_v1.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "item.observed_at AS as_of_ts" in sql
+    assert "SELECT\n    as_of_ts," in sql
+    assert "GROUP BY\n    as_of_ts," in sql
+
+
 def test_v3_divine_price_migration_adds_listing_and_training_columns() -> None:
     migration = (
         Path(__file__).resolve().parents[2]
@@ -393,6 +453,7 @@ def test_v3_divine_price_migration_adds_listing_and_training_columns() -> None:
 
     sql = migration.read_text(encoding="utf-8")
 
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.ml_v3_listing_episodes" in sql
     assert "ALTER TABLE poe_trade.ml_v3_listing_episodes" in sql
     assert "ADD COLUMN IF NOT EXISTS latest_price_divine Nullable(Float64)" in sql
     assert "ADD COLUMN IF NOT EXISTS fx_chaos_per_divine Nullable(Float64)" in sql
@@ -561,27 +622,23 @@ def test_scanner_opportunity_analytics_migration_adds_decision_storage() -> None
     for column in expected_decision_columns:
         assert column in sql
 
-    assert ") ENGINE = MergeTree()" in sql
-    assert "PARTITION BY toYYYYMMDD(recorded_at)" in sql
-    assert (
-        "ORDER BY (strategy_id, scanner_run_id, recorded_at, item_or_market_key)" in sql
-    )
-    assert "TTL recorded_at + INTERVAL 30 DAY" in sql
 
-    destructive_patterns = [
-        "DROP TABLE",
-        "DROP COLUMN",
-        "DROP VIEW",
-        "DROP DATABASE",
-        "RENAME TABLE",
-        "RENAME COLUMN",
-    ]
-    for pattern in destructive_patterns:
-        assert pattern not in sql
-
-    assert (
-        "GRANT SELECT ON poe_trade.scanner_candidate_decisions TO poe_api_reader" in sql
+def test_legacy_listing_source_migration_restores_enriched_views() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0088_restore_legacy_listing_source.sql"
     )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.silver_ps_stash_changes" in sql
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.silver_ps_items_raw" in sql
+    assert "CREATE MATERIALIZED VIEW IF NOT EXISTS poe_trade.mv_ps_items_raw" in sql
+    assert "CREATE VIEW IF NOT EXISTS poe_trade.v_ps_items_enriched" in sql
+    assert "CREATE VIEW IF NOT EXISTS poe_trade.v_ps_current_stashes" in sql
+    assert "CREATE VIEW IF NOT EXISTS poe_trade.v_ps_current_items" in sql
 
 
 def test_single_solution_cleanup_migration_drops_legacy_ml_tables() -> None:

@@ -70,15 +70,6 @@ def service_registry() -> tuple[ServiceDefinition, ...]:
             actions=_ALLOWED_ACTIONS,
         ),
         ServiceDefinition(
-            id="account_stash_harvester",
-            name="Account Stash Harvester",
-            description="Private account stash snapshot daemon",
-            type="crawler",
-            container="account_stash_harvester",
-            controllable=True,
-            actions=_ALLOWED_ACTIONS,
-        ),
-        ServiceDefinition(
             id="scanner_worker",
             name="Scanner Worker",
             description="Recommendation scanner background worker",
@@ -168,20 +159,6 @@ def _snapshot_for_service(
             uptime=None,
             last_crawl=_latest_ingest_iso(client, queue_prefix="psapi:"),
             rows_in_db=_latest_row_count(client),
-            container_info=service.container,
-            type=service.type,
-            allowed_actions=service.actions,
-        )
-    if service.id == "account_stash_harvester":
-        status = _ingest_status(client, queue_prefix="account_stash:")
-        return ServiceSnapshot(
-            id=service.id,
-            name=service.name,
-            description=service.description,
-            status=status,
-            uptime=None,
-            last_crawl=_latest_ingest_iso(client, queue_prefix="account_stash:"),
-            rows_in_db=_latest_account_stash_row_count(client),
             container_info=service.container,
             type=service.type,
             allowed_actions=service.actions,
@@ -294,24 +271,6 @@ def _ingest_status(client: ClickHouseClient, *, queue_prefix: str) -> ServiceSta
     if age_seconds <= 900:
         return "stopping"
     return "stopped"
-
-
-def _latest_account_stash_row_count(client: ClickHouseClient) -> int | None:
-    query = (
-        "SELECT count() AS rows FROM poe_trade.raw_account_stash_snapshot "
-        "FORMAT JSONEachRow"
-    )
-    try:
-        payload = client.execute(query).strip()
-    except ClickHouseClientError:
-        return None
-    if not payload:
-        return None
-    row = json.loads(payload.splitlines()[0])
-    value = row.get("rows")
-    if value is None:
-        return None
-    return int(value)
 
 
 def _latest_scanner_row_count(client: ClickHouseClient) -> int | None:

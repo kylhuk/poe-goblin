@@ -10,11 +10,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from poe_trade.config import constants
+from poe_trade.config.constants import FEED_KIND_ACCOUNT_STASH
 from poe_trade.db import ClickHouseClient
 from poe_trade.stash_scan import (
     content_signature_for_item,
     lineage_key_for_item,
     normalize_stash_prediction,
+    StashPrediction,
 )
 
 from .poe_client import PoeClient
@@ -86,7 +88,7 @@ class AccountStashHarvester:
         *,
         realm: str,
         league: str,
-        price_item: Callable[[dict[str, Any]], dict[str, Any]],
+        price_item: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         scan_id: str | None = None,
         started_at: str | None = None,
     ) -> dict[str, Any]:
@@ -176,15 +178,30 @@ class AccountStashHarvester:
                 for raw_item in items:
                     if not isinstance(raw_item, dict):
                         continue
-                    price_payload = price_item(raw_item)
-                    if not _has_concrete_prediction(price_payload):
-                        raise ValueError("missing concrete valuation for stash item")
-                    prediction = normalize_stash_prediction(price_payload)
                     listed = parse_listed_price(str(raw_item.get("note") or ""))
                     listed_price = listed[0] if listed else None
-                    currency = str(
-                        prediction.currency or (listed[1] if listed else "chaos")
-                    )
+                    currency = str(listed[1] if listed else "chaos")
+                    prediction = _fallback_prediction(currency=currency)
+                    if price_item is not None:
+                        try:
+                            price_payload = price_item(raw_item)
+                            if _has_concrete_prediction(price_payload):
+                                prediction = normalize_stash_prediction(price_payload)
+                                currency = str(
+                                    prediction.currency
+                                    or (listed[1] if listed else "chaos")
+                                )
+                            elif isinstance(price_payload, dict):
+                                currency = str(
+                                    price_payload.get("currency") or currency
+                                )
+                        except Exception:
+                            logger.exception(
+                                "Valuation lookup failed account=%s realm=%s league=%s",
+                                account_name,
+                                realm,
+                                league,
+                            )
                     current_item_rows.append(
                         {
                             "scan_id": effective_scan_id,
@@ -340,7 +357,7 @@ class AccountStashHarvester:
             }
 
     def _harvest(self, *, realm: str, league: str, dry_run: bool) -> None:
-        key = queue_key(constants.FEED_KIND_ACCOUNT_STASH, realm)
+        key = queue_key(FEED_KIND_ACCOUNT_STASH, realm)
         started = time.monotonic()
         captured = datetime.now(timezone.utc)
         status_text = "success"
@@ -369,7 +386,7 @@ class AccountStashHarvester:
             elapsed = time.monotonic() - started
             self._status.report(
                 queue_key=key,
-                feed_kind=constants.FEED_KIND_ACCOUNT_STASH,
+                feed_kind=FEED_KIND_ACCOUNT_STASH,
                 contract_version=constants.INGEST_CONTRACT_VERSION,
                 league=league,
                 realm=realm,
@@ -726,6 +743,20 @@ def _has_concrete_prediction(payload: Mapping[str, Any]) -> bool:
         return True
     price_p50 = payload.get("price_p50")
     return isinstance(price_p50, (int, float))
+
+
+def _fallback_prediction(*, currency: str) -> StashPrediction:
+    return StashPrediction(
+        predicted_price=0.0,
+        currency=currency,
+        confidence=0.0,
+        price_p10=None,
+        price_p90=None,
+        price_recommendation_eligible=False,
+        estimate_trust="unknown",
+        estimate_warning="",
+        fallback_reason="valuation_unavailable",
+    )
 
 
 def _json_each_row_payload(rows: list[dict[str, Any]]) -> str:

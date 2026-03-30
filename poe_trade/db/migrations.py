@@ -126,6 +126,14 @@ class MigrationRunner:
             LOGGER.info("nothing to apply")
             return
         for migration in pending:
+            if self._is_already_materialized_train_restore(migration):
+                LOGGER.warning(
+                    "migration %s already materialized; recording as applied",
+                    migration.version,
+                )
+                if not self.dry_run:
+                    self._record_applied(migration)
+                continue
             LOGGER.info("applying %s (%s)", migration.version, migration.description)
             if self.dry_run:
                 LOGGER.info(
@@ -228,6 +236,36 @@ SETTINGS index_granularity = 8192"""
         if final_statement:
             statements.append(final_statement)
         return statements
+
+    def _is_already_materialized_train_restore(self, migration: Migration) -> bool:
+        if migration.version != "0085":
+            return False
+        try:
+            train_signature = self._table_signature("poe_trade.poe_rare_item_train")
+            temp_signature = self._table_signature("poe_trade.poe_rare_item_train_v3")
+        except ClickHouseClientError:
+            return False
+        return train_signature == temp_signature
+
+    def _table_signature(self, table: str) -> dict[str, object]:
+        query = f"""SELECT
+    count() AS row_count,
+    min(observed_at) AS min_observed_at,
+    max(observed_at) AS max_observed_at,
+    sum(cityHash64(item_fingerprint)) AS fingerprint_sum
+FROM {table}
+FORMAT JSONEachRow"""
+        payload = self.client.execute(query)
+        cleaned = payload.strip()
+        if not cleaned:
+            return {}
+        try:
+            record = json.loads(cleaned.splitlines()[0])
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(record, dict):
+            return record
+        return {}
 
     def _fetch_applied(self) -> dict[str, str]:
         table = f"{self.database}.{METADATA_TABLE}"

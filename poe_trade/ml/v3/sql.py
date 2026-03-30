@@ -261,6 +261,34 @@ def _item_state_sql(
     )
 
 
+def _normalized_affix_token_sql(affix_expr: str) -> str:
+    return (
+        "lowerUTF8(replaceAll(trimBoth(replaceAll("
+        + affix_expr
+        + ", '\"', '')), '  ', ' '))"
+    )
+
+
+def _mod_features_sql(*, affix_payload_expr: str) -> str:
+    affix_values_sql = (
+        "arrayConcat("
+        f"arrayMap(affix -> concat('explicit::', {_normalized_affix_token_sql('affix')}), JSONExtractArrayRaw({affix_payload_expr}, 'explicit')),"
+        f"arrayMap(affix -> concat('implicit::', {_normalized_affix_token_sql('affix')}), JSONExtractArrayRaw({affix_payload_expr}, 'implicit')),"
+        f"arrayMap(affix -> concat('crafted::', {_normalized_affix_token_sql('affix')}), JSONExtractArrayRaw({affix_payload_expr}, 'crafted')),"
+        f"arrayMap(affix -> concat('fractured::', {_normalized_affix_token_sql('affix')}), JSONExtractArrayRaw({affix_payload_expr}, 'fractured')),"
+        f"arrayMap(affix -> concat('enchant::', {_normalized_affix_token_sql('affix')}), JSONExtractArrayRaw({affix_payload_expr}, 'enchant'))"
+        ")"
+    )
+    normalized_affix_values_sql = (
+        f"arrayFilter(affix -> affix != '', {affix_values_sql})"
+    )
+    return (
+        "toJSONString(mapFromArrays("
+        f"{normalized_affix_values_sql}, arrayMap(_ -> 1.0, {normalized_affix_values_sql})"
+        "))"
+    )
+
+
 def _material_state_signature_sql(
     *, rarity_expr: str, corrupted_expr: str, fractured_expr: str, synthesised_expr: str
 ) -> str:
@@ -748,6 +776,40 @@ def create_listing_episodes_table_query(
 def build_listing_episodes_insert_query(*, league: str, day: date) -> str:
     day_sql = _quote(day.isoformat())
     league_sql = _quote(league)
+    route_sql = _route_sql()
+    structured_other_scope_sql = (
+        "multiIf("
+        "    ifNull(category, 'other') IN ('ring', 'amulet', 'belt', 'jewel'), ifNull(category, 'other'),"
+        "    match(concat(lowerUTF8(ifNull(item_type_line, '')), ' ', lowerUTF8(ifNull(base_type, ''))), '(^|\\W)ring(\\W|$)'), 'ring',"
+        "    match(concat(lowerUTF8(ifNull(item_type_line, '')), ' ', lowerUTF8(ifNull(base_type, ''))), '(^|\\W)amulet(\\W|$)'), 'amulet',"
+        "    match(concat(lowerUTF8(ifNull(item_type_line, '')), ' ', lowerUTF8(ifNull(base_type, ''))), '(^|\\W)belt(\\W|$)'), 'belt',"
+        "    match(concat(lowerUTF8(ifNull(item_type_line, '')), ' ', lowerUTF8(ifNull(base_type, ''))), '(^|\\W)(?:cluster\\s+)?jewel(\\W|$)'), 'jewel',"
+        "    'other'"
+        ")"
+    )
+    family_scope_sql = (
+        "multiIf("
+        "    ifNull(category, 'other') = 'cluster_jewel', 'cluster_jewel',"
+        "    ifNull(category, 'other') IN ('fossil', 'logbook', 'scarab'), ifNull(category, 'other'),"
+        f"    ifNull(rarity, '') = 'Unique' AND {structured_other_scope_sql} != 'other', {structured_other_scope_sql},"
+        "    ifNull(rarity, '') = 'Unique', 'default',"
+        "    ifNull(rarity, '') = 'Rare', ifNull(category, 'other'),"
+        "    'default'"
+        ")"
+    )
+    material_state_signature_sql = _material_state_signature_sql(
+        rarity_expr="rarity",
+        corrupted_expr="corrupted",
+        fractured_expr="fractured",
+        synthesised_expr="synthesised",
+    )
+    item_state_key_sql = _item_state_sql(
+        rarity_expr="rarity",
+        corrupted_expr="corrupted",
+        fractured_expr="fractured",
+        synthesised_expr="synthesised",
+    )
+    cohort_key_sql = f"concat({route_sql}, '|', {family_scope_sql}, '|', {material_state_signature_sql})"
     return " ".join(
         [
             f"INSERT INTO {LISTING_EPISODES_TABLE} (",
@@ -819,15 +881,18 @@ def build_listing_episodes_insert_query(*, league: str, day: date) -> str:
             "fractured,",
             "synthesised,",
             "ifNull(category, 'other') AS category,",
-            f"{_route_sql()} AS route,",
-            "ifNull(strategy_family, 'default') AS strategy_family,",
-            "ifNull(cohort_key, concat(route, '|', ifNull(category, 'other'), '|', ifNull(material_state_signature, 'v1|rarity=unknown|corrupted=0|fractured=0|synthesised=0'))) AS cohort_key,",
-            "ifNull(material_state_signature, 'v1|rarity=unknown|corrupted=0|fractured=0|synthesised=0') AS material_state_signature,",
-            "ifNull(item_state_key, concat(lowerUTF8(ifNull(rarity, '')), '|corrupted=', toString(toUInt8(ifNull(corrupted, 0) != 0)), '|fractured=', toString(toUInt8(ifNull(fractured, 0) != 0)), '|synthesised=', toString(toUInt8(ifNull(synthesised, 0) != 0)))) AS item_state_key,",
+            f"{route_sql} AS route,",
+            f"{structured_other_scope_sql} AS structured_other_scope,",
+            f"{family_scope_sql} AS family_scope,",
+            f"{material_state_signature_sql} AS material_state_signature,",
+            f"{item_state_key_sql} AS item_state_key,",
+            f"{route_sql} AS strategy_family,",
+            f"{cohort_key_sql} AS cohort_key,",
             f"{_normalized_currency_sql('parsed_currency')} AS normalized_currency,",
-            "toUInt32(count() OVER (PARTITION BY league, realm, stash_id, identity_key)) AS support_count_recent,",
-            "toJSONString(map('ilvl', toFloat64(ilvl), 'stack_size', toFloat64(stack_size), 'corrupted', toFloat64(corrupted), 'fractured', toFloat64(fractured), 'synthesised', toFloat64(synthesised), 'price', toFloat64OrNull(parsed_amount))) AS feature_vector_json,",
-            "ifNull(mod_features_json, '{}') AS mod_features_json,",
+            "toUInt32(count() OVER (PARTITION BY ifNull(league, ''), realm, stash_id, identity_key)) AS support_count_recent,",
+            "toJSONString(map('ilvl', toFloat64(ilvl), 'stack_size', toFloat64(stack_size), 'corrupted', toFloat64(corrupted), 'fractured', toFloat64(fractured), 'synthesised', toFloat64(synthesised), 'price', ifNull(parsed_amount, 0.0))) AS feature_vector_json,",
+            "affix_payload_json,",
+            f"{_mod_features_sql(affix_payload_expr='affix_payload_json')} AS mod_features_json,",
             "parsed_amount,",
             "parsed_currency,",
             "lagInFrame(observed_at) OVER w AS prev_observed_at,",
@@ -835,7 +900,7 @@ def build_listing_episodes_insert_query(*, league: str, day: date) -> str:
             f"FROM {OBSERVATIONS_TABLE}",
             f"WHERE ifNull(league, '') = {league_sql}",
             f"AND toDate(observed_at) = toDate({day_sql})",
-            "WINDOW w AS (PARTITION BY league, realm, stash_id, identity_key ORDER BY observed_at)",
+            "WINDOW w AS (PARTITION BY ifNull(league, ''), realm, stash_id, identity_key ORDER BY observed_at)",
             ")",
             ", priced AS (",
             "SELECT",

@@ -66,15 +66,14 @@ def test_guard_disk_budget_raises_when_limit_exceeded() -> None:
         backfill.guard_disk_budget(client, max_bytes=100)
 
 
-def test_guard_disk_budget_raises_when_disk_telemetry_unavailable() -> None:
+def test_guard_disk_budget_fails_open_when_disk_telemetry_unavailable() -> None:
     class _TelemetryErrorClient(_RecordingClient):
         def execute(self, query: str, settings=None) -> str:  # noqa: ANN001
             if "FROM system.parts" in query:
                 raise ClickHouseClientError("disk telemetry unavailable")
             return super().execute(query, settings=settings)
 
-    with pytest.raises(ValueError, match="disk telemetry unavailable"):
-        backfill.guard_disk_budget(_TelemetryErrorClient(), max_bytes=100)
+    assert backfill.guard_disk_budget(_TelemetryErrorClient(), max_bytes=100) == 0
 
 
 def test_replay_day_executes_episode_event_label_and_training_queries() -> None:

@@ -467,16 +467,6 @@ def clear_oauth_token_state(settings: Settings, *, account_name: str) -> None:
         _save_json(oauth_token_state_path(settings), states)
 
 
-def build_private_stash_cookie_header(
-    *, poe_session_id: str, cf_clearance: str = ""
-) -> str:
-    cookies = [f"POESESSID={poe_session_id.strip()}"]
-    clearance = cf_clearance.strip()
-    if clearance:
-        cookies.append(f"cf_clearance={clearance}")
-    return "; ".join(cookies)
-
-
 def resolve_account_name(settings: Settings, *, poe_session_id: str) -> str:
     trimmed_session_id = poe_session_id.strip()
     if not trimmed_session_id:

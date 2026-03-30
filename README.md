@@ -10,4 +10,3 @@
 ## Services
 
 - ClickHouse, schema_migrator, market_harvester, scanner_worker, ml_trainer, poeninja_snapshot, and api
-- account_stash_harvester

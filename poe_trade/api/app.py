@@ -48,6 +48,7 @@ from poe_trade.ingestion.account_stash_harvester import AccountStashHarvester
 from poe_trade.ingestion.poe_client import PoeClient
 from poe_trade.ingestion.rate_limit import RateLimitPolicy
 from poe_trade.ingestion.status import StatusReporter
+
 from .ops import (
     OpsBackendUnavailable,
     ack_alert_payload,
@@ -286,19 +287,6 @@ def _build_private_stash_harvester(
     )
 
 
-def _scan_price_item_factory(clickhouse_client: ClickHouseClient, *, league: str):
-    def _price_item(item: dict[str, object]) -> dict[str, object]:
-        from poe_trade.stash_scan import serialize_stash_item_to_clipboard
-
-        return fetch_predict_one(
-            clickhouse_client,
-            league=league,
-            request_payload={"itemText": serialize_stash_item_to_clipboard(item)},
-        )
-
-    return _price_item
-
-
 def start_private_stash_scan(
     settings: Settings,
     clickhouse_client: ClickHouseClient,
@@ -365,9 +353,6 @@ def start_private_stash_scan(
                 result = harvester.run_private_scan(
                     realm=realm,
                     league=league,
-                    price_item=_scan_price_item_factory(
-                        clickhouse_client, league=league
-                    ),
                     scan_id=scan_id,
                     started_at=started_at,
                 )
@@ -457,6 +442,11 @@ class ApiApp:
         )
         self.router.add(
             "/api/v1/stash/scan",
+            ("POST", "OPTIONS"),
+            self._stash_scan_start,
+        )
+        self.router.add(
+            "/api/v1/stash/scan/start",
             ("POST", "OPTIONS"),
             self._stash_scan_start,
         )
@@ -1204,7 +1194,13 @@ class ApiApp:
                 )
             return int(parsed)
 
-        scan_id = _require_string("scanId")
+        scan_id = str(body.get("scanId") or body.get("stashId") or "").strip()
+        if not scan_id:
+            raise ApiError(
+                status=400,
+                code="invalid_input",
+                message="invalid input",
+            )
         structured_mode = body.get("structuredMode", False)
         if not isinstance(structured_mode, bool):
             raise ApiError(

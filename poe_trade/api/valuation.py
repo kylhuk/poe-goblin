@@ -143,6 +143,7 @@ def build_stash_scan_valuations_payload(
     selected = items[0] if items and not structured_mode else None
     payload: dict[str, Any] = {
         "structuredMode": structured_mode,
+        "scanId": scan_id,
         "stashId": scan_id,
         "itemId": selected.get("itemId") if selected else item_id,
         "scanDatetime": selected.get("scanDatetime") if selected else None,

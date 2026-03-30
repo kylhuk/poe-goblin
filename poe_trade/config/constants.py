@@ -2,7 +2,6 @@
 
 SERVICE_NAMES = [
     "market_harvester",
-    "account_stash_harvester",
     "scanner_worker",
     "ml_trainer",
     "poeninja_snapshot",
@@ -72,7 +71,6 @@ DEFAULT_API_LEAGUE_ALLOWLIST = ("Mirage",)
 DEFAULT_ENABLE_ACCOUNT_STASH = False
 DEFAULT_ACCOUNT_STASH_REALM = "pc"
 DEFAULT_ACCOUNT_STASH_LEAGUE = "Mirage"
-DEFAULT_ACCOUNT_STASH_POLL_INTERVAL = 300.0
 DEFAULT_AUTH_STATE_DIR = ".sisyphus/state/auth"
 DEFAULT_AUTH_COOKIE_NAME = "poe_session"
 DEFAULT_AUTH_COOKIE_SECURE = False

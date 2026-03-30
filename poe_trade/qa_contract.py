@@ -657,8 +657,7 @@ def _ingest_status_seed_sql() -> str:
     return (
         "INSERT INTO poe_trade.poe_ingest_status "
         "(queue_key, feed_kind, contract_version, league, realm, source, last_cursor, next_change_id, last_ingest_at, request_rate, error_count, stalled_since, last_error, status) VALUES "
-        "('psapi:pc','psapi',1,'Mirage','pc','market_harvester','qa-cursor-1','qa-next-1',now64(3),1.2,0,NULL,'','running'),"
-        "('account_stash:pc:Mirage','account_stash',1,'Mirage','pc','account_stash_harvester','qa-cursor-2','qa-next-2',now64(3),0.2,0,NULL,'','running')"
+        "('psapi:pc','psapi',1,'Mirage','pc','market_harvester','qa-cursor-1','qa-next-1',now64(3),1.2,0,NULL,'','running')"
     )
 
 

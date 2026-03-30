@@ -11,12 +11,6 @@ services:
     environment:
       - PYTHONPATH=/app
 
-  account_stash_harvester:
-    volumes:
-      - .:/app
-    environment:
-      - PYTHONPATH=/app
-
   scanner_worker:
     volumes:
       - .:/app

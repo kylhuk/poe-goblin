@@ -66,28 +66,6 @@ services:
     networks:
       - default
 
-  account_stash_harvester:
-    <<: *poe-app
-    command: ["service", "--name", "account_stash_harvester"]
-    depends_on:
-      clickhouse:
-        condition: service_healthy
-      schema_migrator:
-        condition: service_completed_successfully
-    env_file:
-      - .env
-    environment:
-      POE_CLICKHOUSE_URL: ${POE_CLICKHOUSE_INTERNAL_URL:-http://clickhouse:8123}
-      POE_ENABLE_ACCOUNT_STASH: "true"
-      POE_ACCOUNT_STASH_REALM: pc
-      POE_ACCOUNT_STASH_LEAGUE: Mirage
-      POE_ACCOUNT_STASH_ACCOUNT_NAME: wengaCH-0218
-      POE_ACCOUNT_STASH_ACCESS_TOKEN: qa-seeded-token
-    volumes:
-      - ./.state:/app/.state
-    networks:
-      - default
-
   scanner_worker:
     <<: *poe-app
     command: ["service", "--name", "scanner_worker"]

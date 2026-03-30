@@ -116,6 +116,7 @@ def test_stash_scan_valuations_full_match_empty_runs_one_fallback_query_per_affi
     )
 
     assert payload["structuredMode"] is False
+    assert payload["scanId"] == "scan-1"
     assert payload["stashId"] == "scan-1"
     assert payload["itemId"] == "item-1"
     assert payload["chaosMedian"] is None

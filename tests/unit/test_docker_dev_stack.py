@@ -112,7 +112,7 @@ def test_readme_documents_docker_dev_workflow() -> None:
         in readme
     )
     assert "poeninja_snapshot" in readme
-    assert "account_stash_harvester" in readme
+    assert "account_stash_harvester" not in readme
     assert (
         "ClickHouse, schema_migrator, market_harvester, scanner_worker, ml_trainer, poeninja_snapshot, and api"
         in readme

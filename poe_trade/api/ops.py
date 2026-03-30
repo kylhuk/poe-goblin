@@ -70,6 +70,7 @@ def contract_payload(
             "ml_predict_one": "/api/v1/ml/leagues/{league}/predict-one",
             "stash_tabs": "/api/v1/stash/tabs?league={league}&realm={realm}",
             "stash_status": "/api/v1/stash/status?league={league}&realm={realm}",
+            "stash_scan_start": "/api/v1/stash/scan/start",
             "stash_scan_valuations": "/api/v1/stash/scan/valuations",
             "auth_login": "/api/v1/auth/login",
             "auth_callback": "/api/v1/auth/callback",

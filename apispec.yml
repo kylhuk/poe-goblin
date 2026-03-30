@@ -353,9 +353,30 @@ paths:
         '401':
           $ref: '#/components/responses/ApiError'
 
-  /api/v1/stash/scan:
+  /api/v1/stash/scan/start:
     post:
       summary: Start stash scan
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/League'
+        - $ref: '#/components/parameters/Realm'
+      responses:
+        '202':
+          description: Scan started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StashScanStartResponse'
+        '401':
+          $ref: '#/components/responses/ApiError'
+        '503':
+          $ref: '#/components/responses/ApiError'
+
+  /api/v1/stash/scan:
+    post:
+      summary: Start stash scan (legacy alias)
+      deprecated: true
       security:
         - sessionCookie: []
       parameters:
@@ -834,9 +855,11 @@ components:
 
     StashScanValuationsRequest:
       type: object
-      required: [scanId, minThreshold, maxThreshold, maxAgeDays]
+      required: [minThreshold, maxThreshold, maxAgeDays]
       properties:
         scanId:
+          type: string
+        stashId:
           type: string
         itemId:
           type: string
@@ -853,10 +876,12 @@ components:
 
     StashScanValuationsResponse:
       type: object
-      required: [structuredMode, stashId, items]
+      required: [structuredMode, scanId, stashId, items]
       properties:
         structuredMode:
           type: boolean
+        scanId:
+          type: string
         stashId:
           type: string
         itemId:

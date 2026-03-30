@@ -1248,23 +1248,23 @@ def test_dashboard_payload_summary_excludes_optional_and_oneshot_services(
             allowed_actions=(),
         ),
         ServiceSnapshot(
-            id="account_stash_harvester",
-            name="Account Stash Harvester",
+            id="api",
+            name="API",
             description="",
-            status="stopped",
+            status="running",
             uptime=None,
             last_crawl=None,
             rows_in_db=None,
-            container_info="account_stash_harvester",
-            type="crawler",
-            allowed_actions=("start", "stop", "restart"),
+            container_info="api",
+            type="analytics",
+            allowed_actions=(),
         ),
     ]
 
     result = dashboard_payload(client, snapshots=snapshots)
 
-    assert result["summary"]["total"] == 5
-    assert result["summary"]["running"] == 4
+    assert result["summary"]["total"] == 4
+    assert result["summary"]["running"] == 3
     assert result["summary"]["errors"] == 1
 
 

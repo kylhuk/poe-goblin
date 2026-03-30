@@ -34,7 +34,7 @@ WITH
     ),
     affix_rows AS (
         SELECT
-            item.observed_at,
+            item.observed_at AS as_of_ts,
             item.realm,
             item.league,
             item.stash_id,

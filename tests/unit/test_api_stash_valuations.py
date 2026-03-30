@@ -131,6 +131,60 @@ def test_stash_scan_valuations_route_returns_single_item_payload(
     }
 
 
+def test_stash_scan_valuations_route_accepts_stash_id_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "poe_trade.api.app.get_session",
+        lambda _settings, *, session_id: _connected_session(session_id),
+    )
+    monkeypatch.setattr(
+        "poe_trade.api.app.stash_scan_valuations_payload",
+        lambda _client, **kwargs: (
+            captured.update(kwargs)
+            or {
+                "structuredMode": False,
+                "scanId": "scan-1",
+                "stashId": "scan-1",
+                "itemId": "item-1",
+                "scanDatetime": "2026-03-21T12:00:00Z",
+                "chaosMedian": 42.0,
+                "daySeries": [],
+                "items": [],
+            }
+        ),
+    )
+    app = ApiApp(
+        _settings_with_stash_enabled(),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+
+    body = json.dumps(
+        {
+            "stashId": "scan-1",
+            "itemId": "item-1",
+            "structuredMode": False,
+            "minThreshold": 10,
+            "maxThreshold": 50,
+            "maxAgeDays": 30,
+        }
+    ).encode("utf-8")
+    response = app.handle(
+        method="POST",
+        raw_path="/api/v1/stash/scan/valuations?league=Mirage&realm=pc",
+        headers=_request_headers(body),
+        body_reader=BytesIO(body),
+    )
+
+    body = json.loads(response.body.decode("utf-8"))
+    assert response.status == 200
+    assert body["scanId"] == "scan-1"
+    assert body["stashId"] == "scan-1"
+    assert captured["scan_id"] == "scan-1"
+
+
 def test_stash_scan_valuations_route_returns_structured_batch_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

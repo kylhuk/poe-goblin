@@ -12,15 +12,6 @@ services:
       POE_ENABLE_PSAPI: "false"
       POE_ENABLE_CXAPI: "false"
 
-  account_stash_harvester:
-    environment:
-      POE_CLICKHOUSE_URL: http://clickhouse:8123
-      POE_ENABLE_ACCOUNT_STASH: "true"
-      POE_ACCOUNT_STASH_REALM: pc
-      POE_ACCOUNT_STASH_LEAGUE: Mirage
-      POE_ACCOUNT_STASH_ACCOUNT_NAME: qa-exile
-      POE_ACCOUNT_STASH_ACCESS_TOKEN: qa-seeded-token
-
   scanner_worker:
     environment:
       POE_CLICKHOUSE_URL: http://clickhouse:8123

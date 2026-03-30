@@ -78,6 +78,21 @@ def test_build_listing_episodes_insert_query_collapses_snapshot_bursts() -> None
     assert "min_price" in query
     assert "latest_price_divine" in query
     assert "min_price_divine" in query
+    assert "AS strategy_family" in query
+    assert "AS cohort_key" in query
+    assert "AS material_state_signature" in query
+    assert "AS item_state_key" in query
+    assert "ifNull(league, '') AS league" in query
+    assert (
+        "toUInt32(count() OVER (PARTITION BY ifNull(league, ''), realm, stash_id, identity_key))"
+        in query
+    )
+    assert (
+        "WINDOW w AS (PARTITION BY ifNull(league, ''), realm, stash_id, identity_key ORDER BY observed_at)"
+        in query
+    )
+    assert "affix_payload_json" in query
+    assert "JSONExtractArrayRaw(affix_payload_json, 'explicit')" in query
     assert "fx_chaos_per_divine" in query
     assert "target_price_divine" in query
 

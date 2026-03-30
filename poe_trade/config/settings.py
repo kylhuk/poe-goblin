@@ -182,10 +182,8 @@ class Settings:
     api_max_body_bytes: int
     api_league_allowlist: tuple[str, ...]
     enable_account_stash: bool
-    account_stash_access_token: str
     account_stash_realm: str
     account_stash_league: str
-    account_stash_poll_interval: float
     account_stash_scan_stale_timeout_seconds: int
     auth_state_dir: str
     auth_cookie_name: str
@@ -346,18 +344,11 @@ class Settings:
             enable_account_stash=_parse_env_bool(
                 "POE_ENABLE_ACCOUNT_STASH", constants.DEFAULT_ENABLE_ACCOUNT_STASH
             ),
-            account_stash_access_token=_get_env_str(
-                "POE_ACCOUNT_STASH_ACCESS_TOKEN", ""
-            ),
             account_stash_realm=_get_env_str(
                 "POE_ACCOUNT_STASH_REALM", constants.DEFAULT_ACCOUNT_STASH_REALM
             ),
             account_stash_league=_get_env_str(
                 "POE_ACCOUNT_STASH_LEAGUE", constants.DEFAULT_ACCOUNT_STASH_LEAGUE
-            ),
-            account_stash_poll_interval=_parse_env_float(
-                "POE_ACCOUNT_STASH_POLL_INTERVAL",
-                constants.DEFAULT_ACCOUNT_STASH_POLL_INTERVAL,
             ),
             account_stash_scan_stale_timeout_seconds=_parse_env_int(
                 "POE_ACCOUNT_STASH_SCAN_STALE_TIMEOUT_SECONDS",

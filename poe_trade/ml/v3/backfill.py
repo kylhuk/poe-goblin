@@ -61,10 +61,10 @@ def disk_usage_bytes(client: ClickHouseClient, *, fail_open: bool = False) -> in
 
 
 def guard_disk_budget(client: ClickHouseClient, *, max_bytes: int) -> int:
-    try:
-        current = disk_usage_bytes(client)
-    except ClickHouseClientError as exc:
-        raise ValueError("disk telemetry unavailable; aborting backfill") from exc
+    current = disk_usage_bytes(client, fail_open=True)
+    if current <= 0:
+        logger.warning("disk telemetry unavailable; continuing backfill without guard")
+        return 0
     if current > max(0, max_bytes):
         raise ValueError(
             f"disk budget exceeded: current={current} max={max_bytes}; aborting backfill"
