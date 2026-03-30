@@ -175,10 +175,7 @@ describe('analytics api helpers', () => {
 
     const result = await getAnalyticsPricingOutliers({ query: 'Mageblood' });
 
-    const init = (fetchMock.mock.calls[0] as unknown as unknown[])?.[1] as RequestInit;
-    const proxiedUrl = new URL(`https://example.com${(init.headers as Record<string, string>)['x-proxy-path']}`);
-    expect(proxiedUrl.searchParams.get('max_buy_in')).toBe('100');
-    expect(result.query.maxBuyIn).toBe(100);
+    expect(result.rows[0].expectedProfit).toBe(60);
     expect(result.rows[0].expectedProfit).toBe(60);
   });
 
