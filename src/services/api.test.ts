@@ -173,7 +173,7 @@ describe('analytics api helpers', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await getAnalyticsPricingOutliers({ query: 'Mageblood', maxBuyIn: 100 });
+    const result = await getAnalyticsPricingOutliers({ query: 'Mageblood' });
 
     const init = (fetchMock.mock.calls[0] as unknown as unknown[])?.[1] as RequestInit;
     const proxiedUrl = new URL(`https://example.com${(init.headers as Record<string, string>)['x-proxy-path']}`);
