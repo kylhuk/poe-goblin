@@ -137,6 +137,10 @@ type ContractPayload = {
   primary_league?: string;
 };
 
+type RequestOptions = {
+  skipErrorCodes?: string[];
+};
+
 import { logApiError } from './apiErrorLog';
 import { supabase, SUPABASE_PROJECT_ID } from '@/lib/supabaseClient';
 
@@ -150,7 +154,7 @@ function isMissingRouteError(error: unknown): boolean {
   return error.message.startsWith('route_not_found:') || error.message.includes('route not found');
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, options: RequestOptions = {}): Promise<T> {
   const method = init?.method || 'GET';
   let response: Response;
   try {
@@ -189,7 +193,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const baseMessage = payload.error?.message || `Request failed (${response.status})`;
     const detail = formatApiErrorDetail(payload.error?.details);
     const message = detail ? `${baseMessage} (${detail})` : baseMessage;
-    logApiError({ method, path, statusCode: response.status, errorCode: code, message });
+    if (!options.skipErrorCodes?.includes(code)) {
+      logApiError({ method, path, statusCode: response.status, errorCode: code, message });
+    }
     throw new Error(`${code}: ${message}`);
   }
   if (response.status === 204) {
@@ -1009,6 +1015,8 @@ export const api: ApiService = {
     try {
       return await request<StashScanStartResponse>(startPath, {
         method: 'POST',
+      }, {
+        skipErrorCodes: ['route_not_found'],
       });
     } catch (error) {
       if (!isMissingRouteError(error)) {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { clearApiErrors, getApiErrors } from './apiErrorLog';
 
 const { getSessionMock } = vi.hoisted(() => ({
   getSessionMock: vi.fn(),
@@ -23,6 +24,7 @@ describe('stash api methods', () => {
     vi.resetModules();
     vi.stubEnv('VITE_SUPABASE_PROJECT_ID', 'project-id');
     getSessionMock.mockResolvedValue({ data: { session: { access_token: 'token-123' } } });
+    clearApiErrors();
   });
 
   afterEach(() => {
@@ -99,6 +101,7 @@ describe('stash api methods', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(result.scanId).toBe('scan-legacy');
     expect(result.accountName).toBe('qa-exile');
+    expect(getApiErrors().some((entry) => entry.errorCode === 'route_not_found')).toBe(false);
   });
 
   test('fetches stash scan status and item history', async () => {
