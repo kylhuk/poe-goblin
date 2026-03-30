@@ -69,25 +69,6 @@ export interface ScannerAnalyticsResponse {
   complexityTiers: ComplexityTier[];
 }
 
-export interface AlertRow {
-  alert_id: string;
-  recorded_at: string;
-  status: string;
-  item_or_market_key: string;
-}
-
-export interface BacktestRow {
-  status: string;
-  count: number;
-}
-
-export interface BacktestAnalytics {
-  rows: BacktestRow[];
-  summaryRows: BacktestRow[];
-  detailRows: BacktestRow[];
-  totals: { summary: number; detail: number };
-}
-
 export interface MlCandidateComparison {
   candidate_run_id: string;
   incumbent_run_id: string;
@@ -142,59 +123,6 @@ export interface MlStatus {
 
 export interface MlAnalytics {
   status: MlStatus;
-}
-
-export interface ReportData {
-  league: string;
-  recommendations: number;
-  alerts: number;
-  journal_events: number;
-  journal_positions: number;
-  backtest_summary_rows: number;
-  backtest_detail_rows: number;
-  gold_currency_ref_hour_rows: number;
-  gold_listing_ref_hour_rows: number;
-  gold_liquidity_ref_hour_rows: number;
-  gold_bulk_premium_hour_rows: number;
-  gold_set_ref_hour_rows: number;
-  realized_pnl_chaos: number;
-}
-
-// ========== Gold Diagnostics ==========
-export interface GoldDiagnosticsMart {
-  martName: string;
-  sourceName: string | null;
-  diagnosticState: string;
-  sourceRowCount: number;
-  goldRowCount: number;
-  sourceLatestAt: string | null;
-  goldLatestAt: string | null;
-  goldFreshnessMinutes: number | null;
-  sourceToGoldLagMinutes: number | null;
-  leagueVisibility: string | null;
-  sourceLeagueRows: number | null;
-  goldLeagueRows: number | null;
-}
-
-export interface GoldDiagnosticsSummary {
-  status: string;
-  martCount: number;
-  problemMarts: number;
-  goldEmptyMarts: number;
-  staleMarts: number;
-  missingLeagueMarts: number;
-}
-
-export interface GoldDiagnosticsResponse {
-  league: string;
-  summary: GoldDiagnosticsSummary;
-  marts: GoldDiagnosticsMart[];
-}
-
-export interface ReportAnalytics {
-  status: string;
-  report: ReportData;
-  goldDiagnostics?: GoldDiagnosticsResponse | null;
 }
 
 type ApiErrorPayload = {
@@ -331,14 +259,6 @@ export async function getAnalyticsScanner() {
   };
 }
 
-export async function getAnalyticsAlerts() {
-  const payload = await request<{ rows: AlertRow[] }>('/api/v1/ops/analytics/alerts');
-  return payload.rows;
-}
-
-export async function getAnalyticsBacktests() {
-  return request<BacktestAnalytics>('/api/v1/ops/analytics/backtests');
-}
 
 export interface OpportunitiesAnalytics {
   [key: string]: unknown;
@@ -428,69 +348,6 @@ export async function getAnalyticsMl() {
   return normalizeMlAnalytics(raw);
 }
 
-export async function getAnalyticsReport() {
-  const raw = await request<Record<string, unknown>>('/api/v1/ops/analytics/report');
-  return normalizeReportAnalytics(raw);
-}
-
-function normalizeGoldDiagnostics(raw: unknown): GoldDiagnosticsResponse | null {
-  const o = asObject(raw);
-  if (Object.keys(o).length === 0) return null;
-  const summary = asObject(o.summary);
-  const marts = Array.isArray(o.marts) ? o.marts : [];
-  return {
-    league: optString(o.league) ?? '',
-    summary: {
-      status: optString(summary.status) ?? 'unknown',
-      martCount: optNumber(summary.martCount ?? summary.mart_count) ?? 0,
-      problemMarts: optNumber(summary.problemMarts ?? summary.problem_marts) ?? 0,
-      goldEmptyMarts: optNumber(summary.goldEmptyMarts ?? summary.gold_empty_marts) ?? 0,
-      staleMarts: optNumber(summary.staleMarts ?? summary.stale_marts) ?? 0,
-      missingLeagueMarts: optNumber(summary.missingLeagueMarts ?? summary.missing_league_marts) ?? 0,
-    },
-    marts: marts.map((entry) => {
-      const m = asObject(entry);
-      return {
-        martName: optString(m.martName ?? m.mart_name) ?? 'unknown',
-        sourceName: optString(m.sourceName ?? m.source_name),
-        diagnosticState: optString(m.diagnosticState ?? m.diagnostic_state) ?? 'unknown',
-        sourceRowCount: optNumber(m.sourceRowCount ?? m.source_row_count) ?? 0,
-        goldRowCount: optNumber(m.goldRowCount ?? m.gold_row_count) ?? 0,
-        sourceLatestAt: optString(m.sourceLatestAt ?? m.source_latest_at),
-        goldLatestAt: optString(m.goldLatestAt ?? m.gold_latest_at),
-        goldFreshnessMinutes: optNumber(m.goldFreshnessMinutes ?? m.gold_freshness_minutes),
-        sourceToGoldLagMinutes: optNumber(m.sourceToGoldLagMinutes ?? m.source_to_gold_lag_minutes),
-        leagueVisibility: optString(m.leagueVisibility ?? m.league_visibility),
-        sourceLeagueRows: optNumber(m.sourceLeagueRows ?? m.source_league_rows),
-        goldLeagueRows: optNumber(m.goldLeagueRows ?? m.gold_league_rows),
-      };
-    }),
-  };
-}
-
-function normalizeReportAnalytics(raw: unknown): ReportAnalytics {
-  const o = asObject(raw);
-  const report = asObject(o.report);
-  return {
-    status: optString(o.status) ?? 'unknown',
-    report: {
-      league: optString(report.league) ?? '',
-      recommendations: optNumber(report.recommendations) ?? 0,
-      alerts: optNumber(report.alerts) ?? 0,
-      journal_events: optNumber(report.journal_events ?? report.journalEvents) ?? 0,
-      journal_positions: optNumber(report.journal_positions ?? report.journalPositions) ?? 0,
-      backtest_summary_rows: optNumber(report.backtest_summary_rows ?? report.backtestSummaryRows) ?? 0,
-      backtest_detail_rows: optNumber(report.backtest_detail_rows ?? report.backtestDetailRows) ?? 0,
-      gold_currency_ref_hour_rows: optNumber(report.gold_currency_ref_hour_rows ?? report.goldCurrencyRefHourRows) ?? 0,
-      gold_listing_ref_hour_rows: optNumber(report.gold_listing_ref_hour_rows ?? report.goldListingRefHourRows) ?? 0,
-      gold_liquidity_ref_hour_rows: optNumber(report.gold_liquidity_ref_hour_rows ?? report.goldLiquidityRefHourRows) ?? 0,
-      gold_bulk_premium_hour_rows: optNumber(report.gold_bulk_premium_hour_rows ?? report.goldBulkPremiumHourRows) ?? 0,
-      gold_set_ref_hour_rows: optNumber(report.gold_set_ref_hour_rows ?? report.goldSetRefHourRows) ?? 0,
-      realized_pnl_chaos: optNumber(report.realized_pnl_chaos ?? report.realizedPnlChaos) ?? 0,
-    },
-    goldDiagnostics: normalizeGoldDiagnostics(o.goldDiagnostics ?? o.gold_diagnostics),
-  };
-}
 
 function normalizeTrustFields(source: Record<string, unknown>) {
   return {
@@ -698,7 +555,6 @@ function normalizeSearchHistoryResponse(payload: unknown): SearchHistoryResponse
 function normalizePricingOutliersResponse(payload: unknown): PricingOutliersResponse {
   const source = asObject(payload);
   const query = asObject(source.query) as PricingOutliersQueryPayload;
-  const topLevelMaxBuyIn = optNumber(source.maxBuyIn ?? source.max_buy_in);
   const topLevelLimit = optNumber(source.limit);
   const normalizedQuery = {
     ...(optString(query.query) ? { query: optString(query.query) } : {}),
@@ -709,9 +565,6 @@ function normalizePricingOutliersResponse(payload: unknown): PricingOutliersResp
       : {}),
     ...(optNumber(query.minTotal ?? query.min_total ?? source.minTotal ?? source.min_total) != null
       ? { minTotal: optNumber(query.minTotal ?? query.min_total ?? source.minTotal ?? source.min_total) as number }
-      : {}),
-    ...((optNumber(query.maxBuyIn ?? query.max_buy_in) ?? topLevelMaxBuyIn) != null
-      ? { maxBuyIn: (optNumber(query.maxBuyIn ?? query.max_buy_in) ?? topLevelMaxBuyIn) as number }
       : {}),
     ...((optNumber(query.limit) ?? topLevelLimit) != null
       ? { limit: (optNumber(query.limit) ?? topLevelLimit) as number }
@@ -909,7 +762,6 @@ export async function getAnalyticsPricingOutliers(params: PricingOutliersRequest
     sort: params.sort,
     order: params.order,
     min_total: params.minTotal,
-    max_buy_in: params.maxBuyIn,
     limit: params.limit,
   });
   return normalizePricingOutliersResponse(
@@ -1145,7 +997,7 @@ export const api: ApiService = {
 
   async startStashScan() {
     const league = await primaryLeague();
-    return request<StashScanStartResponse>(`/api/v1/stash/scan?league=${encodeURIComponent(league)}&realm=pc`, {
+    return request<StashScanStartResponse>(`/api/v1/stash/scan/start?league=${encodeURIComponent(league)}&realm=pc`, {
       method: 'POST',
     });
   },
@@ -1240,6 +1092,7 @@ export const api: ApiService = {
         method: 'POST',
         body: JSON.stringify({
           scanId: req.scanId,
+          ...(req.stashId ? { stashId: req.stashId } : {}),
           minThreshold: req.minThreshold,
           maxThreshold: req.maxThreshold,
           maxAgeDays: req.maxAgeDays,
@@ -1251,7 +1104,11 @@ export const api: ApiService = {
   },
 
   async getMessages() {
-    const payload = await request<{ messages: AppMessage[] }>('/api/v1/ops/messages');
-    return payload.messages;
+    const payload = await request<unknown>('/api/v1/ops/messages');
+    // Spec says OpsMessagesResponse is a plain array; handle both shapes
+    if (Array.isArray(payload)) return payload as AppMessage[];
+    const obj = payload as Record<string, unknown>;
+    if (Array.isArray(obj.messages)) return obj.messages as AppMessage[];
+    return [];
   },
 };

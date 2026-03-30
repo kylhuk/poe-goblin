@@ -21,19 +21,11 @@ import {
 import { 
   getAnalyticsIngestion, 
   getAnalyticsScanner, 
-  getAnalyticsAlerts, 
-  getAnalyticsBacktests, 
   getAnalyticsPricingOutliers,
-  getAnalyticsReport,
   getAnalyticsSearchHistory,
   getAnalyticsSearchSuggestions,
   type IngestionRow,
   type ScannerAnalyticsResponse,
-  type AlertRow, 
-  type BacktestAnalytics, 
-  type ReportAnalytics,
-  type ReportData,
-  type GoldDiagnosticsResponse,
 } from '@/services/api';
 import { api } from '@/services/api';
 import type { MlAutomationStatus, MlAutomationHistory, MlAutomationObservability, PricingOutliersResponse, SearchHistoryResponse, SearchSuggestion } from '@/types/api';
@@ -56,26 +48,18 @@ const AnalyticsTab = forwardRef<HTMLDivElement, AnalyticsTabProps>(function Anal
       <TabsList className="flex-wrap h-auto gap-1 bg-secondary/50 p-1">
         <TabsTrigger data-testid="analytics-tab-ingestion" value="ingestion" className="tab-game text-xs">Ingestion</TabsTrigger>
         <TabsTrigger data-testid="analytics-tab-scanner" value="scanner" className="tab-game text-xs">Scanner</TabsTrigger>
-        <TabsTrigger data-testid="analytics-tab-alerts" value="alerts" className="tab-game text-xs">Alerts</TabsTrigger>
-        <TabsTrigger data-testid="analytics-tab-backtests" value="backtests" className="tab-game text-xs">Backtests</TabsTrigger>
         <TabsTrigger data-testid="analytics-tab-ml" value="ml" className="tab-game text-xs">ML</TabsTrigger>
-        <TabsTrigger data-testid="analytics-tab-reports" value="reports" className="tab-game text-xs">Reports</TabsTrigger>
         <TabsTrigger data-testid="analytics-tab-search" value="search" className="tab-game text-xs">Search</TabsTrigger>
         <TabsTrigger data-testid="analytics-tab-outliers" value="outliers" className="tab-game text-xs">Outliers</TabsTrigger>
         <TabsTrigger data-testid="analytics-tab-session" value="session" className="tab-game text-xs">Session</TabsTrigger>
-        <TabsTrigger data-testid="analytics-tab-diagnostics" value="diagnostics" className="tab-game text-xs">Diagnostics</TabsTrigger>
       </TabsList>
 
       <TabsContent data-testid="analytics-panel-ingestion" value="ingestion"><IngestionPanel /></TabsContent>
       <TabsContent data-testid="analytics-panel-scanner" value="scanner"><ScannerPanel /></TabsContent>
-      <TabsContent data-testid="analytics-panel-alerts" value="alerts"><AlertsPanel /></TabsContent>
-      <TabsContent data-testid="analytics-panel-backtests" value="backtests"><BacktestsPanel /></TabsContent>
       <TabsContent data-testid="analytics-panel-ml" value="ml"><MlPanel /></TabsContent>
-      <TabsContent data-testid="analytics-panel-reports" value="reports"><ReportsPanel /></TabsContent>
       <TabsContent data-testid="analytics-panel-search" value="search"><SearchHistoryPanel /></TabsContent>
       <TabsContent data-testid="analytics-panel-outliers" value="outliers"><PricingOutliersPanel /></TabsContent>
       <TabsContent data-testid="analytics-panel-session" value="session"><RenderState kind="feature_unavailable" message="Session analytics not supported by backend contract" /></TabsContent>
-      <TabsContent data-testid="analytics-panel-diagnostics" value="diagnostics"><DiagnosticsPanel /></TabsContent>
     </Tabs>
     </div>
   );
@@ -248,86 +232,6 @@ function ScannerPanel() {
   );
 }
 
-function AlertsPanel() {
-  const [items, setItems] = useState<AlertRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const load = useCallback(() => {
-    getAnalyticsAlerts()
-      .then(setItems)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load alerts analytics'));
-  }, []);
-  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
-
-  if (error) return <RenderState kind="degraded" message={error} />;
-  if (items.length === 0) return <RenderState kind="empty" message="No alerts data available" />;
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      {items.map((item, i) => (
-        <Card key={i} className="card-game">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-sans">{item.item_or_market_key}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Status: <span className="text-foreground font-mono">{item.status}</span></span>
-              <Freshness iso={item.recorded_at} />
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function BacktestsPanel() {
-  const [data, setData] = useState<BacktestAnalytics | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const load = useCallback(() => {
-    getAnalyticsBacktests()
-      .then(setData)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load backtests analytics'));
-  }, []);
-  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
-
-  if (error) return <RenderState kind="degraded" message={error} />;
-  if (!data || data.rows.length === 0) return <RenderState kind="empty" message="No backtest data available" />;
-
-  return (
-    <div className="space-y-4">
-      <Card className="card-game">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-sans">Summary</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {data.summaryRows.map((row, i) => (
-              <div key={i} className="text-xs">
-                <span className="text-muted-foreground">{row.status}</span>
-                <p className="font-mono text-foreground">{row.count}</p>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-      <Card className="card-game">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-sans">Details</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {data.detailRows.map((row, i) => (
-              <div key={i} className="text-xs">
-                <span className="text-muted-foreground">{row.status}</span>
-                <p className="font-mono text-foreground">{row.count}</p>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
 
 function statusColor(status: string): string {
   if (!status || status === 'unknown' || status === 'no_runs') return 'bg-muted text-muted-foreground border-border';
@@ -865,7 +769,7 @@ const OUTLIERS_DEFAULTS = {
   sort: 'expected_profit',
   order: 'desc' as const,
   minTotal: 25,
-  maxBuyIn: 100,
+  
   limit: 100,
 };
 
@@ -882,196 +786,6 @@ const OUTLIER_ORDER_OPTIONS = [
   { value: 'asc', label: 'Ascending' },
 ] as const;
 
-const GOLD_LABELS: { key: keyof ReportData; label: string }[] = [
-  { key: 'gold_currency_ref_hour_rows', label: 'Currency Ref' },
-  { key: 'gold_listing_ref_hour_rows', label: 'Listing Ref' },
-  { key: 'gold_liquidity_ref_hour_rows', label: 'Liquidity Ref' },
-  { key: 'gold_bulk_premium_hour_rows', label: 'Bulk Premium' },
-  { key: 'gold_set_ref_hour_rows', label: 'Set Ref' },
-];
-
-function ReportsPanel() {
-  const [data, setData] = useState<ReportAnalytics | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const load = useCallback(() => {
-    getAnalyticsReport()
-      .then(setData)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load report analytics'));
-  }, []);
-  useEffect(() => { load(); const iv = setInterval(load, 5_000); return () => clearInterval(iv); }, [load]);
-
-  if (error) return <RenderState kind="degraded" message={error} />;
-  if (!data || data.status === 'empty') return <RenderState kind="empty" message="No report data available" />;
-
-  const r = data.report as ReportData;
-
-  return (
-    <div className="space-y-4">
-      {/* Header: League + PnL */}
-      <Card className="card-game">
-        <CardContent className="p-4 flex items-center justify-between">
-          <div className="text-xs">
-            <span className="text-muted-foreground">League</span>
-            <p className="font-mono text-foreground">{r.league}</p>
-          </div>
-          <div className="text-right">
-            <span className="text-xs text-muted-foreground">Realized PnL</span>
-            <p className="text-lg font-mono text-foreground">
-              {r.realized_pnl_chaos.toLocaleString()}<span className="text-xs text-muted-foreground ml-1">chaos</span>
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Activity Counts */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {([
-          ['Recommendations', r.recommendations],
-          ['Alerts', r.alerts],
-          ['Journal Events', r.journal_events],
-          ['Journal Positions', r.journal_positions],
-        ] as const).map(([label, val]) => (
-          <Card key={label} className="card-game">
-            <CardContent className="p-4 text-center">
-              <span className="text-xs text-muted-foreground">{label}</span>
-              <p className="text-lg font-mono text-foreground">{val}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Backtest Counts */}
-      <div className="grid grid-cols-2 gap-4">
-        <Card className="card-game">
-          <CardContent className="p-4 text-center">
-            <span className="text-xs text-muted-foreground">Backtest Summary Rows</span>
-            <p className="text-lg font-mono text-foreground">{r.backtest_summary_rows}</p>
-          </CardContent>
-        </Card>
-        <Card className="card-game">
-          <CardContent className="p-4 text-center">
-            <span className="text-xs text-muted-foreground">Backtest Detail Rows</span>
-            <p className="text-lg font-mono text-foreground">{r.backtest_detail_rows}</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Gold Reference Data */}
-      <Card className="card-game">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-sans">Gold Reference Data</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-3 text-xs">
-            {GOLD_LABELS.map(({ key, label }) => (
-              <div key={key}>
-                <span className="text-muted-foreground">{label}</span>
-                <p className="font-mono text-foreground">{(r[key] as number).toLocaleString()} rows</p>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function diagnosticStateColor(state: string): string {
-  if (state === 'ok' || state === 'healthy') return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
-  if (state === 'stale') return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
-  if (state === 'gold_empty' || state === 'degraded') return 'bg-destructive/20 text-destructive border-destructive/30';
-  if (state === 'league_gap') return 'bg-sky-500/20 text-sky-400 border-sky-500/30';
-  return 'bg-muted text-muted-foreground border-border';
-}
-
-function DiagnosticsPanel() {
-  const [data, setData] = useState<GoldDiagnosticsResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(() => {
-    getAnalyticsReport()
-      .then((report) => {
-        setData(report.goldDiagnostics ?? null);
-        setLoading(false);
-      })
-      .catch(err => {
-        setError(err instanceof Error ? err.message : 'Failed to load diagnostics');
-        setLoading(false);
-      });
-  }, []);
-  useEffect(() => { load(); const iv = setInterval(load, 10_000); return () => clearInterval(iv); }, [load]);
-
-  if (error) return <RenderState kind="degraded" message={error} />;
-  if (loading) return <RenderState kind="empty" message="Loading diagnostics…" />;
-  if (!data) return <RenderState kind="feature_unavailable" message="Gold diagnostics not available from this endpoint" />;
-
-  const s = data.summary;
-
-  return (
-    <div className="space-y-4">
-      {/* Summary */}
-      <div className="flex items-center gap-3 mb-2">
-        <Badge className={diagnosticStateColor(s.status)}>{humanize(s.status)}</Badge>
-        <span className="text-xs text-muted-foreground">League: <span className="font-mono text-foreground">{data.league}</span></span>
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-        {([
-          ['Marts', s.martCount],
-          ['Problems', s.problemMarts],
-          ['Gold Empty', s.goldEmptyMarts],
-          ['Stale', s.staleMarts],
-          ['Missing League', s.missingLeagueMarts],
-        ] as const).map(([label, val]) => (
-          <Card key={label} className="card-game">
-            <CardContent className="p-4 text-center">
-              <span className="text-xs text-muted-foreground">{label}</span>
-              <p className={`text-lg font-mono ${typeof val === 'number' && val > 0 && label !== 'Marts' ? 'text-amber-400' : 'text-foreground'}`}>{val}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Mart Table */}
-      {data.marts.length > 0 && (
-        <Card className="card-game">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-sans">Mart Health</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs">Mart</TableHead>
-                  <TableHead className="text-xs">State</TableHead>
-                  <TableHead className="text-xs text-right">Source Rows</TableHead>
-                  <TableHead className="text-xs text-right">Gold Rows</TableHead>
-                  <TableHead className="text-xs text-right">Freshness (min)</TableHead>
-                  <TableHead className="text-xs text-right">Lag (min)</TableHead>
-                  <TableHead className="text-xs">League</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.marts.map((m) => (
-                  <TableRow key={m.martName}>
-                    <TableCell className="text-xs font-mono">{m.martName}</TableCell>
-                    <TableCell><Badge className={`text-[10px] ${diagnosticStateColor(m.diagnosticState)}`}>{humanize(m.diagnosticState)}</Badge></TableCell>
-                    <TableCell className="text-xs font-mono text-right">{m.sourceRowCount.toLocaleString()}</TableCell>
-                    <TableCell className="text-xs font-mono text-right">{m.goldRowCount.toLocaleString()}</TableCell>
-                    <TableCell className="text-xs font-mono text-right">{m.goldFreshnessMinutes != null ? m.goldFreshnessMinutes.toFixed(0) : '—'}</TableCell>
-                    <TableCell className="text-xs font-mono text-right">{m.sourceToGoldLagMinutes != null ? m.sourceToGoldLagMinutes.toFixed(0) : '—'}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{m.leagueVisibility ?? '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-}
 
 type HistogramBucket = {
   bucketStart: number | string;
@@ -1413,7 +1127,7 @@ function PricingOutliersPanel() {
   const [sort, setSort] = useState(OUTLIERS_DEFAULTS.sort);
   const [order, setOrder] = useState<'asc' | 'desc'>(OUTLIERS_DEFAULTS.order);
   const [minTotal, setMinTotal] = useState(OUTLIERS_DEFAULTS.minTotal);
-  const [maxBuyIn, setMaxBuyIn] = useState(OUTLIERS_DEFAULTS.maxBuyIn);
+  
   const [data, setData] = useState<PricingOutliersResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -1430,7 +1144,6 @@ function PricingOutliersPanel() {
           sort,
           order,
           minTotal,
-          maxBuyIn,
           limit: OUTLIERS_DEFAULTS.limit,
         })
         .then(payload => {
@@ -1450,7 +1163,7 @@ function PricingOutliersPanel() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, league, sort, order, minTotal, maxBuyIn]);
+  }, [query, league, sort, order, minTotal]);
 
   const hasMissingOpportunityMetrics = Boolean(
     data?.rows.some(row => row.entryPrice == null || row.expectedProfit == null || row.roi == null || row.underpricedRate == null)
@@ -1515,16 +1228,6 @@ function PricingOutliersPanel() {
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
-            </label>
-            <label className="text-xs text-muted-foreground space-y-1">
-              <span>Max buy-in (chaos)</span>
-              <input
-                type="number"
-                min={1}
-                value={maxBuyIn}
-                onChange={event => setMaxBuyIn(Math.max(1, Number(event.target.value) || 1))}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
-              />
             </label>
           </div>
 

@@ -70,7 +70,6 @@ export default function FlipFinderTab() {
     setError(null);
     getAnalyticsPricingOutliers({
       query: q?.trim() || undefined,
-      maxBuyIn: mbi,
       minTotal: mt,
       limit: 500,
       sort: 'expected_profit',

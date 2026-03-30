@@ -156,13 +156,11 @@ export interface PricingOutliersQuery {
   sort?: string;
   order?: 'asc' | 'desc';
   minTotal?: number;
-  maxBuyIn?: number;
   limit?: number;
 }
 
 export interface PricingOutliersQueryPayload extends PricingOutliersQuery {
   min_total?: number;
-  max_buy_in?: number;
 }
 
 export interface PricingOutliersResponse {
@@ -177,7 +175,6 @@ export interface PricingOutliersRequest {
   sort?: string;
   order?: 'asc' | 'desc';
   minTotal?: number;
-  maxBuyIn?: number;
   limit?: number;
 }
 
@@ -594,6 +591,7 @@ export interface MlLeagueStatusResponse {
 // ========== Stash Scan Valuations ==========
 export interface StashScanValuationsRequest {
   scanId: string;
+  stashId?: string;
   minThreshold: number;
   maxThreshold: number;
   maxAgeDays: number;

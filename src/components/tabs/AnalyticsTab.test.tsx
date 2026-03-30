@@ -307,7 +307,6 @@ function createPricingOutliersResponse(
       sort: 'expected_profit',
       order: 'desc',
       minTotal: 25,
-      maxBuyIn: 100,
       limit: 100,
     },
     rows: [
