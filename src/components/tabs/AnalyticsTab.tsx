@@ -1144,7 +1144,6 @@ function PricingOutliersPanel() {
           sort,
           order,
           minTotal,
-          maxBuyIn,
           limit: OUTLIERS_DEFAULTS.limit,
         })
         .then(payload => {
