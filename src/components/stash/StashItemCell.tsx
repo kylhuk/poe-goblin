@@ -48,7 +48,7 @@ export default function StashItemCell({ item, isQuad, style, className, onItemCl
   const displayName = item.name || item.typeLine;
   const iconSrc = item.icon || item.iconUrl;
   const cur = item.currency === 'div' ? 'd' : 'c';
-  const hasPrice = item.estimatedPrice != null;
+  const hasPrice = item.estimatedPrice != null && item.estimatedPrice > 0;
 
   return (
     <HoverCard openDelay={80} closeDelay={50}>

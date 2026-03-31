@@ -153,6 +153,13 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
       setValuationResult(valResult);
       setValuationPhase('done');
 
+      // Debug: log what the valuation API returned
+      console.log('[Stash] Valuation response keys:', Object.keys(valResult));
+      console.log('[Stash] Valuation items count:', valResult.items?.length ?? 0);
+      if (valResult.items?.length) {
+        console.log('[Stash] First 3 valuation items:', valResult.items.slice(0, 3));
+      }
+
       // Merge valuation pricing into active tab items
       if (valResult.items?.length) {
         setActiveTab(prev => {
@@ -176,8 +183,19 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
     setTabMismatch(null);
     try {
       const payload = await api.getStashTabs(tabIndex);
+      console.log('[Stash] Tab payload keys:', Object.keys(payload));
       const returned = pickReturnedTab(payload, tabIndex);
       if (returned) {
+        console.log('[Stash] Active tab items count:', returned.items.length);
+        if (returned.items.length > 0) {
+          const sample = returned.items[0];
+          console.log('[Stash] Sample item fields:', {
+            id: sample.id, fingerprint: sample.fingerprint, name: sample.name,
+            estimatedPrice: sample.estimatedPrice, listedPrice: sample.listedPrice,
+            priceEvaluation: sample.priceEvaluation, priceDeltaChaos: sample.priceDeltaChaos,
+            currency: sample.currency,
+          });
+        }
         setActiveTab(returned);
         if (returned.returnedIndex != null && returned.returnedIndex !== tabIndex) {
           setTabMismatch(`Requested tab index ${tabIndex}, but backend returned index ${returned.returnedIndex} ("${returned.name}")`);
