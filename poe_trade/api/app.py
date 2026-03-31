@@ -78,6 +78,7 @@ from .stash import (
     StashBackendUnavailable,
     fetch_stash_item_history,
     fetch_stash_tabs,
+    latest_stash_scan_valuations_payload,
     stash_scan_valuations_payload,
     stash_scan_status_payload,
     stash_status_payload,
@@ -1226,15 +1227,41 @@ class ApiApp:
         return self._stash_tabs(context)
 
     def _stash_scan_valuations_start(self, context: Mapping[str, object]) -> Response:
-        payload = self._stash_scan_valuations_payload(context)
-        return json_response(payload, status=202)
+        if not self.settings.enable_account_stash:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="stash feature is unavailable; set POE_ENABLE_ACCOUNT_STASH=true",
+            )
+        account_name, league, realm = self._stash_account_scope(context)
+        result = start_private_stash_scan(
+            self.settings,
+            self.client,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+        )
+        return json_response(result, status=202)
 
     def _stash_scan_valuations_status(self, context: Mapping[str, object]) -> Response:
-        payload = self._stash_scan_valuations_payload(context)
+        account_name, league, realm = self._stash_account_scope(context)
+        payload = stash_scan_status_payload(
+            self.client,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+            stale_timeout_seconds=self.settings.account_stash_scan_stale_timeout_seconds,
+        )
         return json_response(payload)
 
     def _stash_scan_valuations_result(self, context: Mapping[str, object]) -> Response:
-        payload = self._stash_scan_valuations_payload(context)
+        account_name, league, realm = self._stash_account_scope(context)
+        payload = latest_stash_scan_valuations_payload(
+            self.client,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+        )
         return json_response(payload)
 
     def _stash_scan_valuations(self, context: Mapping[str, object]) -> Response:

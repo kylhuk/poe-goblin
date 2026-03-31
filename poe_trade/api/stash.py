@@ -18,6 +18,11 @@ from .valuation import (
 )
 
 
+_LATEST_VALUATION_MIN_THRESHOLD = 0.0
+_LATEST_VALUATION_MAX_THRESHOLD = 1_000_000.0
+_LATEST_VALUATION_MAX_AGE_DAYS = 3650
+
+
 class StashBackendUnavailable(RuntimeError):
     pass
 
@@ -145,6 +150,49 @@ def fetch_stash_tabs(
         )
     except StashScanBackendUnavailable as exc:
         raise StashBackendUnavailable("stash backend unavailable") from exc
+
+
+def latest_stash_scan_valuations_payload(
+    client: ClickHouseClient,
+    *,
+    account_name: str,
+    league: str,
+    realm: str,
+) -> dict[str, Any]:
+    try:
+        scan_id = fetch_published_scan_id(
+            client,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+        )
+        if not scan_id:
+            return {
+                "structuredMode": True,
+                "scanId": "",
+                "stashId": "",
+                "itemId": None,
+                "scanDatetime": None,
+                "chaosMedian": None,
+                "daySeries": [],
+                "items": [],
+            }
+        return build_stash_scan_valuations_payload(
+            client,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+            scan_id=scan_id,
+            item_id=None,
+            structured_mode=True,
+            min_threshold=_LATEST_VALUATION_MIN_THRESHOLD,
+            max_threshold=_LATEST_VALUATION_MAX_THRESHOLD,
+            max_age_days=_LATEST_VALUATION_MAX_AGE_DAYS,
+        )
+    except (StashScanBackendUnavailable, ValuationBackendUnavailable) as exc:
+        raise StashBackendUnavailable(
+            "latest stash valuation backend unavailable"
+        ) from exc
 
 
 def stash_scan_status_payload(

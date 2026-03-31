@@ -1,9 +1,6 @@
 {
-  "details": {
-    "error": ""
-  },
   "league": "Mirage",
-  "stage": "train_cycle",
-  "status": "failed",
-  "updated_at": "2026-03-31T18:26:00.919174Z"
+  "stage": "refresh_training_examples",
+  "status": "running",
+  "updated_at": "2026-03-31T19:09:38.713862Z"
 }

@@ -343,13 +343,10 @@ paths:
 
   /api/v1/stash/scan/result:
     get:
-      summary: Stash scan result
+      summary: Latest stash scan result
+      description: Returns the latest published stash scan for the connected account.
       security:
         - sessionCookie: []
-      parameters:
-        - $ref: '#/components/parameters/LeagueQuery'
-        - $ref: '#/components/parameters/Realm'
-        - $ref: '#/components/parameters/StashTabIndex'
       responses:
         '200':
           description: Published stash tabs/items payload
@@ -385,11 +382,9 @@ paths:
   /api/v1/stash/scan/start:
     post:
       summary: Start stash scan
+      description: Starts a new latest stash scan for the connected account.
       security:
         - sessionCookie: []
-      parameters:
-        - $ref: '#/components/parameters/LeagueQuery'
-        - $ref: '#/components/parameters/Realm'
       responses:
         '202':
           description: Scan started
@@ -406,11 +401,9 @@ paths:
     post:
       summary: Start stash scan (legacy alias)
       deprecated: true
+      description: Legacy alias for starting a stash scan.
       security:
         - sessionCookie: []
-      parameters:
-        - $ref: '#/components/parameters/LeagueQuery'
-        - $ref: '#/components/parameters/Realm'
       responses:
         '202':
           description: Scan started
@@ -425,12 +418,10 @@ paths:
 
   /api/v1/stash/scan/status:
     get:
-      summary: Stash scan status
+      summary: Latest stash scan status
+      description: Returns the current/latest scan status for the connected account.
       security:
         - sessionCookie: []
-      parameters:
-        - $ref: '#/components/parameters/LeagueQuery'
-        - $ref: '#/components/parameters/Realm'
       responses:
         '200':
           description: Scan status payload
@@ -499,18 +490,10 @@ paths:
 
   /api/v1/stash/scan/valuations/start:
     post:
-      summary: Start valuation of stash scan items
+      summary: Start latest stash valuation refresh
+      description: Starts a new stash scan/valuation refresh for the connected account.
       security:
         - sessionCookie: []
-      parameters:
-        - $ref: '#/components/parameters/LeagueQuery'
-        - $ref: '#/components/parameters/Realm'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/StashScanValuationsRequest'
       responses:
         '202':
           description: Valuation accepted
@@ -529,19 +512,10 @@ paths:
 
   /api/v1/stash/scan/valuations/status:
     get:
-      summary: Valuation status
+      summary: Latest stash valuation status
+      description: Returns the latest valuation status for the connected account.
       security:
         - sessionCookie: []
-      parameters:
-        - $ref: '#/components/parameters/LeagueQuery'
-        - $ref: '#/components/parameters/Realm'
-        - $ref: '#/components/parameters/StashScanValuationScanId'
-        - $ref: '#/components/parameters/StashScanValuationStashId'
-        - $ref: '#/components/parameters/StashScanValuationItemId'
-        - $ref: '#/components/parameters/StashScanValuationStructuredMode'
-        - $ref: '#/components/parameters/StashScanValuationMinThreshold'
-        - $ref: '#/components/parameters/StashScanValuationMaxThreshold'
-        - $ref: '#/components/parameters/StashScanValuationMaxAgeDays'
       responses:
         '200':
           description: Valuation payload
@@ -560,19 +534,10 @@ paths:
 
   /api/v1/stash/scan/valuations/result:
     get:
-      summary: Valuation result
+      summary: Latest stash valuation result
+      description: Returns the latest published valuation payload for the connected account.
       security:
         - sessionCookie: []
-      parameters:
-        - $ref: '#/components/parameters/LeagueQuery'
-        - $ref: '#/components/parameters/Realm'
-        - $ref: '#/components/parameters/StashScanValuationScanId'
-        - $ref: '#/components/parameters/StashScanValuationStashId'
-        - $ref: '#/components/parameters/StashScanValuationItemId'
-        - $ref: '#/components/parameters/StashScanValuationStructuredMode'
-        - $ref: '#/components/parameters/StashScanValuationMinThreshold'
-        - $ref: '#/components/parameters/StashScanValuationMaxThreshold'
-        - $ref: '#/components/parameters/StashScanValuationMaxAgeDays'
       responses:
         '200':
           description: Valuation payload
@@ -791,55 +756,6 @@ components:
       schema:
         type: string
         default: pc
-    StashTabIndex:
-      in: query
-      name: tabIndex
-      schema:
-        type: integer
-      description: Optional hint for selecting a specific published tab.
-    StashScanValuationScanId:
-      in: query
-      name: scanId
-      schema:
-        type: string
-      description: Primary valuation scan identifier. One of scanId or stashId is required.
-    StashScanValuationStashId:
-      in: query
-      name: stashId
-      schema:
-        type: string
-      description: Alias for scanId used by the legacy valuation request body.
-    StashScanValuationItemId:
-      in: query
-      name: itemId
-      schema:
-        type: string
-      description: Required when structuredMode is false.
-    StashScanValuationStructuredMode:
-      in: query
-      name: structuredMode
-      schema:
-        type: boolean
-        default: false
-    StashScanValuationMinThreshold:
-      in: query
-      name: minThreshold
-      required: true
-      schema:
-        type: number
-    StashScanValuationMaxThreshold:
-      in: query
-      name: maxThreshold
-      required: true
-      schema:
-        type: number
-    StashScanValuationMaxAgeDays:
-      in: query
-      name: maxAgeDays
-      required: true
-      schema:
-        type: integer
-        minimum: 1
     Fingerprint:
       in: path
       name: fingerprint

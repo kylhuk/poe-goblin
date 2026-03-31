@@ -175,7 +175,7 @@ def test_stash_scan_result_alias_returns_published_tabs_payload(
     )
     response = app.handle(
         method="GET",
-        raw_path="/api/v1/stash/scan/result?league=Mirage&realm=pc",
+        raw_path="/api/v1/stash/scan/result",
         headers={
             "Origin": "https://app.example.com",
             "Cookie": "poe_session=test-session",
