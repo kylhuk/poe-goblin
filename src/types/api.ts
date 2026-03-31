@@ -239,6 +239,9 @@ export interface PoeItem {
   priceDeltaPercent?: number | null;
   priceEvaluation?: PriceEvaluation;
   currency?: string;
+  chaosMedian?: number | null;
+  daySeries?: StashScanValuationDaySeries[];
+  affixFallbackMedians?: StashScanValuationAffixFallback[];
 }
 
 export interface SpecialLayoutSlot {

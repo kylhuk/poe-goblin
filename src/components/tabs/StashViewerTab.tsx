@@ -108,6 +108,16 @@ function applyTabLevelPricing(items: PoeItem[], tabName: string): PoeItem[] {
   });
 }
 
+/** Compute price evaluation from listed vs estimated delta */
+function computeEvaluation(listedPrice: number | null | undefined, estimatedPrice: number | null | undefined): PoeItem['priceEvaluation'] {
+  if (listedPrice == null || listedPrice <= 0) return undefined;
+  if (estimatedPrice == null || estimatedPrice <= 0) return undefined;
+  const delta = Math.abs(listedPrice - estimatedPrice) / estimatedPrice;
+  if (delta <= 0.10) return 'well_priced';
+  if (delta <= 0.20) return 'could_be_better';
+  return 'mispriced';
+}
+
 /** Merge valuation items into displayed PoeItems by id or fingerprint */
 function mergeValuationIntoItems(items: PoeItem[], valItems: Record<string, unknown>[]): PoeItem[] {
   const byFingerprint = new Map<string, Record<string, unknown>>();
@@ -122,19 +132,39 @@ function mergeValuationIntoItems(items: PoeItem[], valItems: Record<string, unkn
   return items.map(item => {
     const match = (item.fingerprint && byFingerprint.get(item.fingerprint)) || byId.get(item.id);
     if (!match) return item;
+
+    // Primary price: chaosMedian from valuation API
+    const chaosMedian = typeof match.chaosMedian === 'number' ? match.chaosMedian
+      : (typeof match.chaos_median === 'number' ? match.chaos_median : null);
+
+    // Affix fallback medians
+    const affixFallbackMedians = (match.affixFallbackMedians ?? match.affix_fallback_medians) as PoeItem['affixFallbackMedians'] | undefined;
+
+    // Day series for sparkline
+    const daySeries = (match.daySeries ?? match.day_series) as PoeItem['daySeries'] | undefined;
+
+    const estimatedPrice = chaosMedian != null && chaosMedian > 0 ? chaosMedian : 0;
+
+    // Compute evaluation client-side: only when chaosMedian exists
+    const priceEvaluation = chaosMedian != null && chaosMedian > 0
+      ? computeEvaluation(item.listedPrice, chaosMedian)
+      : undefined;
+
+    // Compute delta
+    const priceDeltaChaos = (chaosMedian && chaosMedian > 0 && item.listedPrice != null)
+      ? Math.round(item.listedPrice - chaosMedian) : null;
+    const priceDeltaPercent = (chaosMedian && chaosMedian > 0 && item.listedPrice != null)
+      ? Math.round(((item.listedPrice - chaosMedian) / chaosMedian) * 100) : null;
+
     return {
       ...item,
-      estimatedPrice: typeof match.estimatedPrice === 'number' ? match.estimatedPrice
-        : (typeof match.estimated_price === 'number' ? match.estimated_price : item.estimatedPrice),
-      estimatedPriceConfidence: typeof match.estimatedPriceConfidence === 'number' ? match.estimatedPriceConfidence
-        : (typeof match.estimated_price_confidence === 'number' ? match.estimated_price_confidence : item.estimatedPriceConfidence),
-      listedPrice: typeof match.listedPrice === 'number' ? match.listedPrice
-        : (typeof match.listed_price === 'number' ? match.listed_price : item.listedPrice),
-      priceDeltaChaos: typeof match.priceDeltaChaos === 'number' ? match.priceDeltaChaos
-        : (typeof match.price_delta_chaos === 'number' ? match.price_delta_chaos : item.priceDeltaChaos),
-      priceDeltaPercent: typeof match.priceDeltaPercent === 'number' ? match.priceDeltaPercent
-        : (typeof match.price_delta_percent === 'number' ? match.price_delta_percent : item.priceDeltaPercent),
-      priceEvaluation: (match.priceEvaluation ?? match.price_evaluation ?? item.priceEvaluation) as PoeItem['priceEvaluation'],
+      estimatedPrice,
+      chaosMedian,
+      daySeries,
+      affixFallbackMedians,
+      priceEvaluation,
+      priceDeltaChaos,
+      priceDeltaPercent,
       currency: (typeof match.currency === 'string' ? match.currency : item.currency),
     };
   });
