@@ -18,7 +18,7 @@ const CURRENCY_ALIASES: Record<string, string> = {
   chromatic: 'chromatic',
   jew: 'jeweller',
   jeweller: 'jeweller',
-  jeweller's: 'jeweller',
+  "jeweller's": 'jeweller',
   vaal: 'vaal',
 };
 
