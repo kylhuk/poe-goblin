@@ -39,7 +39,8 @@ export default function ItemTooltip({ item }: ItemTooltipProps) {
   const safeName = item.name && item.name.toLowerCase() !== 'unknown' ? item.name : '';
   const displayName = safeName || (item.typeLine && item.typeLine.toLowerCase() !== 'unknown' ? item.typeLine : '');
   const showTypeLine = safeName && item.typeLine && item.typeLine.toLowerCase() !== 'unknown' && safeName !== item.typeLine;
-  const cur = item.currency === 'div' ? 'div' : 'c';
+  const cur = item.currency === 'div' ? 'div' : item.currency === 'exa' ? 'exa' : 'c';
+  const listedCur = item.currency === 'div' ? 'div' : item.currency === 'exa' ? 'exa' : 'c';
 
   const hasMedian = item.estimatedPrice != null && item.estimatedPrice > 0;
   const hasAffixFallbacks = !hasMedian && item.affixFallbackMedians && item.affixFallbackMedians.length > 0;
@@ -184,12 +185,12 @@ export default function ItemTooltip({ item }: ItemTooltipProps) {
             <div className="space-y-0.5 pt-0.5">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Median</span>
-                <span className="font-mono text-gold-bright">{item.estimatedPrice} {cur}</span>
+                <span className="font-mono text-gold-bright">{item.estimatedPrice}c</span>
               </div>
               {item.listedPrice != null && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Listed</span>
-                  <span className="font-mono">{item.listedPrice} {cur}</span>
+                  <span className="font-mono">{item.listedPrice} {listedCur}</span>
                 </div>
               )}
               {item.priceDeltaChaos != null && (
@@ -231,7 +232,7 @@ export default function ItemTooltip({ item }: ItemTooltipProps) {
               {item.listedPrice != null && (
                 <div className="flex justify-between pt-0.5">
                   <span className="text-muted-foreground">Listed</span>
-                  <span className="font-mono">{item.listedPrice} {cur}</span>
+                  <span className="font-mono">{item.listedPrice} {listedCur}</span>
                 </div>
               )}
             </div>
@@ -244,7 +245,7 @@ export default function ItemTooltip({ item }: ItemTooltipProps) {
             <div className="poe-tooltip-separator" />
             <div className="flex justify-between pt-0.5">
               <span className="text-muted-foreground">Listed</span>
-              <span className="font-mono">{item.listedPrice} {cur}</span>
+              <span className="font-mono">{item.listedPrice} {listedCur}</span>
             </div>
           </>
         )}

@@ -84,6 +84,29 @@ function getSpecialLayout(tab: StashTab): SpecialLayout | null {
 }
 
 /**
+ * Approximate chaos equivalents for common PoE currencies.
+ * Divine rate fluctuates; 200c is a reasonable mid-league default.
+ * This map is used to normalise listedPrice to chaos for comparison with chaosMedian.
+ */
+const CHAOS_RATE: Record<string, number> = {
+  chaos: 1,
+  c: 1,
+  divine: 200,
+  div: 200,
+  d: 200,
+  exalted: 12,
+  exa: 12,
+  ex: 12,
+};
+
+/** Convert a price + currency to chaos equivalent */
+function toChaos(price: number, currency?: string | null): number {
+  if (!currency) return price; // assume chaos
+  const rate = CHAOS_RATE[currency.toLowerCase()] ?? 1;
+  return price * rate;
+}
+
+/**
  * Parse PoE tab-name pricing syntax like "~price 12 chaos" or "~b/o 5 divine".
  * Returns { price, currency } or null if the tab name doesn't contain pricing.
  */
@@ -108,11 +131,16 @@ function applyTabLevelPricing(items: PoeItem[], tabName: string): PoeItem[] {
   });
 }
 
-/** Compute price evaluation from listed vs estimated delta */
-function computeEvaluation(listedPrice: number | null | undefined, estimatedPrice: number | null | undefined): PoeItem['priceEvaluation'] {
+/** Compute price evaluation from listed vs estimated delta, normalising currencies to chaos */
+function computeEvaluation(
+  listedPrice: number | null | undefined,
+  estimatedPrice: number | null | undefined,
+  currency?: string | null,
+): PoeItem['priceEvaluation'] {
   if (listedPrice == null || listedPrice <= 0) return undefined;
   if (estimatedPrice == null || estimatedPrice <= 0) return undefined;
-  const delta = Math.abs(listedPrice - estimatedPrice) / estimatedPrice;
+  const listedChaos = toChaos(listedPrice, currency);
+  const delta = Math.abs(listedChaos - estimatedPrice) / estimatedPrice;
   if (delta <= 0.10) return 'well_priced';
   if (delta <= 0.20) return 'could_be_better';
   return 'mispriced';
@@ -145,16 +173,20 @@ function mergeValuationIntoItems(items: PoeItem[], valItems: Record<string, unkn
 
     const estimatedPrice = chaosMedian != null && chaosMedian > 0 ? chaosMedian : 0;
 
+    // Determine currency — prefer item's own, fall back to valuation's
+    const itemCurrency = item.currency ?? (typeof match.currency === 'string' ? match.currency : undefined);
+
     // Compute evaluation client-side: only when chaosMedian exists
     const priceEvaluation = chaosMedian != null && chaosMedian > 0
-      ? computeEvaluation(item.listedPrice, chaosMedian)
+      ? computeEvaluation(item.listedPrice, chaosMedian, itemCurrency)
       : undefined;
 
-    // Compute delta
-    const priceDeltaChaos = (chaosMedian && chaosMedian > 0 && item.listedPrice != null)
-      ? Math.round(item.listedPrice - chaosMedian) : null;
-    const priceDeltaPercent = (chaosMedian && chaosMedian > 0 && item.listedPrice != null)
-      ? Math.round(((item.listedPrice - chaosMedian) / chaosMedian) * 100) : null;
+    // Compute delta in chaos (normalise listedPrice to chaos first)
+    const listedChaos = (item.listedPrice != null) ? toChaos(item.listedPrice, itemCurrency) : null;
+    const priceDeltaChaos = (chaosMedian && chaosMedian > 0 && listedChaos != null)
+      ? Math.round(listedChaos - chaosMedian) : null;
+    const priceDeltaPercent = (chaosMedian && chaosMedian > 0 && listedChaos != null)
+      ? Math.round(((listedChaos - chaosMedian) / chaosMedian) * 100) : null;
 
     return {
       ...item,
@@ -165,7 +197,7 @@ function mergeValuationIntoItems(items: PoeItem[], valItems: Record<string, unkn
       priceEvaluation,
       priceDeltaChaos,
       priceDeltaPercent,
-      currency: (typeof match.currency === 'string' ? match.currency : item.currency),
+      currency: itemCurrency,
     };
   });
 }
@@ -233,6 +265,9 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
     }
   }, [minThreshold, maxThreshold, maxAgeDays]);
 
+  const valuationResultRef = React.useRef(valuationResult);
+  valuationResultRef.current = valuationResult;
+
   const loadTab = useCallback(async (tabIndex: number) => {
     setTabLoading(true);
     setTabMismatch(null);
@@ -244,6 +279,11 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
         console.log('[Stash] Active tab items count:', returned.items.length);
         // Apply tab-level pricing from tab name (e.g. "~price 12 chaos")
         returned.items = applyTabLevelPricing(returned.items, returned.name);
+        // Re-merge existing valuation data if available
+        const currentValuation = valuationResultRef.current;
+        if (currentValuation?.items?.length) {
+          returned.items = mergeValuationIntoItems(returned.items, currentValuation.items);
+        }
         if (returned.items.length > 0) {
           const sample = returned.items[0];
           console.log('[Stash] Sample item fields:', {
@@ -294,13 +334,18 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
         const stashStatus = await pollStatus();
         if (stashStatus.connected) {
           await loadTab(0);
+          // Auto-trigger valuation if a published scan already exists
+          const scanId = stashStatus.publishedScanId ?? stashStatus.scanStatus?.publishedScanId;
+          if (scanId) {
+            await runValuation(scanId);
+          }
         }
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : 'Stash feature unavailable');
         setStatus('degraded');
       }
     })();
-  }, [pollStatus, loadTab]);
+  }, [pollStatus, loadTab, runValuation]);
 
   useEffect(() => {
     if (!scanBusy) {
