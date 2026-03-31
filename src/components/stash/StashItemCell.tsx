@@ -1,6 +1,7 @@
 import React from 'react';
 import type { PoeItem } from '@/types/api';
 import { cn } from '@/lib/utils';
+import { formatCurrencyShort } from '@/lib/currency';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import ItemTooltip from './ItemTooltip';
 
@@ -49,7 +50,7 @@ export default function StashItemCell({ item, isQuad, style, className, onItemCl
   const borderClass = FRAME_TYPE_BORDER[item.frameType] ?? 'border-muted-foreground/20';
   const displayName = item.name || item.typeLine;
   const iconSrc = item.icon || item.iconUrl;
-  const cur = item.currency === 'div' ? 'd' : 'c';
+  const cur = formatCurrencyShort(item.currency);
 
   return (
     <HoverCard openDelay={80} closeDelay={50}>

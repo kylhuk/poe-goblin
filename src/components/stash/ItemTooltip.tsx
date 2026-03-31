@@ -1,6 +1,7 @@
 import React from 'react';
 import type { PoeItem } from '@/types/api';
 import { cn } from '@/lib/utils';
+import { formatCurrencyShort } from '@/lib/currency';
 import PriceSparkline from '@/components/economy/PriceSparkline';
 
 const FRAME_HEADER_CLASS: Record<number, string> = {
@@ -39,8 +40,8 @@ export default function ItemTooltip({ item }: ItemTooltipProps) {
   const safeName = item.name && item.name.toLowerCase() !== 'unknown' ? item.name : '';
   const displayName = safeName || (item.typeLine && item.typeLine.toLowerCase() !== 'unknown' ? item.typeLine : '');
   const showTypeLine = safeName && item.typeLine && item.typeLine.toLowerCase() !== 'unknown' && safeName !== item.typeLine;
-  const cur = item.currency === 'div' ? 'div' : item.currency === 'exa' ? 'exa' : 'c';
-  const listedCur = item.currency === 'div' ? 'div' : item.currency === 'exa' ? 'exa' : 'c';
+  const cur = formatCurrencyShort(item.currency);
+  const listedCur = formatCurrencyShort(item.currency);
 
   const hasMedian = item.estimatedPrice != null && item.estimatedPrice > 0;
   const hasAffixFallbacks = !hasMedian && item.affixFallbackMedians && item.affixFallbackMedians.length > 0;
@@ -185,7 +186,7 @@ export default function ItemTooltip({ item }: ItemTooltipProps) {
             <div className="space-y-0.5 pt-0.5">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Median</span>
-                <span className="font-mono text-gold-bright">{item.estimatedPrice}c</span>
+                <span className="font-mono text-gold-bright">{item.estimatedPrice}{cur}</span>
               </div>
               {item.listedPrice != null && (
                 <div className="flex justify-between">
