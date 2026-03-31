@@ -987,10 +987,30 @@ export const api: ApiService = {
   },
 
   async getStashTabs(tabIndex?: number) {
+    // Prefer new /scan/result, fall back to legacy /stash/tabs
+    const league = await primaryLeague();
+    const tabParam = tabIndex != null ? `&tabIndex=${tabIndex}` : '';
+    try {
+      const payload = await request<unknown>(
+        `/api/v1/stash/scan/result?league=${encodeURIComponent(league)}&realm=pc${tabParam}`,
+        undefined,
+        { skipErrorCodes: ['route_not_found'] },
+      );
+      return normalizeStashTabsResponse(payload);
+    } catch (err) {
+      if (!isMissingRouteError(err)) throw err;
+      const payload = await request<unknown>(
+        `/api/v1/stash/tabs?league=${encodeURIComponent(league)}&realm=pc${tabParam}`,
+      );
+      return normalizeStashTabsResponse(payload);
+    }
+  },
+
+  async getStashScanResult(tabIndex?: number) {
     const league = await primaryLeague();
     const tabParam = tabIndex != null ? `&tabIndex=${tabIndex}` : '';
     const payload = await request<unknown>(
-      `/api/v1/stash/tabs?league=${encodeURIComponent(league)}&realm=pc${tabParam}`
+      `/api/v1/stash/scan/result?league=${encodeURIComponent(league)}&realm=pc${tabParam}`,
     );
     return normalizeStashTabsResponse(payload);
   },
@@ -1011,6 +1031,28 @@ export const api: ApiService = {
           ...(req.structuredMode != null ? { structuredMode: req.structuredMode } : {}),
         }),
       }
+    );
+  },
+
+  async startStashValuationsNew() {
+    const league = await primaryLeague();
+    await request<unknown>(
+      `/api/v1/stash/scan/valuations/start?league=${encodeURIComponent(league)}&realm=pc`,
+      { method: 'POST' },
+    );
+  },
+
+  async getStashValuationsResult() {
+    const league = await primaryLeague();
+    return request<StashScanValuationsResponse>(
+      `/api/v1/stash/scan/valuations/result?league=${encodeURIComponent(league)}&realm=pc`,
+    );
+  },
+
+  async getStashValuationsStatus() {
+    const league = await primaryLeague();
+    return request<StashScanStatus>(
+      `/api/v1/stash/scan/valuations/status?league=${encodeURIComponent(league)}&realm=pc`,
     );
   },
 
