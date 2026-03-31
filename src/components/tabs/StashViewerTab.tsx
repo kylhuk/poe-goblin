@@ -337,7 +337,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
         setStatus('degraded');
       }
     })();
-  }, [pollStatus, loadTab]);
+  }, [pollStatus, loadTab, runValuation]);
 
   useEffect(() => {
     if (!scanBusy) {
