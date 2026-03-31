@@ -35,8 +35,9 @@ interface ItemTooltipProps {
 
 export default function ItemTooltip({ item }: ItemTooltipProps) {
   const headerClass = FRAME_HEADER_CLASS[item.frameType] ?? 'poe-tooltip-header-normal';
-  const displayName = item.name || item.typeLine;
-  const showTypeLine = item.name && item.typeLine && item.name !== item.typeLine;
+  const safeName = item.name && item.name.toLowerCase() !== 'unknown' ? item.name : '';
+  const displayName = safeName || (item.typeLine && item.typeLine.toLowerCase() !== 'unknown' ? item.typeLine : '');
+  const showTypeLine = safeName && item.typeLine && item.typeLine.toLowerCase() !== 'unknown' && safeName !== item.typeLine;
   const cur = item.currency === 'div' ? 'div' : 'c';
 
   return (
