@@ -153,6 +153,13 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
       setValuationResult(valResult);
       setValuationPhase('done');
 
+      // Debug: log what the valuation API returned
+      console.log('[Stash] Valuation response keys:', Object.keys(valResult));
+      console.log('[Stash] Valuation items count:', valResult.items?.length ?? 0);
+      if (valResult.items?.length) {
+        console.log('[Stash] First 3 valuation items:', valResult.items.slice(0, 3));
+      }
+
       // Merge valuation pricing into active tab items
       if (valResult.items?.length) {
         setActiveTab(prev => {
