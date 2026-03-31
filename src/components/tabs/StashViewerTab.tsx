@@ -84,6 +84,29 @@ function getSpecialLayout(tab: StashTab): SpecialLayout | null {
 }
 
 /**
+ * Approximate chaos equivalents for common PoE currencies.
+ * Divine rate fluctuates; 200c is a reasonable mid-league default.
+ * This map is used to normalise listedPrice to chaos for comparison with chaosMedian.
+ */
+const CHAOS_RATE: Record<string, number> = {
+  chaos: 1,
+  c: 1,
+  divine: 200,
+  div: 200,
+  d: 200,
+  exalted: 12,
+  exa: 12,
+  ex: 12,
+};
+
+/** Convert a price + currency to chaos equivalent */
+function toChaos(price: number, currency?: string | null): number {
+  if (!currency) return price; // assume chaos
+  const rate = CHAOS_RATE[currency.toLowerCase()] ?? 1;
+  return price * rate;
+}
+
+/**
  * Parse PoE tab-name pricing syntax like "~price 12 chaos" or "~b/o 5 divine".
  * Returns { price, currency } or null if the tab name doesn't contain pricing.
  */
@@ -108,11 +131,16 @@ function applyTabLevelPricing(items: PoeItem[], tabName: string): PoeItem[] {
   });
 }
 
-/** Compute price evaluation from listed vs estimated delta */
-function computeEvaluation(listedPrice: number | null | undefined, estimatedPrice: number | null | undefined): PoeItem['priceEvaluation'] {
+/** Compute price evaluation from listed vs estimated delta, normalising currencies to chaos */
+function computeEvaluation(
+  listedPrice: number | null | undefined,
+  estimatedPrice: number | null | undefined,
+  currency?: string | null,
+): PoeItem['priceEvaluation'] {
   if (listedPrice == null || listedPrice <= 0) return undefined;
   if (estimatedPrice == null || estimatedPrice <= 0) return undefined;
-  const delta = Math.abs(listedPrice - estimatedPrice) / estimatedPrice;
+  const listedChaos = toChaos(listedPrice, currency);
+  const delta = Math.abs(listedChaos - estimatedPrice) / estimatedPrice;
   if (delta <= 0.10) return 'well_priced';
   if (delta <= 0.20) return 'could_be_better';
   return 'mispriced';
