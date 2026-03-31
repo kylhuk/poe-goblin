@@ -232,7 +232,7 @@ export default function ItemTooltip({ item }: ItemTooltipProps) {
               {item.listedPrice != null && (
                 <div className="flex justify-between pt-0.5">
                   <span className="text-muted-foreground">Listed</span>
-                  <span className="font-mono">{item.listedPrice} {cur}</span>
+                  <span className="font-mono">{item.listedPrice} {listedCur}</span>
                 </div>
               )}
             </div>
