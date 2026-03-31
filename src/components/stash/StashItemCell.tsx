@@ -42,13 +42,14 @@ interface StashItemCellProps {
 }
 
 export default function StashItemCell({ item, isQuad, style, className, onItemClick }: StashItemCellProps) {
-  const evalBg = item.priceEvaluation ? EVAL_BG[item.priceEvaluation] : '';
-  const evalRing = item.priceEvaluation ? EVAL_BORDER[item.priceEvaluation] : '';
+  const hasPrice = item.estimatedPrice != null && item.estimatedPrice > 0;
+  const hasEval = hasPrice && !!item.priceEvaluation;
+  const evalBg = hasEval ? EVAL_BG[item.priceEvaluation!] : '';
+  const evalRing = hasEval ? EVAL_BORDER[item.priceEvaluation!] : '';
   const borderClass = FRAME_TYPE_BORDER[item.frameType] ?? 'border-muted-foreground/20';
   const displayName = item.name || item.typeLine;
   const iconSrc = item.icon || item.iconUrl;
   const cur = item.currency === 'div' ? 'd' : 'c';
-  const hasPrice = item.estimatedPrice != null && item.estimatedPrice > 0;
 
   return (
     <HoverCard openDelay={80} closeDelay={50}>
