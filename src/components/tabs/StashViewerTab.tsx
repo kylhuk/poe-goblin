@@ -280,14 +280,12 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
     setTabLoading(true);
     setTabMismatch(null);
     try {
-      const payload = await api.getStashTabs(tabIndex);
+      const payload = await api.getStashScanResult(tabIndex);
       console.log('[Stash] Tab payload keys:', Object.keys(payload));
       const returned = pickReturnedTab(payload, tabIndex);
       if (returned) {
         console.log('[Stash] Active tab items count:', returned.items.length);
-        // Apply tab-level pricing from tab name (e.g. "~price 12 chaos")
         returned.items = applyTabLevelPricing(returned.items, returned.name);
-        // Re-merge existing valuation data if available
         const currentValuation = valuationResultRef.current;
         if (currentValuation?.items?.length) {
           returned.items = mergeValuationIntoItems(returned.items, currentValuation.items);
