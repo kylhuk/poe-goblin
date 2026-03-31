@@ -1,6 +1,7 @@
 import React from 'react';
 import type { PoeItem } from '@/types/api';
 import { cn } from '@/lib/utils';
+import PriceSparkline from '@/components/economy/PriceSparkline';
 
 const FRAME_HEADER_CLASS: Record<number, string> = {
   0: 'poe-tooltip-header-normal',
@@ -39,6 +40,14 @@ export default function ItemTooltip({ item }: ItemTooltipProps) {
   const displayName = safeName || (item.typeLine && item.typeLine.toLowerCase() !== 'unknown' ? item.typeLine : '');
   const showTypeLine = safeName && item.typeLine && item.typeLine.toLowerCase() !== 'unknown' && safeName !== item.typeLine;
   const cur = item.currency === 'div' ? 'div' : 'c';
+
+  const hasMedian = item.estimatedPrice != null && item.estimatedPrice > 0;
+  const hasAffixFallbacks = !hasMedian && item.affixFallbackMedians && item.affixFallbackMedians.length > 0;
+
+  // Build sparkline points from per-item daySeries
+  const sparklinePoints = item.daySeries
+    ?.filter(d => d.chaosMedian != null && d.chaosMedian > 0)
+    .map(d => ({ timestamp: d.date, value: d.chaosMedian! })) ?? [];
 
   return (
     <div className="poe-tooltip text-xs">
@@ -168,21 +177,15 @@ export default function ItemTooltip({ item }: ItemTooltipProps) {
           <div className="text-muted-foreground text-[10px] italic">{item.descrText}</div>
         )}
 
-        {/* Price evaluation section — only when a real estimate exists */}
-        {item.estimatedPrice != null && item.estimatedPrice > 0 && (
+        {/* Price section: Median available */}
+        {hasMedian && (
           <>
             <div className="poe-tooltip-separator" />
             <div className="space-y-0.5 pt-0.5">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Estimated</span>
+                <span className="text-muted-foreground">Median</span>
                 <span className="font-mono text-gold-bright">{item.estimatedPrice} {cur}</span>
               </div>
-              {item.estimatedPriceConfidence != null && (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Confidence</span>
-                  <span className="font-mono">{item.estimatedPriceConfidence}%</span>
-                </div>
-              )}
               {item.listedPrice != null && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Listed</span>
@@ -203,11 +206,40 @@ export default function ItemTooltip({ item }: ItemTooltipProps) {
                   {EVAL_LABEL[item.priceEvaluation]}
                 </div>
               )}
+              {/* Inline sparkline from daySeries */}
+              {sparklinePoints.length >= 2 && (
+                <div className="pt-1">
+                  <PriceSparkline points={sparklinePoints} width={200} height={28} />
+                </div>
+              )}
             </div>
           </>
         )}
-        {/* Show listed price even without estimate (tab-level pricing) */}
-        {(item.estimatedPrice == null || item.estimatedPrice <= 0) && item.listedPrice != null && (
+
+        {/* Affix fallback medians: no overall median, show per-affix breakdown */}
+        {hasAffixFallbacks && (
+          <>
+            <div className="poe-tooltip-separator" />
+            <div className="space-y-0.5 pt-0.5">
+              <div className="text-[10px] text-muted-foreground font-semibold">Affix Medians (manual review)</div>
+              {item.affixFallbackMedians!.map((af, i) => (
+                <div key={i} className="flex justify-between">
+                  <span className="text-muted-foreground truncate max-w-[160px]">{af.affix}</span>
+                  <span className="font-mono text-gold-bright">{af.chaosMedian}c</span>
+                </div>
+              ))}
+              {item.listedPrice != null && (
+                <div className="flex justify-between pt-0.5">
+                  <span className="text-muted-foreground">Listed</span>
+                  <span className="font-mono">{item.listedPrice} {cur}</span>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Show listed price only when no median AND no affix fallbacks */}
+        {!hasMedian && !hasAffixFallbacks && item.listedPrice != null && (
           <>
             <div className="poe-tooltip-separator" />
             <div className="flex justify-between pt-0.5">
