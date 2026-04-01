@@ -247,7 +247,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
   const runValuation = useCallback(async () => {
     setValuationPhase('running');
     try {
-      await api.startStashValuationsNew();
+      await api.startStashValuations();
       // Poll valuation status
       const poll = async (): Promise<void> => {
         const vs = await api.getStashValuationsStatus();
