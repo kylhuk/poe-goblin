@@ -107,16 +107,6 @@ export function categorizeItems(items: PoeItem[]): ItemCategory[] {
   return categories;
 }
 
-function pickReturnedTab(payload: { stashTabs: StashTab[] }, requestedIndex: number): StashTab | null {
-  if (payload.stashTabs.length === 0) {
-    return null;
-  }
-  return payload.stashTabs.find((tab) => tab.returnedIndex === requestedIndex)
-    ?? payload.stashTabs[requestedIndex]
-    ?? payload.stashTabs[0]
-    ?? null;
-}
-
 // ── Cache ─────────────────────────────────────────
 
 function cacheKey(scanId: string) {

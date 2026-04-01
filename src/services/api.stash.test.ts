@@ -197,7 +197,7 @@ describe('stash api methods', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const api = await loadApi();
-    const result = await api.getStashScanResult(1);
+    const result = await api.getStashScanResult();
 
     expect(result.tabsMeta).toEqual([
       { id: 'tab-1', tabIndex: 0, name: 'Empty', type: 'normal' },
