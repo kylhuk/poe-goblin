@@ -641,13 +641,9 @@ export interface ApiService {
   startStashScan(): Promise<StashScanStartResponse>;
   getStashScanStatus(): Promise<StashScanStatus>;
   getStashItemHistory(fingerprint: string): Promise<StashItemHistoryResponse>;
-  getStashTabs(tabIndex?: number): Promise<StashTabsResponse>;
-  /** @deprecated Use getStashScanResult instead */
-  startStashValuations(req: StashScanValuationsRequest): Promise<StashScanValuationsResponse>;
 
-  // New separated endpoints
-  getStashScanResult(tabIndex?: number, signal?: AbortSignal): Promise<StashTabsResponse>;
-  startStashValuationsNew(): Promise<void>;
+  getStashScanResult(signal?: AbortSignal): Promise<StashTabsResponse>;
+  startStashValuations(): Promise<void>;
   getStashValuationsResult(signal?: AbortSignal): Promise<StashScanValuationsResponse>;
   getStashValuationsStatus(): Promise<StashScanStatus>;
 
