@@ -107,6 +107,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 const Index = () => {
   const { userRole } = useAuth();
+  const { league, setLeague, knownLeagues } = useLeague();
   const { tab, subtab } = useParams<{ tab?: string; subtab?: string }>();
   const navigate = useNavigate();
 
