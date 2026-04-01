@@ -550,51 +550,8 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
         </div>
       </div>
 
-      {/* Threshold configuration */}
-      <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground gap-1.5">
-            <Settings2 className={cn('h-3 w-3')} />
-            Valuation Settings
-            <ChevronDown className={cn('h-3 w-3 transition-transform', settingsOpen && 'rotate-180')} />
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className="flex items-end gap-4 flex-wrap mt-2 rounded border border-gold-dim/20 bg-card/40 p-3">
-            <div className="space-y-1">
-              <Label className="text-[10px] text-muted-foreground">Min Threshold (chaos)</Label>
-              <Input
-                type="number"
-                value={minThreshold}
-                onChange={e => setMinThreshold(Number(e.target.value))}
-                className="w-24 h-8 text-xs"
-                min={0}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-[10px] text-muted-foreground">Max Threshold (chaos)</Label>
-              <Input
-                type="number"
-                value={maxThreshold}
-                onChange={e => setMaxThreshold(Number(e.target.value))}
-                className="w-24 h-8 text-xs"
-                min={0}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-[10px] text-muted-foreground">Max Age (days)</Label>
-              <Input
-                type="number"
-                value={maxAgeDays}
-                onChange={e => setMaxAgeDays(Number(e.target.value))}
-                className="w-24 h-8 text-xs"
-                min={1}
-                max={90}
-              />
-            </div>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
+
+
 
       {/* Tab navigation */}
       <div className="flex items-end gap-0 flex-wrap">
