@@ -89,7 +89,7 @@ import { logApiError } from './apiErrorLog';
 import { supabase, SUPABASE_PROJECT_ID } from '@/lib/supabaseClient';
 
 
-let cachedPrimaryLeague: string | null = null;
+
 
 function isMissingRouteError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -165,12 +165,9 @@ function formatApiErrorDetail(details: unknown): string | null {
 }
 
 async function primaryLeague(): Promise<string> {
-  if (cachedPrimaryLeague) {
-    return cachedPrimaryLeague;
-  }
-  const payload = await request<ContractPayload>('/api/v1/ops/contract');
-  cachedPrimaryLeague = payload.primary_league || 'Mirage';
-  return cachedPrimaryLeague;
+  // Use the user-selected league from the top-level league selector
+  const { getSelectedLeague } = await import('@/services/league');
+  return getSelectedLeague();
 }
 
 export async function getAnalyticsIngestion() {

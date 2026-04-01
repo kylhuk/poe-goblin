@@ -13,7 +13,9 @@ import { LayoutDashboard, Server, BarChart3, Search, Grid3X3, MessageSquare, Tre
 import UserMenu from "@/components/UserMenu";
 import ApiErrorPanel from "@/components/ApiErrorPanel";
 import { useAuth, type UserRole } from "@/services/auth";
+import { useLeague } from "@/services/league";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type TabDef = {
   id: string;
@@ -105,6 +107,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 const Index = () => {
   const { userRole } = useAuth();
+  const { league, setLeague, knownLeagues } = useLeague();
   const { tab, subtab } = useParams<{ tab?: string; subtab?: string }>();
   const navigate = useNavigate();
 
@@ -171,7 +174,16 @@ const Index = () => {
             <h1 className="text-lg font-display tracking-wide gold-shimmer-text">PoE Dashboard</h1>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-muted-foreground font-mono hidden sm:inline"></span>
+            <Select value={league} onValueChange={setLeague}>
+              <SelectTrigger className="h-8 w-[140px] text-xs border-border bg-card">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {knownLeagues.map((l) => (
+                  <SelectItem key={l} value={l} className="text-xs">{l}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <ApiErrorPanel />
             <UserMenu />
           </div>
