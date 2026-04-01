@@ -60,7 +60,7 @@ describe('stash api methods', () => {
   test('fetches stash scan status and item history', async () => {
     const fetchMock = vi
       .fn()
-      // 1st call: getStashScanStatus -> /api/v1/stash/scan/status (no league)
+      // 1st call: getStashScanStatus -> /api/v1/stash/scan/status
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -80,13 +80,7 @@ describe('stash api methods', () => {
           error: null,
         }),
       } as Response)
-      // 2nd call: getStashItemHistory -> primaryLeague() contract fetch
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ primary_league: 'Mirage' }),
-      } as Response)
-      // 3rd call: getStashItemHistory -> /api/v1/stash/items/{fp}/history
+      // 2nd call: getStashItemHistory -> /api/v1/stash/items/{fp}/history
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -125,7 +119,7 @@ describe('stash api methods', () => {
     expect(status.progress.itemsProcessed).toBe(44);
     expect(history.item.name).toBe('Grim Bane');
     expect(history.history[0].interval.p10).toBe(39);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   test('derives tabsMeta from stashTabs when backend omits tab metadata (via scan/result)', async () => {
