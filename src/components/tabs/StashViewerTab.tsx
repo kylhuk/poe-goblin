@@ -247,7 +247,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
   const runValuation = useCallback(async () => {
     setValuationPhase('running');
     try {
-      await api.startStashValuationsNew();
+      await api.startStashValuations();
       // Poll valuation status
       const poll = async (): Promise<void> => {
         const vs = await api.getStashValuationsStatus();
@@ -288,7 +288,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
 
     // 1) Load and render tab payload first (do not block UI on valuations endpoint)
     try {
-      const payload = await api.getStashScanResult(tabIndex, ac.signal);
+      const payload = await api.getStashScanResult(ac.signal);
       // Race guard: discard if a newer loadTab was fired
       if (token !== loadTokenRef.current) return;
 

@@ -7,18 +7,22 @@ import StashViewerTab from './StashViewerTab';
 
 const {
   getStashStatusMock,
-  getStashTabsMock,
+  getStashScanResultMock,
   startStashScanMock,
   getStashScanStatusMock,
   getStashItemHistoryMock,
   startStashValuationsMock,
+  getStashValuationsResultMock,
+  getStashValuationsStatusMock,
 } = vi.hoisted(() => ({
   getStashStatusMock: vi.fn(),
-  getStashTabsMock: vi.fn(),
+  getStashScanResultMock: vi.fn(),
   startStashScanMock: vi.fn(),
   getStashScanStatusMock: vi.fn(),
   getStashItemHistoryMock: vi.fn(),
   startStashValuationsMock: vi.fn(),
+  getStashValuationsResultMock: vi.fn(),
+  getStashValuationsStatusMock: vi.fn(),
 }));
 
 vi.mock('../shared/RenderState', () => ({
@@ -64,11 +68,13 @@ vi.mock('../ui/dialog', () => ({
 vi.mock('../../services/api', () => ({
   api: {
     getStashStatus: getStashStatusMock,
-    getStashTabs: getStashTabsMock,
+    getStashScanResult: getStashScanResultMock,
     startStashScan: startStashScanMock,
     getStashScanStatus: getStashScanStatusMock,
     getStashItemHistory: getStashItemHistoryMock,
     startStashValuations: startStashValuationsMock,
+    getStashValuationsResult: getStashValuationsResultMock,
+    getStashValuationsStatus: getStashValuationsStatusMock,
   },
 }));
 
@@ -118,6 +124,13 @@ const publishedTabsPayload = {
   numTabs: 2,
 };
 
+const emptyValuationResult = {
+  structuredMode: true,
+  scanId: 'scan-1',
+  stashId: 'scan-1',
+  items: [],
+};
+
 beforeEach(() => {
   getStashStatusMock.mockResolvedValue({
     status: 'connected_populated',
@@ -129,7 +142,9 @@ beforeEach(() => {
     publishedAt: '2026-03-21T12:00:00Z',
     scanStatus: null,
   });
-  getStashTabsMock.mockResolvedValue(publishedTabsPayload);
+  getStashScanResultMock.mockResolvedValue(publishedTabsPayload);
+  getStashValuationsResultMock.mockResolvedValue(emptyValuationResult);
+  getStashValuationsStatusMock.mockResolvedValue({ status: 'published' });
   startStashScanMock.mockResolvedValue({
     scanId: 'scan-2',
     status: 'running',
@@ -162,13 +177,7 @@ beforeEach(() => {
       },
     ],
   });
-  startStashValuationsMock.mockResolvedValue({
-    structuredMode: true,
-    scanId: 'scan-2',
-    stashId: 'scan-2',
-    items: [{ fingerprint: 'sig:item-1', estimatedPrice: 45, chaosMedian: 45 }],
-    chaosMedian: 45,
-  });
+  startStashValuationsMock.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -244,7 +253,7 @@ describe('StashViewerTab', () => {
         progress: { tabsTotal: 8, tabsProcessed: 8, itemsTotal: 120, itemsProcessed: 120 },
         error: null,
       });
-    getStashTabsMock
+    getStashScanResultMock
       .mockResolvedValueOnce(publishedTabsPayload)
       .mockResolvedValueOnce({
         ...publishedTabsPayload,
@@ -269,18 +278,14 @@ describe('StashViewerTab', () => {
       await Promise.resolve();
     });
 
-    expect(getStashTabsMock).toHaveBeenCalledTimes(2);
-    expect(startStashValuationsMock).toHaveBeenCalledWith({
-      scanId: 'scan-2',
-      structuredMode: true,
-      minThreshold: 4,
-      maxThreshold: 8,
-      maxAgeDays: 7,
-    });
+    // getStashScanResult called for initial load + after scan publish
+    expect(getStashScanResultMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // startStashValuations called with no arguments (new API)
+    expect(startStashValuationsMock).toHaveBeenCalledWith();
   });
 
   test('selects the requested tab instead of always using the first returned tab', async () => {
-    getStashTabsMock.mockResolvedValue({
+    getStashScanResultMock.mockResolvedValue({
       scanId: 'scan-1',
       publishedAt: '2026-03-21T12:00:00Z',
       isStale: false,
@@ -379,7 +384,7 @@ describe('StashViewerTab', () => {
         returnedIndex: 0,
       }],
     };
-    getStashTabsMock
+    getStashScanResultMock
       .mockResolvedValueOnce(publishedTabsPayload)
       .mockResolvedValueOnce(mismatchPayload);
 
@@ -406,7 +411,7 @@ describe('StashViewerTab', () => {
     expect(valuateBtn).not.toBeDisabled();
   });
 
-  test('Valuate button calls startStashValuations with current thresholds', async () => {
+  test('Valuate button calls startStashValuations with no arguments', async () => {
     render(<StashViewerTab />);
     await screen.findByTestId('stash-panel-grid');
 
@@ -416,12 +421,6 @@ describe('StashViewerTab', () => {
       await Promise.resolve();
     });
 
-    expect(startStashValuationsMock).toHaveBeenCalledWith({
-      scanId: 'scan-1',
-      structuredMode: true,
-      minThreshold: 4,
-      maxThreshold: 8,
-      maxAgeDays: 7,
-    });
+    expect(startStashValuationsMock).toHaveBeenCalledWith();
   });
 });

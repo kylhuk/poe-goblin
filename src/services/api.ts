@@ -26,7 +26,6 @@ import type {
   StashItemHistoryResponse,
   StashScanStartResponse,
   StashScanStatus,
-  StashScanValuationsRequest,
   StashScanValuationsResponse,
   StashStatus,
   StashTabMeta,
@@ -91,12 +90,6 @@ import { supabase, SUPABASE_PROJECT_ID } from '@/lib/supabaseClient';
 
 
 
-function isMissingRouteError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  return error.message.startsWith('route_not_found:') || error.message.includes('route not found');
-}
 
 async function request<T>(path: string, init?: RequestInit, options: RequestOptions = {}): Promise<T> {
   const method = init?.method || 'GET';
@@ -580,7 +573,7 @@ function normalizeTabsMeta(rawTabs: unknown[]): StashTabMeta[] {
   });
 }
 
-function normalizeStashTabsResponse(payload: unknown, requestedTabIndex?: number): StashTabsResponse {
+function normalizeStashTabsResponse(payload: unknown): StashTabsResponse {
   const source = asObject(payload);
   const rawTabsMeta = Array.isArray(source.tabs) ? source.tabs as unknown[] : [];
   const tabsMeta = normalizeTabsMeta(rawTabsMeta);
@@ -590,14 +583,14 @@ function normalizeStashTabsResponse(payload: unknown, requestedTabIndex?: number
 
   // New raw PoE schema: { stash: {single tab object}, tabs: [...], items: [...], numTabs }
   if (source.stash && typeof source.stash === 'object' && !Array.isArray(source.stash)) {
-    const tab = normalizeStashTab(source.stash, requestedTabIndex ?? 0);
+    const tab = normalizeStashTab(source.stash, 0);
     // Merge top-level items if the stash object itself had none
     if (tab.items.length === 0 && topLevelItems.length > 0) {
       tab.items = topLevelItems;
     }
     const effectiveTabsMeta = tabsMeta.length > 0
       ? tabsMeta
-      : [{ id: tab.id, tabIndex: requestedTabIndex ?? 0, name: tab.name, type: tab.type }];
+      : [{ id: tab.id, tabIndex: 0, name: tab.name, type: tab.type }];
     const numTabs = optNumber(source.numTabs ?? source.num_tabs) ?? effectiveTabsMeta.length;
     return {
       scanId: optString(source.scanId ?? source.scan_id),
@@ -613,10 +606,6 @@ function normalizeStashTabsResponse(payload: unknown, requestedTabIndex?: number
   // Legacy format: { stashTabs: [...] }
   const rawTabs = Array.isArray(source.stashTabs ?? source.stash_tabs) ? (source.stashTabs ?? source.stash_tabs) as unknown[] : [];
   const stashTabs = rawTabs.map((tab, index) => normalizeStashTab(tab, index));
-  // If only one tab returned and requestedTabIndex is set, override its returnedIndex
-  if (stashTabs.length === 1 && requestedTabIndex != null && stashTabs[0].returnedIndex == null) {
-    stashTabs[0].returnedIndex = requestedTabIndex;
-  }
   const effectiveTabsMeta = tabsMeta.length > 0
     ? tabsMeta
     : stashTabs.map((tab, index) => ({
@@ -911,28 +900,13 @@ export const api: ApiService = {
   },
 
   async startStashScan() {
-    const league = await primaryLeague();
-    const startPath = `/api/v1/stash/scan/start?league=${encodeURIComponent(league)}&realm=pc`;
-    const legacyPath = `/api/v1/stash/scan?league=${encodeURIComponent(league)}&realm=pc`;
-    try {
-      return await request<StashScanStartResponse>(startPath, {
-        method: 'POST',
-      }, {
-        skipErrorCodes: ['route_not_found'],
-      });
-    } catch (error) {
-      if (!isMissingRouteError(error)) {
-        throw error;
-      }
-      return request<StashScanStartResponse>(legacyPath, {
-        method: 'POST',
-      });
-    }
+    return request<StashScanStartResponse>('/api/v1/stash/scan/start', {
+      method: 'POST',
+    });
   },
 
   async getStashScanStatus() {
-    const league = await primaryLeague();
-    return request<StashScanStatus>(`/api/v1/stash/scan/status?league=${encodeURIComponent(league)}&realm=pc`);
+    return request<StashScanStatus>('/api/v1/stash/scan/status');
   },
 
   async getStashItemHistory(fingerprint: string) {
@@ -1003,75 +977,30 @@ export const api: ApiService = {
     return normalizeMlPredictOneResponse(payload);
   },
 
-  async getStashTabs(tabIndex?: number) {
-    // Prefer new /scan/result, fall back to legacy /stash/tabs
-    const league = await primaryLeague();
-    const tabParam = tabIndex != null ? `&tabIndex=${tabIndex}` : '';
-    try {
-      const payload = await request<unknown>(
-        `/api/v1/stash/scan/result?league=${encodeURIComponent(league)}&realm=pc${tabParam}`,
-        undefined,
-        { skipErrorCodes: ['route_not_found'] },
-      );
-      return normalizeStashTabsResponse(payload, tabIndex ?? undefined);
-    } catch (err) {
-      if (!isMissingRouteError(err)) throw err;
-      const payload = await request<unknown>(
-        `/api/v1/stash/tabs?league=${encodeURIComponent(league)}&realm=pc${tabParam}`,
-      );
-      return normalizeStashTabsResponse(payload, tabIndex ?? undefined);
-    }
-  },
-
-  async getStashScanResult(tabIndex?: number, signal?: AbortSignal) {
-    const league = await primaryLeague();
-    const tabParam = tabIndex != null ? `&tabIndex=${tabIndex}` : '';
+  async getStashScanResult(signal?: AbortSignal) {
     const payload = await request<unknown>(
-      `/api/v1/stash/scan/result?league=${encodeURIComponent(league)}&realm=pc${tabParam}`,
+      '/api/v1/stash/scan/result',
       signal ? { signal } : undefined,
     );
-    return normalizeStashTabsResponse(payload, tabIndex ?? undefined);
+    return normalizeStashTabsResponse(payload);
   },
 
-  async startStashValuations(req: StashScanValuationsRequest) {
-    const league = await primaryLeague();
-    return request<StashScanValuationsResponse>(
-      `/api/v1/stash/scan/valuations?league=${encodeURIComponent(league)}&realm=pc`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          scanId: req.scanId,
-          ...(req.stashId ? { stashId: req.stashId } : {}),
-          minThreshold: req.minThreshold,
-          maxThreshold: req.maxThreshold,
-          maxAgeDays: req.maxAgeDays,
-          ...(req.itemId ? { itemId: req.itemId } : {}),
-          ...(req.structuredMode != null ? { structuredMode: req.structuredMode } : {}),
-        }),
-      }
-    );
-  },
-
-  async startStashValuationsNew() {
-    const league = await primaryLeague();
-    await request<unknown>(
-      `/api/v1/stash/scan/valuations/start?league=${encodeURIComponent(league)}&realm=pc`,
-      { method: 'POST' },
-    );
+  async startStashValuations() {
+    await request<unknown>('/api/v1/stash/scan/valuations/start', {
+      method: 'POST',
+    });
   },
 
   async getStashValuationsResult(signal?: AbortSignal) {
-    const league = await primaryLeague();
     return request<StashScanValuationsResponse>(
-      `/api/v1/stash/scan/valuations/result?league=${encodeURIComponent(league)}&realm=pc`,
+      '/api/v1/stash/scan/valuations/result',
       signal ? { signal } : undefined,
     );
   },
 
   async getStashValuationsStatus() {
-    const league = await primaryLeague();
     const raw = await request<Record<string, unknown>>(
-      `/api/v1/stash/scan/valuations/status?league=${encodeURIComponent(league)}&realm=pc`,
+      '/api/v1/stash/scan/valuations/status',
     );
     // Backend may return a status-shaped payload or a valuation-result-shaped payload.
     // Normalise both into StashScanStatus so polling works either way.
