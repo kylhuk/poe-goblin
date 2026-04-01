@@ -165,6 +165,9 @@ Deno.serve(async (req) => {
       method: req.method,
       headers: forwardHeaders,
       body,
+      // Forward the client's abort signal so cancelling on the frontend
+      // also cancels the in-flight backend request immediately.
+      signal: req.signal,
     });
 
     console.log(`[api-proxy] backend responded ${backendRes.status}`);
