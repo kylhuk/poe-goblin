@@ -656,9 +656,9 @@ export interface ApiService {
   startStashValuations(req: StashScanValuationsRequest): Promise<StashScanValuationsResponse>;
 
   // New separated endpoints
-  getStashScanResult(tabIndex?: number): Promise<StashTabsResponse>;
+  getStashScanResult(tabIndex?: number, signal?: AbortSignal): Promise<StashTabsResponse>;
   startStashValuationsNew(): Promise<void>;
-  getStashValuationsResult(): Promise<StashScanValuationsResponse>;
+  getStashValuationsResult(signal?: AbortSignal): Promise<StashScanValuationsResponse>;
   getStashValuationsStatus(): Promise<StashScanStatus>;
 
   getMessages(): Promise<AppMessage[]>;

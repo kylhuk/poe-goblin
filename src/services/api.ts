@@ -113,6 +113,7 @@ async function request<T>(path: string, init?: RequestInit, options: RequestOpti
     response = await fetch(url, {
       ...init,
       credentials: 'include',
+      signal: init?.signal,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
@@ -121,6 +122,9 @@ async function request<T>(path: string, init?: RequestInit, options: RequestOpti
       },
     });
   } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err;
+    }
     const rawMessage = err instanceof Error ? err.message : 'Network error';
     const detail = `${method} ${path}: ${rawMessage}`;
     logApiError({ method, path, errorCode: 'network_error', message: rawMessage });
@@ -1019,11 +1023,12 @@ export const api: ApiService = {
     }
   },
 
-  async getStashScanResult(tabIndex?: number) {
+  async getStashScanResult(tabIndex?: number, signal?: AbortSignal) {
     const league = await primaryLeague();
     const tabParam = tabIndex != null ? `&tabIndex=${tabIndex}` : '';
     const payload = await request<unknown>(
       `/api/v1/stash/scan/result?league=${encodeURIComponent(league)}&realm=pc${tabParam}`,
+      signal ? { signal } : undefined,
     );
     return normalizeStashTabsResponse(payload, tabIndex ?? undefined);
   },
@@ -1055,10 +1060,11 @@ export const api: ApiService = {
     );
   },
 
-  async getStashValuationsResult() {
+  async getStashValuationsResult(signal?: AbortSignal) {
     const league = await primaryLeague();
     return request<StashScanValuationsResponse>(
       `/api/v1/stash/scan/valuations/result?league=${encodeURIComponent(league)}&realm=pc`,
+      signal ? { signal } : undefined,
     );
   },
 
