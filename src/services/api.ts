@@ -606,10 +606,6 @@ function normalizeStashTabsResponse(payload: unknown): StashTabsResponse {
   // Legacy format: { stashTabs: [...] }
   const rawTabs = Array.isArray(source.stashTabs ?? source.stash_tabs) ? (source.stashTabs ?? source.stash_tabs) as unknown[] : [];
   const stashTabs = rawTabs.map((tab, index) => normalizeStashTab(tab, index));
-  // If only one tab returned and requestedTabIndex is set, override its returnedIndex
-  if (stashTabs.length === 1 && requestedTabIndex != null && stashTabs[0].returnedIndex == null) {
-    stashTabs[0].returnedIndex = requestedTabIndex;
-  }
   const effectiveTabsMeta = tabsMeta.length > 0
     ? tabsMeta
     : stashTabs.map((tab, index) => ({
