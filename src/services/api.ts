@@ -1054,9 +1054,19 @@ export const api: ApiService = {
 
   async getStashValuationsStatus() {
     const league = await primaryLeague();
-    return request<StashScanStatus>(
+    const raw = await request<Record<string, unknown>>(
       `/api/v1/stash/scan/valuations/status?league=${encodeURIComponent(league)}&realm=pc`,
     );
+    // Backend may return a status-shaped payload or a valuation-result-shaped payload.
+    // Normalise both into StashScanStatus so polling works either way.
+    if (typeof raw.status === 'string' && ['idle', 'running', 'publishing', 'published', 'failed'].includes(raw.status)) {
+      return raw as unknown as StashScanStatus;
+    }
+    // If payload has items/scanId but no status field, treat as completed
+    if (Array.isArray(raw.items) || raw.scanId || raw.scan_id) {
+      return { ...EMPTY_SCAN_STATUS_TEMPLATE, status: 'published' as const } as StashScanStatus;
+    }
+    return raw as unknown as StashScanStatus;
   },
 
   async getMessages() {
