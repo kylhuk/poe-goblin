@@ -89,7 +89,7 @@ import { logApiError } from './apiErrorLog';
 import { supabase, SUPABASE_PROJECT_ID } from '@/lib/supabaseClient';
 
 
-let cachedPrimaryLeague: string | null = null;
+
 
 function isMissingRouteError(error: unknown): boolean {
   if (!(error instanceof Error)) {
