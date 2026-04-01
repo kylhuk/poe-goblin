@@ -43,7 +43,7 @@ export default function EconomyTab() {
         setPhase('error');
         return;
       }
-      const tabResp = await api.getStashTabs();
+      const tabResp = await api.getStashScanResult();
       const tabsMeta: StashTabMeta[] = tabResp.tabsMeta;
       const scanId = tabResp.scanId || 'default';
 
