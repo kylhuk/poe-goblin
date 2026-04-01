@@ -222,10 +222,8 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyPayload, setHistoryPayload] = useState<StashItemHistoryResponse | null>(null);
 
-  // Threshold configuration
-  const [minThreshold, setMinThreshold] = useState(4);
-  const [maxThreshold, setMaxThreshold] = useState(8);
-  const [maxAgeDays, setMaxAgeDays] = useState(7);
+  // Race guard for tab loading — incremented on each loadTab call
+  const loadTokenRef = React.useRef(0);
 
   /** Fetch existing valuation results (no computation) */
   const fetchValuationResults = useCallback(async () => {
