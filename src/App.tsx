@@ -83,11 +83,13 @@ const AppGate = () => {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <AppGate />
-      </TooltipProvider>
+      <LeagueProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <AppGate />
+        </TooltipProvider>
+      </LeagueProvider>
     </AuthProvider>
   </QueryClientProvider>
 );
