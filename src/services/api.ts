@@ -573,7 +573,7 @@ function normalizeTabsMeta(rawTabs: unknown[]): StashTabMeta[] {
   });
 }
 
-function normalizeStashTabsResponse(payload: unknown, requestedTabIndex?: number): StashTabsResponse {
+function normalizeStashTabsResponse(payload: unknown): StashTabsResponse {
   const source = asObject(payload);
   const rawTabsMeta = Array.isArray(source.tabs) ? source.tabs as unknown[] : [];
   const tabsMeta = normalizeTabsMeta(rawTabsMeta);
