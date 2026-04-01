@@ -142,7 +142,7 @@ function computeEvaluation(
   const listedChaos = toChaos(listedPrice, currency);
   const delta = Math.abs(listedChaos - estimatedPrice) / estimatedPrice;
   if (delta <= 0.10) return 'well_priced';
-  if (delta <= 0.20) return 'could_be_better';
+  if (delta <= 0.25) return 'could_be_better';
   return 'mispriced';
 }
 
