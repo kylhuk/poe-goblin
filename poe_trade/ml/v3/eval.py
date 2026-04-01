@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from poe_trade.db import ClickHouseClient
 
-from .sql import TRAINING_TABLE
+from .sql import TRAINING_SOURCE_TABLE
 
 ROUTE_EVAL_TABLE = "poe_trade.ml_v3_route_eval"
 COHORT_EVAL_TABLE = "poe_trade.ml_v3_cohort_eval"
@@ -398,7 +398,7 @@ def evaluate_run(
                 "argMax(target_sale_probability_24h, as_of_ts) AS target_sale_probability_24h,",
                 "argMax(strategy_family, as_of_ts) AS strategy_family,",
                 "argMax(cohort_key, as_of_ts) AS cohort_key",
-                f"FROM {TRAINING_TABLE}",
+                f"FROM {TRAINING_SOURCE_TABLE}",
                 f"WHERE league = {_quote(league)}",
                 "GROUP BY league, identity_key",
                 ")",

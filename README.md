@@ -9,4 +9,5 @@
 
 ## Services
 
-- ClickHouse, schema_migrator, market_harvester, scanner_worker, ml_trainer, poeninja_snapshot, and api
+- Default stack: ClickHouse, schema_migrator, market_harvester, scanner_worker, and api
+- ML services (`ml_trainer`, `poeninja_snapshot`, and `ml_v3_ops`) are opt-in via the `ml-v3` profile

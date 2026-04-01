@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-31T18:18:06.171045+00:00",
+  "timestamp": "2026-03-31T20:29:34.627019+00:00",
   "league": "Mirage",
   "snapshot_mode": "steady_state_snapshot_only",
   "downstream_derivation_owner": "ml_v3",
   "downstream_rebuild_triggered": false,
-  "snapshot_rows": 81,
+  "snapshot_rows": 79,
   "fx_rows": 0,
   "labels_rows": 0,
   "events_rows": 0,
@@ -16,5 +16,5 @@
   "previous_rebuild_window_id": "",
   "rebuild_skipped": true,
   "rebuild_skip_reason": "steady_state_snapshot_only",
-  "elapsed_seconds": 0.09
+  "elapsed_seconds": 0.22
 }

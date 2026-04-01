@@ -105,7 +105,7 @@ def test_half_sample_export_sorts_and_selects_floor_half(tmp_path, monkeypatch) 
             "--league",
             "Mirage",
             "--source-table",
-            "poe_trade.ml_v3_training_examples",
+            copy_pricing_dataset.TRAINING_SOURCE_TABLE,
             "--half-sample",
             "--output",
             str(output_path),

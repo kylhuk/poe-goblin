@@ -7,6 +7,7 @@ def test_apispec_includes_canonical_stash_lifecycle_routes() -> None:
     text = Path("apispec.yml").read_text(encoding="utf-8")
 
     assert "/api/v1/stash/scan/result:" in text
+    assert "/api/v1/stash/scan/status:" in text
     assert "/api/v1/stash/scan/valuations/start:" in text
     assert "/api/v1/stash/scan/valuations/status:" in text
     assert "/api/v1/stash/scan/valuations/result:" in text
@@ -24,11 +25,21 @@ def test_apispec_includes_canonical_stash_lifecycle_routes() -> None:
     assert "LeagueQuery" not in scan_result_block
     assert "StashTabIndex" not in scan_result_block
 
+    scan_status_block = text.split("  /api/v1/stash/scan/status:")[1].split(
+        "  /api/v1/stash/items/{fingerprint}/history:"
+    )[0]
+    assert "503" in scan_status_block
+
     valuations_result_block = text.split("  /api/v1/stash/scan/valuations/result:")[
         1
     ].split("  /api/v1/auth/login:")[0]
     assert "LeagueQuery" not in valuations_result_block
     assert "StashScanValuationScanId" not in valuations_result_block
+
+    status_block = text.split("  /api/v1/stash/status:")[1].split(
+        "  /api/v1/stash/scan/start:"
+    )[0]
+    assert "503" in status_block
 
     legacy_block = text.split("  /api/v1/stash/scan/valuations:")[1].split(
         "  /api/v1/stash/scan/valuations/start:"

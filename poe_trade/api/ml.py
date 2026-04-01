@@ -10,13 +10,14 @@ from poe_trade.db import ClickHouseClient
 from poe_trade.db.clickhouse import ClickHouseClientError
 from poe_trade.ml import workflows
 from poe_trade.ml.v3 import serve as v3_serve
+from poe_trade.ml.v3.sql import TRAINING_SOURCE_TABLE
 
 
 class BackendUnavailable(RuntimeError):
     pass
 
 
-_AUTOMATION_DATASET_TABLE = "poe_trade.ml_v3_training_examples"
+_AUTOMATION_DATASET_TABLE = TRAINING_SOURCE_TABLE
 
 
 def _automation_tables() -> dict[str, str]:

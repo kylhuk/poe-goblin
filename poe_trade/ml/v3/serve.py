@@ -17,7 +17,7 @@ from . import sql
 from . import hybrid_search
 from .hybrid_anchor import build_anchor
 from .train import apply_residual_cap, _prediction_space_to_price
-from .sql import ROLLOUT_STATE_TABLE, TRAINING_TABLE
+from .sql import ROLLOUT_STATE_TABLE, TRAINING_SOURCE_TABLE
 
 
 def _quote(value: str) -> str:
@@ -74,7 +74,7 @@ def _median_fallback(
         query = " ".join(
             [
                 "SELECT quantileTDigest(0.5)(target_price_chaos) AS p50, count() AS rows",
-                f"FROM {TRAINING_TABLE}",
+                f"FROM {TRAINING_SOURCE_TABLE}",
                 f"WHERE league = {_quote(league)}",
                 f"AND route = {_quote(route)}",
                 f"AND base_type = {_quote(base_type)}",

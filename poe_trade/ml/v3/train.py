@@ -82,7 +82,7 @@ def _load_training_rows(
         " ".join(
             [
                 "SELECT count() AS rows",
-                f"FROM {sql.TRAINING_TABLE}",
+                f"FROM {sql.TRAINING_SOURCE_TABLE}",
                 f"WHERE league = {_quote(league)} AND route = {_quote(route)}",
                 "FORMAT JSONEachRow",
             ]
@@ -123,7 +123,7 @@ def _load_training_rows(
             "target_price_chaos,",
             "target_fast_sale_24h_price,",
             "target_sale_probability_24h",
-            f"FROM {sql.TRAINING_TABLE}",
+            f"FROM {sql.TRAINING_SOURCE_TABLE}",
             f"WHERE league = {_quote(league)} AND route = {_quote(route)}",
             "AND target_price_chaos > 0",
             f"ORDER BY as_of_ts ASC, identity_key ASC",
@@ -450,7 +450,7 @@ def _load_eval_rows(
         " ".join(
             [
                 "SELECT count() AS rows",
-                f"FROM {sql.TRAINING_TABLE}",
+                f"FROM {sql.TRAINING_SOURCE_TABLE}",
                 f"WHERE league = {_quote(league)} AND route = {_quote(route)}",
                 "FORMAT JSONEachRow",
             ]
@@ -463,7 +463,7 @@ def _load_eval_rows(
             "SELECT as_of_ts, item_id, identity_key, listing_episode_id, first_seen, last_seen, snapshot_count, latest_price, min_price, latest_price_divine, min_price_divine, fx_hour, fx_source, fx_chaos_per_divine, route, category, base_type,",
             "item_name, item_type_line, rarity, ilvl, stack_size, corrupted, fractured, synthesised,",
             "support_count_recent, sale_confidence_flag, feature_vector_json, mod_features_json",
-            f"FROM {sql.TRAINING_TABLE}",
+            f"FROM {sql.TRAINING_SOURCE_TABLE}",
             f"WHERE league = {_quote(league)} AND route = {_quote(route)}",
             "AND target_price_chaos > 0",
             f"ORDER BY as_of_ts ASC, identity_key ASC",
@@ -832,7 +832,7 @@ def train_all_routes_v3(
         " ".join(
             [
                 "SELECT route, count() AS rows",
-                f"FROM {sql.TRAINING_TABLE}",
+                f"FROM {sql.TRAINING_SOURCE_TABLE}",
                 f"WHERE league = {_quote(league)}",
                 "GROUP BY route",
                 "ORDER BY rows DESC",

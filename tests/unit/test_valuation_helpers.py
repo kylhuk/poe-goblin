@@ -45,6 +45,10 @@ def test_build_comparable_query_filters_base_type_affixes_thresholds_and_age() -
     assert "INTERVAL 7 DAY" in query
     assert "ml_fx_hour_latest_v2" in query
     assert "normalized_price_chaos" in query
+    assert (
+        "SELECT as_of_ts, normalized_price_chaos, target_price_chaos, target_price_divine"
+        in query
+    )
     assert "+93 to maximum Life" in query
     assert "+30% to Fire Resistance" in query
 

@@ -79,9 +79,8 @@ def serialize_stash_item_to_clipboard(item: dict[str, Any]) -> str:
 
 
 def normalize_stash_prediction(payload: dict[str, Any]) -> StashPrediction:
-    interval = (
-        payload.get("interval") if isinstance(payload.get("interval"), dict) else {}
-    )
+    interval_obj = payload.get("interval")
+    interval = interval_obj if isinstance(interval_obj, dict) else {}
     return StashPrediction(
         predicted_price=float(
             payload.get("predictedValue") or payload.get("price_p50") or 0.0
@@ -176,7 +175,7 @@ def fetch_active_scan(
         account_name=account_name,
         league=league,
         realm=realm,
-        scan_id=active_scan["scanId"],
+        scan_id=str(active_scan.get("scanId") or ""),
     )
     if not _active_scan_is_stale(active_scan, latest_run, timeout_seconds):
         return active_scan
@@ -209,7 +208,7 @@ def fetch_latest_scan_run(
         f"AND league = '{_escape_sql_literal(league)}' "
         f"AND realm = '{_escape_sql_literal(realm)}' "
         f"{scan_id_filter}"
-        "ORDER BY updated_at DESC LIMIT 1 FORMAT JSONEachRow"
+        "ORDER BY updated_at DESC, published_at DESC, completed_at DESC, failed_at DESC LIMIT 1 FORMAT JSONEachRow"
     )
     try:
         payload = client.execute(query).strip()
@@ -317,7 +316,15 @@ def fetch_published_tabs(
     account_name: str,
     league: str,
     realm: str,
+    stale_timeout_seconds: int = 0,
 ) -> dict[str, Any]:
+    _ = fetch_active_scan(
+        client,
+        account_name=account_name,
+        league=league,
+        realm=realm,
+        stale_timeout_seconds=stale_timeout_seconds,
+    )
     scan_id = fetch_published_scan_id(
         client,
         account_name=account_name,
@@ -377,21 +384,25 @@ def fetch_published_tabs(
     tab_map: dict[str, dict[str, Any]] = {}
     for line in tabs_payload.splitlines() if tabs_payload else []:
         row = json.loads(line)
+        tab_id = str(row.get("tab_id") or "")
+        tab_items: list[dict[str, Any]] = []
         tab = {
-            "id": str(row.get("tab_id") or ""),
+            "id": tab_id,
             "name": str(row.get("tab_name") or ""),
             "type": _normalize_tab_type(str(row.get("tab_type") or "normal")),
-            "items": [],
+            "items": tab_items,
         }
         tabs.append(tab)
-        tab_map[tab["id"]] = tab
+        tab_map[tab_id] = tab
 
     for line in items_payload.splitlines() if items_payload else []:
         row = json.loads(line)
         tab = tab_map.get(str(row.get("tab_id") or ""))
         if tab is None:
             continue
-        tab["items"].append(_to_api_item(row))
+        items = tab.get("items")
+        if isinstance(items, list):
+            items.append(_to_api_item(row))
 
     return {
         "scanId": scan_id,

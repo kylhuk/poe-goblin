@@ -35,7 +35,7 @@ def test_item_family_sample_query_filters_family_and_orders_rows(
         family=family,
     )
 
-    assert f"FROM {sql.TRAINING_TABLE}" in query
+    assert f"FROM {sql.TRAINING_SOURCE_TABLE}" in query
     assert "WHERE league = 'Mirage'" in query
     assert (
         "route IN ('cluster_jewel_retrieval', 'structured_boosted', 'structured_boosted_other', 'sparse_retrieval', 'fallback_abstain')"

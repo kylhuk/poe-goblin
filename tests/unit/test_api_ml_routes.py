@@ -36,6 +36,7 @@ def _settings() -> Settings:
         "POE_API_CORS_ORIGINS": "https://app.example.com",
         "POE_API_MAX_BODY_BYTES": "128",
         "POE_API_LEAGUE_ALLOWLIST": "Mirage",
+        "POE_ML_AUTOMATION_ENABLED": "true",
     }
     with mock.patch.dict(os.environ, env, clear=True):
         return Settings.from_env()
@@ -807,7 +808,7 @@ def test_fetch_automation_history_v3_does_not_fabricate_eval_history(
                 }
             ]
         if (
-            "FROM poe_trade.ml_v3_training_examples" in query
+            "FROM poe_trade.ml_v3_listing_episodes" in query
             and "count() AS total_rows" in query
         ):
             return [
@@ -818,7 +819,7 @@ def test_fetch_automation_history_v3_does_not_fabricate_eval_history(
                 }
             ]
         if (
-            "FROM poe_trade.ml_v3_training_examples" in query
+            "FROM poe_trade.ml_v3_listing_episodes" in query
             and "GROUP BY route" in query
         ):
             return [{"route": "sparse_retrieval", "rows": 1000}]

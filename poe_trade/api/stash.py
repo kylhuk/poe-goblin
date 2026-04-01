@@ -32,6 +32,7 @@ def stash_status_payload(
     *,
     league: str,
     realm: str,
+    stale_timeout_seconds: int = 0,
     enable_account_stash: bool,
     session: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -105,6 +106,7 @@ def stash_status_payload(
             league=league,
             realm=realm,
             account_name=account_name,
+            stale_timeout_seconds=stale_timeout_seconds,
         )
     except StashScanBackendUnavailable as exc:
         raise StashBackendUnavailable("stash status backend unavailable") from exc
@@ -140,6 +142,7 @@ def fetch_stash_tabs(
     league: str,
     realm: str,
     account_name: str = "",
+    stale_timeout_seconds: int = 0,
 ) -> dict[str, Any]:
     try:
         return fetch_published_tabs(
@@ -147,6 +150,7 @@ def fetch_stash_tabs(
             account_name=account_name,
             league=league,
             realm=realm,
+            stale_timeout_seconds=stale_timeout_seconds,
         )
     except StashScanBackendUnavailable as exc:
         raise StashBackendUnavailable("stash backend unavailable") from exc

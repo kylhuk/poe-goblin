@@ -85,6 +85,7 @@ services:
 
   ml_trainer:
     <<: *poe-app
+    profiles: ["ml-v3"]
     command: ["service", "--name", "ml_trainer"]
     depends_on:
       clickhouse:
@@ -110,6 +111,7 @@ services:
 
   poeninja_snapshot:
     <<: *poe-app
+    profiles: ["ml-v3"]
     command: ["service", "--name", "poeninja_snapshot"]
     depends_on:
       clickhouse:
@@ -147,6 +149,8 @@ services:
       POE_ENABLE_ACCOUNT_STASH: "true"
       POE_ACCOUNT_STASH_REALM: pc
       POE_ACCOUNT_STASH_LEAGUE: Mirage
+      POE_ACCOUNT_STASH_REQUEST_TIMEOUT_SECONDS: ${POE_ACCOUNT_STASH_REQUEST_TIMEOUT_SECONDS:-15}
+      POE_ACCOUNT_STASH_SCAN_STALE_TIMEOUT_SECONDS: ${POE_ACCOUNT_STASH_SCAN_STALE_TIMEOUT_SECONDS:-120}
     volumes:
       - ./artifacts:/app/artifacts
     networks:

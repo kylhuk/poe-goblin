@@ -136,6 +136,29 @@ def test_run_private_scan_uses_valuation_callback_when_available() -> None:
     assert row["price_recommendation_eligible"] == 1
 
 
+def test_run_private_scan_keeps_published_status_when_valuations_fail() -> None:
+    class _FailingValuationsClickHouse(_FakeClickHouse):
+        def execute(self, query: str, settings: Mapping[str, str] | None = None) -> str:
+            if "account_stash_item_valuations" in query:
+                self.queries.append(query)
+                raise RuntimeError("insert failed")
+            return super().execute(query, settings=settings)
+
+    clickhouse = _FailingValuationsClickHouse()
+    harvester = AccountStashHarvester(
+        _FakePoeClient(),
+        clickhouse,
+        StatusReporter(clickhouse, "account_stash_harvester"),
+        account_name="qa-exile",
+        access_token="access-token",
+    )
+
+    result = harvester.run_private_scan(realm="pc", league="Mirage")
+
+    assert result["status"] == "published"
+    assert any('"status": "published"' in query for query in clickhouse.queries)
+
+
 def test_run_private_scan_publishes_before_writing_valuations() -> None:
     clickhouse = _FakeClickHouse()
     harvester = AccountStashHarvester(

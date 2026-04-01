@@ -12,6 +12,7 @@ SNAPSHOTS_TABLE = "poe_trade.silver_v3_stash_snapshots"
 EVENTS_TABLE = "poe_trade.silver_v3_item_events"
 SALE_LABELS_TABLE = "poe_trade.ml_v3_sale_proxy_labels"
 LISTING_EPISODES_TABLE = "poe_trade.ml_v3_listing_episodes"
+TRAINING_SOURCE_TABLE = LISTING_EPISODES_TABLE
 TRAINING_TABLE = "poe_trade.ml_v3_training_examples"
 ROLLOUT_STATE_TABLE = "poe_trade.ml_v3_cohort_rollout_state"
 
@@ -368,7 +369,7 @@ def build_pricing_benchmark_extract_query(
             f"INSERT INTO {output_table}",
             "SELECT",
             select_columns,
-            f"FROM {TRAINING_TABLE}",
+            f"FROM {TRAINING_SOURCE_TABLE}",
             f"WHERE league = {league_sql}",
             f"AND route IN ({non_exchange_routes_sql})",
             f"AND as_of_ts <= toDateTime64({as_of_ts_sql}, 3, 'UTC')",
@@ -523,7 +524,7 @@ def build_item_family_sample_count_query(
     league: str,
     as_of_ts: str,
     family: str,
-    source_table: str = TRAINING_TABLE,
+    source_table: str = TRAINING_SOURCE_TABLE,
 ) -> str:
     league_sql = _quote(league)
     as_of_ts_sql = _quote(as_of_ts)
@@ -551,7 +552,7 @@ def build_item_family_sample_query(
     as_of_ts: str,
     family: str,
     sample_size: int = 10_000,
-    source_table: str = TRAINING_TABLE,
+    source_table: str = TRAINING_SOURCE_TABLE,
 ) -> str:
     league_sql = _quote(league)
     as_of_ts_sql = _quote(as_of_ts)
@@ -1143,7 +1144,7 @@ def build_retrieval_candidate_query(
             "PARTITION BY league, route, item_state_key",
             "ORDER BY as_of_ts DESC, identity_key ASC",
             ") AS candidate_rank",
-            f"FROM {TRAINING_TABLE}",
+            f"FROM {TRAINING_SOURCE_TABLE}",
             f"WHERE league = {league_sql}",
             f"AND route = {route_sql}",
             f"AND item_state_key = {item_state_key_sql}",

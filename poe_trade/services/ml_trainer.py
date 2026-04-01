@@ -69,7 +69,7 @@ def _assert_stage_completed(*, stage: str, payload: dict[str, object]) -> None:
             if has_results:
                 return
             try:
-                if trained_count is not None and int(trained_count) >= 0:
+                if trained_count is not None and int(str(trained_count)) >= 0:
                     return
             except (TypeError, ValueError):
                 pass
@@ -103,7 +103,7 @@ def _refresh_v3_training_examples(
         " ".join(
             [
                 "SELECT max(as_of_ts) AS latest_training_at",
-                "FROM poe_trade.ml_v3_training_examples",
+                "FROM poe_trade.ml_v3_listing_episodes",
                 f"WHERE league = '{league}'",
                 "FORMAT JSONEachRow",
             ]

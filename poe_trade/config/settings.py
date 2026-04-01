@@ -184,6 +184,7 @@ class Settings:
     enable_account_stash: bool
     account_stash_realm: str
     account_stash_league: str
+    account_stash_request_timeout_seconds: float
     account_stash_scan_stale_timeout_seconds: int
     auth_state_dir: str
     auth_cookie_name: str
@@ -350,9 +351,13 @@ class Settings:
             account_stash_league=_get_env_str(
                 "POE_ACCOUNT_STASH_LEAGUE", constants.DEFAULT_ACCOUNT_STASH_LEAGUE
             ),
+            account_stash_request_timeout_seconds=_parse_env_float(
+                "POE_ACCOUNT_STASH_REQUEST_TIMEOUT_SECONDS",
+                constants.DEFAULT_ACCOUNT_STASH_REQUEST_TIMEOUT_SECONDS,
+            ),
             account_stash_scan_stale_timeout_seconds=_parse_env_int(
                 "POE_ACCOUNT_STASH_SCAN_STALE_TIMEOUT_SECONDS",
-                1800,
+                constants.DEFAULT_ACCOUNT_STASH_SCAN_STALE_TIMEOUT_SECONDS,
             ),
             auth_state_dir=_get_env_str(
                 "POE_AUTH_STATE_DIR", constants.DEFAULT_AUTH_STATE_DIR

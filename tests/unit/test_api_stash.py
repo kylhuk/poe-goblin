@@ -34,7 +34,7 @@ def test_fetch_stash_tabs_returns_empty_metadata_when_no_published_scan(
     monkeypatch.setattr(
         stash_api,
         "fetch_published_tabs",
-        lambda _client, *, account_name, league, realm: {
+        lambda _client, *, account_name, league, realm, stale_timeout_seconds=0: {
             "scanId": None,
             "publishedAt": None,
             "isStale": False,
@@ -63,7 +63,7 @@ def test_fetch_stash_tabs_delegates_account_scope_to_published_helper(
     monkeypatch.setattr(
         stash_api,
         "fetch_published_tabs",
-        lambda _client, *, account_name, league, realm: (
+        lambda _client, *, account_name, league, realm, stale_timeout_seconds=0: (
             captured.update(
                 {
                     "account_name": account_name,
@@ -88,6 +88,61 @@ def test_fetch_stash_tabs_delegates_account_scope_to_published_helper(
         "league": "Mirage",
         "realm": "pc",
     }
+
+
+def test_stash_status_reconciles_stale_running_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _StubClickHouse()
+    captured: dict[str, object] = {}
+
+    def _published(_client, *, account_name, league, realm, stale_timeout_seconds=0):
+        captured["stale_timeout_seconds"] = stale_timeout_seconds
+        return {
+            "scanId": "scan-1",
+            "publishedAt": "2026-03-21T12:00:00Z",
+            "isStale": False,
+            "scanStatus": {
+                "scanId": "scan-1",
+                "status": "failed",
+                "startedAt": "2026-03-21T11:55:00Z",
+                "updatedAt": "2026-03-21T12:05:00Z",
+                "publishedAt": None,
+                "progress": {
+                    "tabsTotal": 19,
+                    "tabsProcessed": 6,
+                    "itemsTotal": 543,
+                    "itemsProcessed": 543,
+                },
+                "error": "stale active scan timed out",
+            },
+            "stashTabs": [
+                {"id": "tab-1", "name": "Currency", "type": "currency", "items": []}
+            ],
+        }
+
+    monkeypatch.setattr(
+        stash_api,
+        "fetch_published_tabs",
+        _published,
+    )
+
+    payload = stash_status_payload(
+        client,
+        league="Mirage",
+        realm="pc",
+        stale_timeout_seconds=120,
+        enable_account_stash=True,
+        session={
+            "status": "connected",
+            "account_name": "qa-exile",
+            "expires_at": "2099-01-01T00:00:00Z",
+        },
+    )
+
+    assert captured["stale_timeout_seconds"] == 120
+    assert payload["scanStatus"]["status"] == "failed"
+    assert payload["status"] == "connected_populated"
 
 
 def test_stash_status_connected_empty_when_no_published_scan(
@@ -141,7 +196,7 @@ def test_stash_status_connected_populated_when_published_scan_exists(
     monkeypatch.setattr(
         stash_api,
         "fetch_published_tabs",
-        lambda _client, *, account_name, league, realm: {
+        lambda _client, *, account_name, league, realm, stale_timeout_seconds=0: {
             "scanId": "scan-1",
             "publishedAt": "2026-03-21T12:00:00Z",
             "isStale": False,

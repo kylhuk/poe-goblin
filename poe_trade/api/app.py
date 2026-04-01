@@ -272,7 +272,7 @@ def _build_private_stash_harvester(
         settings.poe_api_base_url,
         policy,
         settings.poe_user_agent,
-        settings.poe_request_timeout,
+        settings.account_stash_request_timeout_seconds,
     )
     poe_client.set_bearer_token(access_token)
 
@@ -459,7 +459,8 @@ class ApiApp:
         self._ml_warmup_state: dict[str, dict[str, object]] = {}
         self.router = Router()
         self._register_routes()
-        self._warmup_models()
+        if self.settings.ml_automation_enabled:
+            self._warmup_models()
 
     def _register_routes(self) -> None:
         self.router.add("/healthz", ("GET",), self._healthz)
@@ -604,6 +605,8 @@ class ApiApp:
         )
 
     def _warmup_models(self) -> None:
+        if not self.settings.ml_automation_enabled:
+            return
         for league in self.settings.api_league_allowlist:
             try:
                 self._ml_warmup_state[league] = workflows.warmup_active_models(
@@ -621,6 +624,19 @@ class ApiApp:
                 )
 
     def _ml_readiness_payload(self) -> dict[str, object]:
+        if not self.settings.ml_automation_enabled:
+            return {
+                "ready": True,
+                "disabled": True,
+                "leagues": {
+                    league: {
+                        "ready": True,
+                        "routes": {},
+                        "degradedRoutes": {},
+                    }
+                    for league in self.settings.api_league_allowlist
+                },
+            }
         leagues: dict[str, object] = {}
         degraded = False
         for league in self.settings.api_league_allowlist:
@@ -788,6 +804,12 @@ class ApiApp:
         )
 
     def _ml_contract(self, _context: Mapping[str, object]) -> Response:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         return json_response(contract_payload(self.settings))
 
     def _ops_contract(self, _context: Mapping[str, object]) -> Response:
@@ -896,6 +918,12 @@ class ApiApp:
     def _ops_analytics_search_suggestions(
         self, context: Mapping[str, object]
     ) -> Response:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         league = (
             self.settings.api_league_allowlist[0]
             if self.settings.api_league_allowlist
@@ -916,6 +944,12 @@ class ApiApp:
         return json_response(payload)
 
     def _ops_analytics_search_history(self, context: Mapping[str, object]) -> Response:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         league = (
             self.settings.api_league_allowlist[0]
             if self.settings.api_league_allowlist
@@ -941,6 +975,12 @@ class ApiApp:
     def _ops_analytics_pricing_outliers(
         self, context: Mapping[str, object]
     ) -> Response:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         league = (
             self.settings.api_league_allowlist[0]
             if self.settings.api_league_allowlist
@@ -965,6 +1005,12 @@ class ApiApp:
 
     def _ops_analytics(self, context: Mapping[str, object]) -> Response:
         kind = str(context.get("kind") or "")
+        if kind == "ml" and not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         league = (
             self.settings.api_league_allowlist[0]
             if self.settings.api_league_allowlist
@@ -1195,6 +1241,7 @@ class ApiApp:
                 self.client,
                 league=league,
                 realm=realm,
+                stale_timeout_seconds=self.settings.account_stash_scan_stale_timeout_seconds,
                 enable_account_stash=self.settings.enable_account_stash,
                 session=session,
             )
@@ -1227,6 +1274,12 @@ class ApiApp:
         return self._stash_tabs(context)
 
     def _stash_scan_valuations_start(self, context: Mapping[str, object]) -> Response:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         if not self.settings.enable_account_stash:
             raise ApiError(
                 status=503,
@@ -1244,6 +1297,12 @@ class ApiApp:
         return json_response(result, status=202)
 
     def _stash_scan_valuations_status(self, context: Mapping[str, object]) -> Response:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         account_name, league, realm = self._stash_account_scope(context)
         payload = stash_scan_status_payload(
             self.client,
@@ -1255,6 +1314,12 @@ class ApiApp:
         return json_response(payload)
 
     def _stash_scan_valuations_result(self, context: Mapping[str, object]) -> Response:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         account_name, league, realm = self._stash_account_scope(context)
         payload = latest_stash_scan_valuations_payload(
             self.client,
@@ -1271,6 +1336,12 @@ class ApiApp:
     def _stash_scan_valuations_payload(
         self, context: Mapping[str, object]
     ) -> dict[str, object]:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         if not self.settings.enable_account_stash:
             raise ApiError(
                 status=503,
@@ -1701,6 +1772,12 @@ class ApiApp:
         )
 
     def _ml_status(self, context: Mapping[str, object]) -> Response:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         league = str(context.get("league") or "")
         cors = _cors_from_context(context)
         try:
@@ -1723,6 +1800,12 @@ class ApiApp:
             ) from None
 
     def _ml_predict_one(self, context: Mapping[str, object]) -> Response:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         league = str(context.get("league") or "")
         cors = _cors_from_context(context)
         try:
@@ -1766,6 +1849,12 @@ class ApiApp:
         return json_response(payload)
 
     def _ml_automation_status(self, context: Mapping[str, object]) -> Response:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         league = str(context.get("league") or "")
         cors = _cors_from_context(context)
         try:
@@ -1789,6 +1878,12 @@ class ApiApp:
         return json_response(payload)
 
     def _ml_automation_history(self, context: Mapping[str, object]) -> Response:
+        if not self.settings.ml_automation_enabled:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="ML endpoints are disabled for now",
+            )
         league = str(context.get("league") or "")
         cors = _cors_from_context(context)
         try:

@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 from poe_trade.config import settings
 from poe_trade.db import ClickHouseClient
+from poe_trade.ml.v3.sql import TRAINING_SOURCE_TABLE
 
 
 CLICKHOUSE_SORT_SETTINGS = "SETTINGS max_bytes_before_external_sort = 268435456"
@@ -135,7 +136,7 @@ def main() -> int:
     parser.add_argument("--league", required=True)
     parser.add_argument(
         "--source-table",
-        default="poe_trade.ml_v3_training_examples",
+        default=TRAINING_SOURCE_TABLE,
         help="ClickHouse table to snapshot",
     )
     parser.add_argument("--limit", type=int, default=5000)

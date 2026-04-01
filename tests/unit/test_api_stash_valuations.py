@@ -20,6 +20,7 @@ def _settings_with_stash_enabled() -> Settings:
         "POE_API_MAX_BODY_BYTES": "32768",
         "POE_API_LEAGUE_ALLOWLIST": "Mirage",
         "POE_ENABLE_ACCOUNT_STASH": "true",
+        "POE_ML_AUTOMATION_ENABLED": "true",
     }
     with mock.patch.dict(os.environ, env, clear=True):
         return Settings.from_env()

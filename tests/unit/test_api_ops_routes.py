@@ -27,6 +27,7 @@ def _settings() -> Settings:
         "POE_API_CORS_ORIGINS": "https://app.example.com",
         "POE_API_MAX_BODY_BYTES": "32768",
         "POE_API_LEAGUE_ALLOWLIST": "Mirage",
+        "POE_ML_AUTOMATION_ENABLED": "true",
     }
     with mock.patch.dict(os.environ, env, clear=True):
         return Settings.from_env()
@@ -39,6 +40,7 @@ def _settings_with_stash_enabled() -> Settings:
         "POE_API_MAX_BODY_BYTES": "32768",
         "POE_API_LEAGUE_ALLOWLIST": "Mirage",
         "POE_ENABLE_ACCOUNT_STASH": "true",
+        "POE_ML_AUTOMATION_ENABLED": "true",
     }
     with mock.patch.dict(os.environ, env, clear=True):
         return Settings.from_env()
@@ -120,6 +122,7 @@ def test_ops_contract_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     assert body["routes"]["stash_scan_start"] == "/api/v1/stash/scan/start"
     assert body["routes"]["stash_scan_legacy"] == "/api/v1/stash/scan"
     assert body["routes"]["stash_scan_result"] == "/api/v1/stash/scan/result"
+    assert body["routes"]["stash_scan_status"] == "/api/v1/stash/scan/status"
     assert (
         body["routes"]["stash_scan_valuations_start"]
         == "/api/v1/stash/scan/valuations/start"
@@ -154,7 +157,7 @@ def test_stash_scan_result_alias_returns_published_tabs_payload(
     )
     monkeypatch.setattr(
         "poe_trade.api.app.fetch_stash_tabs",
-        lambda _client, *, league, realm, account_name: {
+        lambda _client, *, league, realm, account_name, stale_timeout_seconds=0: {
             "scanId": "scan-1",
             "publishedAt": "2026-03-21T12:00:00Z",
             "isStale": False,
@@ -453,7 +456,7 @@ def test_stash_route_returns_empty_when_enabled(
 
     monkeypatch.setattr(
         "poe_trade.api.app.fetch_stash_tabs",
-        lambda _client, *, league, realm, account_name: (
+        lambda _client, *, league, realm, account_name, stale_timeout_seconds=0: (
             captured.update(
                 {"league": league, "realm": realm, "account_name": account_name}
             )
@@ -498,7 +501,7 @@ def test_stash_route_returns_scoped_rows_when_enabled(
 ) -> None:
     monkeypatch.setattr(
         "poe_trade.api.app.fetch_stash_tabs",
-        lambda _client, *, league, realm, account_name: {
+        lambda _client, *, league, realm, account_name, stale_timeout_seconds=0: {
             "stashTabs": [
                 {
                     "id": "1",
@@ -546,7 +549,7 @@ def test_price_check_payload_includes_hybrid_diagnostics(
 
         def execute(self, query: str, settings: Mapping[str, str] | None = None) -> str:  # type: ignore[override]
             del settings
-            if "FROM poe_trade.ml_v3_training_examples" in query:
+            if "FROM poe_trade.ml_v3_listing_episodes" in query:
                 return "[]\n"
             return ""
 
@@ -694,6 +697,75 @@ def test_stash_scan_status_route_returns_progress_payload(
     assert response.status == 200
     assert body["activeScanId"] == "scan-2"
     assert body["progress"]["tabsProcessed"] == 3
+
+
+def test_stash_status_route_threads_stale_timeout_into_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.get_session",
+        lambda _settings, *, session_id: _connected_session(session_id),
+    )
+    captured: dict[str, object] = {}
+
+    def _stash_status_payload(
+        _client,
+        *,
+        league,
+        realm,
+        stale_timeout_seconds=0,
+        enable_account_stash=False,
+        session=None,
+    ):
+        captured.update(
+            {
+                "league": league,
+                "realm": realm,
+                "stale_timeout_seconds": stale_timeout_seconds,
+                "enable_account_stash": enable_account_stash,
+                "session_status": session.get("status") if session else None,
+            }
+        )
+        return {
+            "status": "connected_empty",
+            "connected": True,
+            "tabCount": 0,
+            "itemCount": 0,
+            "session": {
+                "accountName": "qa-exile",
+                "expiresAt": "2099-01-01T00:00:00Z",
+            },
+            "publishedScanId": None,
+            "publishedAt": None,
+            "scanStatus": None,
+        }
+
+    monkeypatch.setattr(
+        "poe_trade.api.app.stash_status_payload",
+        _stash_status_payload,
+    )
+    app = ApiApp(
+        _settings_with_stash_enabled(),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+
+    response = app.handle(
+        method="GET",
+        raw_path="/api/v1/stash/status?league=Mirage&realm=pc",
+        headers={**_auth_headers(), "Cookie": "poe_session=test-session"},
+        body_reader=BytesIO(b""),
+    )
+
+    body = json.loads(response.body.decode("utf-8"))
+    assert response.status == 200
+    assert body["status"] == "connected_empty"
+    assert captured == {
+        "league": "Mirage",
+        "realm": "pc",
+        "stale_timeout_seconds": app.settings.account_stash_scan_stale_timeout_seconds,
+        "enable_account_stash": True,
+        "session_status": "connected",
+    }
 
 
 def test_stash_item_history_route_returns_popup_payload(

@@ -378,6 +378,8 @@ paths:
                 $ref: '#/components/schemas/StashStatusResponse'
         '401':
           $ref: '#/components/responses/ApiError'
+        '503':
+          $ref: '#/components/responses/ApiError'
 
   /api/v1/stash/scan/start:
     post:
@@ -431,6 +433,8 @@ paths:
                 $ref: '#/components/schemas/StashScanStatusResponse'
         '401':
           $ref: '#/components/responses/ApiError'
+        '503':
+          $ref: '#/components/responses/ApiError'
 
   /api/v1/stash/items/{fingerprint}/history:
     get:
@@ -458,9 +462,9 @@ paths:
 
   /api/v1/stash/scan/valuations:
     post:
-      summary: Valuate stash scan items
+      summary: Valuate stash scan items (legacy alias)
       deprecated: true
-      description: New endpoint that prices scanned stash items against historical comparables.
+      description: Legacy alias that prices scanned stash items against historical comparables.
       security:
         - sessionCookie: []
       parameters:

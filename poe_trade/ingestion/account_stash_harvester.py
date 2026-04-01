@@ -135,6 +135,73 @@ class AccountStashHarvester:
             price_item if price_item is not None else self._price_item
         )
         pending_item_rows: list[tuple[dict[str, Any], int, dict[str, Any]]] = []
+        terminal_state: tuple[str, str, str] | None = None
+
+        def _finalize_scan_state(
+            *,
+            status: str,
+            terminal_at: str,
+            error_message: str,
+        ) -> None:
+            try:
+                self._write_scan_run(
+                    scan_id=effective_scan_id,
+                    status=status,
+                    account_name=account_name,
+                    league=league,
+                    realm=realm,
+                    started_at=effective_started_at,
+                    updated_at=terminal_at,
+                    completed_at=terminal_at if status == "published" else None,
+                    published_at=terminal_at if status == "published" else None,
+                    failed_at=terminal_at if status == "failed" else None,
+                    tabs_total=tabs_total,
+                    tabs_processed=tabs_processed,
+                    items_total=items_total,
+                    items_processed=items_processed,
+                    error_message=error_message,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to write terminal scan run account=%s realm=%s league=%s",
+                    account_name,
+                    realm,
+                    league,
+                )
+            try:
+                self._write_active_scan(
+                    account_name=account_name,
+                    league=league,
+                    realm=realm,
+                    scan_id=effective_scan_id,
+                    is_active=False,
+                    started_at=effective_started_at,
+                    updated_at=terminal_at,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to clear active scan account=%s realm=%s league=%s",
+                    account_name,
+                    realm,
+                    league,
+                )
+            if status != "published":
+                return
+            try:
+                self._write_published_scan(
+                    account_name=account_name,
+                    league=league,
+                    realm=realm,
+                    scan_id=effective_scan_id,
+                    published_at=terminal_at,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to write published scan marker account=%s realm=%s league=%s",
+                    account_name,
+                    realm,
+                    league,
+                )
 
         def _build_item_row(
             tab: dict[str, Any], tab_index: int, raw_item: dict[str, Any]
@@ -270,44 +337,25 @@ class AccountStashHarvester:
                 tabs_processed = tab_number
 
             published_at = _timestamp_utc()
-            self._write_scan_run(
-                scan_id=effective_scan_id,
+            terminal_state = ("published", published_at, "")
+            _finalize_scan_state(
                 status="published",
-                account_name=account_name,
-                league=league,
-                realm=realm,
-                started_at=effective_started_at,
-                updated_at=published_at,
-                completed_at=published_at,
-                published_at=published_at,
-                failed_at=None,
-                tabs_total=tabs_total,
-                tabs_processed=tabs_processed,
-                items_total=items_total,
-                items_processed=items_processed,
+                terminal_at=published_at,
                 error_message="",
             )
-            self._write_active_scan(
-                account_name=account_name,
-                league=league,
-                realm=realm,
-                scan_id=effective_scan_id,
-                is_active=False,
-                started_at=effective_started_at,
-                updated_at=published_at,
-            )
-            self._write_published_scan(
-                account_name=account_name,
-                league=league,
-                realm=realm,
-                scan_id=effective_scan_id,
-                published_at=published_at,
-            )
-            current_item_rows = [
-                _build_item_row(tab, tab_index, raw_item)
-                for tab, tab_index, raw_item in pending_item_rows
-            ]
-            self._write_scan_item_valuations(current_item_rows)
+            try:
+                current_item_rows = [
+                    _build_item_row(tab, tab_index, raw_item)
+                    for tab, tab_index, raw_item in pending_item_rows
+                ]
+                self._write_scan_item_valuations(current_item_rows)
+            except Exception:
+                logger.exception(
+                    "Private stash valuation write failed account=%s realm=%s league=%s",
+                    account_name,
+                    realm,
+                    league,
+                )
             return {
                 "scanId": effective_scan_id,
                 "status": "published",
@@ -320,32 +368,7 @@ class AccountStashHarvester:
         except Exception as exc:
             failed_at = _timestamp_utc()
             error_message = _friendly_scan_error_message(exc)
-            self._write_scan_run(
-                scan_id=effective_scan_id,
-                status="failed",
-                account_name=account_name,
-                league=league,
-                realm=realm,
-                started_at=effective_started_at,
-                updated_at=failed_at,
-                completed_at=None,
-                published_at=None,
-                failed_at=failed_at,
-                tabs_total=tabs_total,
-                tabs_processed=tabs_processed,
-                items_total=items_total,
-                items_processed=items_processed,
-                error_message=error_message,
-            )
-            self._write_active_scan(
-                account_name=account_name,
-                league=league,
-                realm=realm,
-                scan_id=effective_scan_id,
-                is_active=False,
-                started_at=effective_started_at,
-                updated_at=failed_at,
-            )
+            terminal_state = ("failed", failed_at, error_message)
             logger.exception(
                 "Private stash scan failed account=%s realm=%s league=%s",
                 account_name,
@@ -361,6 +384,14 @@ class AccountStashHarvester:
                 "realm": realm,
                 "error": error_message,
             }
+        finally:
+            if terminal_state is not None:
+                status, terminal_at, error_message = terminal_state
+                _finalize_scan_state(
+                    status=status,
+                    terminal_at=terminal_at,
+                    error_message=error_message,
+                )
 
     def _harvest(self, *, realm: str, league: str, dry_run: bool) -> None:
         key = queue_key(FEED_KIND_ACCOUNT_STASH, realm)

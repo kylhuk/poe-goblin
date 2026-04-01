@@ -13,6 +13,7 @@ from poe_trade.config import constants
 from poe_trade.config.settings import Settings
 from poe_trade.db import ClickHouseClient
 from poe_trade.db.clickhouse import ClickHouseClientError
+from poe_trade.ml.v3.sql import TRAINING_SOURCE_TABLE
 from poe_trade.strategy.alerts import ack_alert, list_alerts
 
 from .ml import fetch_predict_one, fetch_status
@@ -73,6 +74,7 @@ def contract_payload(
             "stash_scan_start": "/api/v1/stash/scan/start",
             "stash_scan_legacy": "/api/v1/stash/scan",
             "stash_scan_result": "/api/v1/stash/scan/result",
+            "stash_scan_status": "/api/v1/stash/scan/status",
             "stash_scan_valuations_start": "/api/v1/stash/scan/valuations/start",
             "stash_scan_valuations_status": "/api/v1/stash/scan/valuations/status",
             "stash_scan_valuations_result": "/api/v1/stash/scan/valuations/result",
@@ -980,7 +982,7 @@ def analytics_search_suggestions(
                 f"{label_expr} AS item_name,",
                 f"{kind_expr} AS item_kind,",
                 "count() AS match_count",
-                "FROM poe_trade.ml_v3_training_examples",
+                f"FROM {TRAINING_SOURCE_TABLE}",
                 "WHERE target_price_chaos IS NOT NULL",
                 "AND target_price_chaos > 0",
                 f"AND positionCaseInsensitiveUTF8({label_expr}, {_quote_sql_string(compact_query)}) > 0",
@@ -1068,7 +1070,7 @@ def analytics_search_history(
         " ".join(
             [
                 "SELECT league",
-                "FROM poe_trade.ml_v3_training_examples",
+                f"FROM {TRAINING_SOURCE_TABLE}",
                 league_where,
                 "GROUP BY league",
                 "ORDER BY league ASC FORMAT JSONEachRow",
@@ -1084,7 +1086,7 @@ def analytics_search_history(
                 "max(target_price_chaos) AS max_price,",
                 "min(as_of_ts) AS min_added_on,",
                 "max(as_of_ts) AS max_added_on",
-                "FROM poe_trade.ml_v3_training_examples",
+                f"FROM {TRAINING_SOURCE_TABLE}",
                 ranges_where,
                 "FORMAT JSONEachRow",
             ]
@@ -1105,7 +1107,7 @@ def analytics_search_history(
                 f"floor(target_price_chaos / {price_bucket}) * {price_bucket} AS bucket_start,",
                 f"floor(target_price_chaos / {price_bucket}) * {price_bucket} + {price_bucket} AS bucket_end,",
                 "count() AS count",
-                "FROM poe_trade.ml_v3_training_examples",
+                f"FROM {TRAINING_SOURCE_TABLE}",
                 price_hist_where,
                 "GROUP BY bucket_start, bucket_end",
                 "ORDER BY bucket_start ASC FORMAT JSONEachRow",
@@ -1122,7 +1124,7 @@ def analytics_search_history(
                 f"toDateTime(intDiv(toUInt32(toUnixTimestamp(as_of_ts)), {time_bucket_seconds}) * {time_bucket_seconds}, 'UTC') AS bucket_start,",
                 f"toDateTime(intDiv(toUInt32(toUnixTimestamp(as_of_ts)), {time_bucket_seconds}) * {time_bucket_seconds} + {time_bucket_seconds}, 'UTC') AS bucket_end,",
                 "count() AS count",
-                "FROM poe_trade.ml_v3_training_examples",
+                f"FROM {TRAINING_SOURCE_TABLE}",
                 time_hist_where,
                 "GROUP BY bucket_start, bucket_end",
                 "ORDER BY bucket_start ASC FORMAT JSONEachRow",
@@ -1140,7 +1142,7 @@ def analytics_search_history(
                 "league,",
                 "target_price_chaos AS listed_price,",
                 "as_of_ts AS added_on",
-                "FROM poe_trade.ml_v3_training_examples",
+                f"FROM {TRAINING_SOURCE_TABLE}",
                 rows_where,
                 f"ORDER BY {_history_order_sql(sort, order)}",
                 f"LIMIT {query_limit} FORMAT JSONEachRow",
@@ -1240,7 +1242,7 @@ def analytics_pricing_outliers(
                 "d.item_id AS item_id,",
                 "d.as_of_ts AS as_of_ts,",
                 "toFloat64(d.target_price_chaos) AS listed_price",
-                "FROM poe_trade.ml_v3_training_examples AS d",
+                f"FROM {TRAINING_SOURCE_TABLE} AS d",
                 f"WHERE {league_clause}",
                 "AND d.target_price_chaos IS NOT NULL",
                 "AND d.target_price_chaos > 0",
@@ -1320,7 +1322,7 @@ def analytics_pricing_outliers(
                 "ifNull(d.rarity, '') AS rarity,",
                 "d.as_of_ts AS as_of_ts,",
                 "toFloat64(d.target_price_chaos) AS listed_price",
-                "FROM poe_trade.ml_v3_training_examples AS d",
+                f"FROM {TRAINING_SOURCE_TABLE} AS d",
                 f"WHERE {league_clause}",
                 "AND d.target_price_chaos IS NOT NULL",
                 "AND d.target_price_chaos > 0",

@@ -110,6 +110,7 @@ def test_price_check_payload_uses_base_type_lookup_and_returns_recent_comparable
     ]
     assert any("base_type = 'Hubris Circlet'" in query for query in client.queries)
     assert not any("Grim Bane" in query for query in client.queries)
+    assert not any("mod_features_json" in query for query in client.queries)
     assert payload["mlPredicted"] is True
     assert payload["predictionSource"] == "ml"
     assert payload["estimateTrust"] == "normal"

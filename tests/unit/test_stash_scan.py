@@ -8,6 +8,7 @@ from poe_trade.stash_scan import (
     content_signature_for_item,
     fetch_active_scan,
     fetch_item_history,
+    fetch_latest_scan_run,
     fetch_published_tabs,
     fetch_published_scan_id,
     lineage_key_for_item,
@@ -154,6 +155,23 @@ def test_fetch_active_scan_returns_latest_active_row() -> None:
     }
 
 
+def test_fetch_latest_scan_run_prefers_terminal_rows_on_ties() -> None:
+    client = _StubClickHouse(payload="")
+
+    _ = fetch_latest_scan_run(
+        client,
+        account_name="qa-exile",
+        league="Mirage",
+        realm="pc",
+    )
+
+    query = client.queries[0]
+    assert (
+        "ORDER BY updated_at DESC, published_at DESC, completed_at DESC, failed_at DESC"
+        in query
+    )
+
+
 def test_fetch_item_history_returns_header_and_entries() -> None:
     payload = "\n".join(
         [
@@ -200,6 +218,7 @@ def test_fetch_item_history_returns_header_and_entries() -> None:
 def test_fetch_published_tabs_maps_real_poe_tab_types_to_frontend_types() -> None:
     client = _SequentialStubClickHouse(
         payloads=[
+            '{"scan_id":"scan-1","is_active":0,"started_at":"2026-03-21T09:00:00Z","updated_at":"2026-03-21T09:00:00Z"}\n',
             '{"scan_id":"scan-1"}\n',
             '{"scan_id":"scan-1","status":"published","started_at":"2026-03-21T10:00:00Z","updated_at":"2026-03-21T10:10:00Z","published_at":"2026-03-21T10:10:00Z","tabs_total":3,"tabs_processed":3,"items_total":3,"items_processed":3,"error_message":""}\n',
             '{"published_at":"2026-03-21T10:10:00Z"}\n',
@@ -227,6 +246,7 @@ def test_fetch_published_tabs_maps_real_poe_tab_types_to_frontend_types() -> Non
         account_name="qa-exile",
         league="Mirage",
         realm="pc",
+        stale_timeout_seconds=60,
     )
 
     assert [tab["type"] for tab in result["stashTabs"]] == [

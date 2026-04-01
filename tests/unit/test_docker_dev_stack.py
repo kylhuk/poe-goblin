@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import cast
 import tomllib
 
 
@@ -36,13 +37,25 @@ def make_target_block(makefile: str, target: str) -> str:
 def test_makefile_up_uses_dev_overlay_without_build() -> None:
     makefile = repo_read("Makefile")
     up_block = make_target_block(makefile, "up")
+    assert "docker-compose.dev.yml" in up_block
+    assert "up --build" not in up_block
+
+
+def test_makefile_default_services_exclude_ml_containers() -> None:
+    makefile = repo_read("Makefile")
+    services_line = next(
+        line for line in makefile.splitlines() if line.startswith("SERVICES :=")
+    )
     app_services_line = next(
         line for line in makefile.splitlines() if line.startswith("APP_SERVICES :=")
     )
-    assert "docker-compose.dev.yml" in up_block
-    assert "up --build" not in up_block
-    assert "account_stash_harvester" not in app_services_line
-    assert "poeninja_snapshot" in app_services_line
+
+    assert services_line == (
+        "SERVICES := clickhouse schema_migrator market_harvester scanner_worker api"
+    )
+    assert app_services_line == (
+        "APP_SERVICES := schema_migrator market_harvester scanner_worker api"
+    )
 
 
 def test_dev_overlay_mounts_source_and_sets_pythonpath() -> None:
@@ -64,6 +77,14 @@ def test_qa_up_stays_on_base_compose_files() -> None:
     assert "docker-compose.dev.yml" not in qa_up_block
 
 
+def test_ml_services_stay_profile_gated() -> None:
+    compose = repo_read("docker-compose.yml")
+
+    assert 'ml_trainer:\n    <<: *poe-app\n    profiles: ["ml-v3"]' in compose
+    assert 'poeninja_snapshot:\n    <<: *poe-app\n    profiles: ["ml-v3"]' in compose
+    assert 'ml_v3_ops:\n    <<: *poe-app\n    profiles: ["ml-v3"]' in compose
+
+
 def test_dockerfile_uses_separate_runtime_dependency_manifest() -> None:
     dockerfile = repo_read("Dockerfile")
     assert "COPY README.md ./" in dockerfile
@@ -76,7 +97,7 @@ def test_dockerfile_uses_separate_runtime_dependency_manifest() -> None:
 
 def test_runtime_dependency_manifest_matches_pyproject() -> None:
     pyproject = tomllib.loads(repo_read("pyproject.toml"))
-    project_dependencies = pyproject["project"]["dependencies"]
+    project_dependencies = cast(list[str], pyproject["project"]["dependencies"])
     runtime_requirements = [
         line
         for line in repo_lines("requirements-runtime.txt")
@@ -111,9 +132,11 @@ def test_readme_documents_docker_dev_workflow() -> None:
         "repo-root edits under the mounted source tree no longer force Docker rebuilds"
         in readme
     )
-    assert "poeninja_snapshot" in readme
-    assert "account_stash_harvester" not in readme
     assert (
-        "ClickHouse, schema_migrator, market_harvester, scanner_worker, ml_trainer, poeninja_snapshot, and api"
+        "Default stack: ClickHouse, schema_migrator, market_harvester, scanner_worker, and api"
+        in readme
+    )
+    assert (
+        "ML services (`ml_trainer`, `poeninja_snapshot`, and `ml_v3_ops`) are opt-in via the `ml-v3` profile"
         in readme
     )

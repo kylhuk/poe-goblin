@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
-from poe_trade.db import ClickHouseClient
 from poe_trade.services import ml_trainer
 
 
-def test_ml_trainer_persists_runtime_stage_in_status(monkeypatch) -> None:
-    status_path = Path(".sisyphus/state/qa/ml-trainer-last-run.json")
-    if status_path.exists():
-        status_path.unlink()
+def test_ml_trainer_persists_runtime_stage_in_status(monkeypatch, tmp_path) -> None:
+    status_path = tmp_path / "ml-trainer-last-run.json"
 
     cfg = SimpleNamespace(
         clickhouse_url="http://ch",
@@ -36,6 +32,14 @@ def test_ml_trainer_persists_runtime_stage_in_status(monkeypatch) -> None:
         ml_trainer.workflows,
         "warmup_active_models",
         lambda *_args, **_kwargs: {"lastAttemptAt": None, "routes": {}},
+    )
+    monkeypatch.setattr(
+        ml_trainer,
+        "_write_status",
+        lambda payload: status_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        ),
     )
     monkeypatch.setattr(
         ml_trainer,
@@ -119,6 +123,7 @@ def test_ml_trainer_uses_v3_training(monkeypatch) -> None:
         "warmup_active_models",
         lambda *_args, **_kwargs: {"lastAttemptAt": None, "routes": {}},
     )
+    monkeypatch.setattr(ml_trainer, "_write_status", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         ml_trainer,
         "_refresh_v3_training_examples",
@@ -180,7 +185,7 @@ def test_refresh_v3_training_examples_replays_missing_days() -> None:
     ml_trainer.v3_backfill.backfill_range = _backfill_range
     try:
         payload = ml_trainer._refresh_v3_training_examples(
-            cast(ClickHouseClient, _Client()),
+            cast(Any, _Client()),
             league="Mirage",
         )
     finally:

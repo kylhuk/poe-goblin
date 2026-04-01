@@ -9,7 +9,7 @@ from typing import Any
 from poe_trade.db import ClickHouseClient
 from poe_trade.db.clickhouse import ClickHouseClientError
 from poe_trade.ml import workflows as ml_workflows
-from poe_trade.ml.v3.sql import _normalized_currency_sql
+from poe_trade.ml.v3.sql import TRAINING_SOURCE_TABLE, _normalized_currency_sql
 
 
 class ValuationBackendUnavailable(RuntimeError):
@@ -66,9 +66,8 @@ def price_check_comparables(
                 "base_type,",
                 "item_name,",
                 "target_price_chaos,",
-                "target_price_divine,",
-                "mod_features_json",
-                "FROM poe_trade.ml_v3_training_examples",
+                "target_price_divine",
+                f"FROM {TRAINING_SOURCE_TABLE}",
                 "WHERE " + " AND ".join(clauses),
                 "), priced AS (",
                 "SELECT",
@@ -273,8 +272,8 @@ def build_comparable_query(
     query = " ".join(
         [
             "WITH base AS (",
-            "SELECT as_of_ts, league, base_type, item_name, target_price_chaos, target_price_divine, mod_features_json",
-            "FROM poe_trade.ml_v3_training_examples",
+            "SELECT as_of_ts, league, base_type, item_name, target_price_chaos, target_price_divine",
+            f"FROM {TRAINING_SOURCE_TABLE}",
             "WHERE",
             " AND ".join(clauses),
             "), priced AS (",
@@ -287,7 +286,7 @@ def build_comparable_query(
             f"AND {_normalized_currency_sql('fx_divine.currency')} = 'divine'",
             "AND fx_divine.hour_ts = toStartOfHour(base.as_of_ts)",
             ")",
-            "SELECT as_of_ts, normalized_price_chaos, target_price_chaos, target_price_divine, mod_features_json",
+            "SELECT as_of_ts, normalized_price_chaos, target_price_chaos, target_price_divine",
             "FROM priced",
             "WHERE",
             "normalized_price_chaos IS NOT NULL",

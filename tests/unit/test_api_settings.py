@@ -24,6 +24,8 @@ def test_api_settings_defaults() -> None:
     assert cfg.enable_account_stash is False
     assert cfg.account_stash_realm == "pc"
     assert cfg.account_stash_league == "Mirage"
+    assert cfg.account_stash_request_timeout_seconds == 15.0
+    assert cfg.account_stash_scan_stale_timeout_seconds == 120
     assert cfg.stash_poll_interval == 300.0
     assert cfg.auth_cookie_name == "poe_session"
     assert cfg.poe_account_redirect_uri == ""
@@ -42,6 +44,7 @@ def test_api_settings_parse_values() -> None:
         "POE_ENABLE_ACCOUNT_STASH": "true",
         "POE_ACCOUNT_STASH_REALM": "xbox",
         "POE_ACCOUNT_STASH_LEAGUE": "Settlers",
+        "POE_ACCOUNT_STASH_REQUEST_TIMEOUT_SECONDS": "9",
         "POE_ACCOUNT_STASH_SCAN_STALE_TIMEOUT_SECONDS": "45",
         "POE_STASH_POLL_INTERVAL": "120",
         "POE_AUTH_COOKIE_NAME": "session_cookie",
@@ -64,6 +67,7 @@ def test_api_settings_parse_values() -> None:
     assert cfg.enable_account_stash is True
     assert cfg.account_stash_realm == "xbox"
     assert cfg.account_stash_league == "Settlers"
+    assert cfg.account_stash_request_timeout_seconds == 9.0
     assert cfg.account_stash_scan_stale_timeout_seconds == 45
     assert cfg.stash_poll_interval == 120.0
     assert cfg.auth_cookie_name == "session_cookie"
