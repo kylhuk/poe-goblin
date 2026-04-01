@@ -1,70 +1,49 @@
 
+Goal: Fix Stash Viewer so tab switches load the correct tab data and valuations always come from the new valuation-result flow (not stale/legacy values).
 
-## Plan: Migrate to New Stash API Endpoints
+1) Fix the tab-switch “same data every click” bug
+- Update `src/services/api.ts` normalization to keep the requested `tabIndex` when backend returns a single-tab payload without explicit index fields.
+- Change `normalizeStashTabsResponse(payload)` to accept `requestedTabIndex?: number`.
+- Use `requestedTabIndex` as fallback `returnedIndex` in both single-tab response branches (`stash` object and `stashTabs` length=1).
+- Pass `tabIndex` into normalizer from `getStashScanResult()` (and compatibility `getStashTabs()`).
 
-### Summary
-The backend has split stash operations into dedicated endpoints. The frontend needs to use these new routes and separate "start a computation" from "fetch existing results."
+2) Always fetch latest valuation result on tab load
+- In `src/components/tabs/StashViewerTab.tsx`, make tab loading fetch:
+  - `/api/v1/stash/scan/result` (tab data)
+  - `/api/v1/stash/scan/valuations/result` (latest valuations)
+  in the same load flow for every tab switch.
+- Merge valuation payload into the tab items immediately after scan-result normalization.
+- Add race-guard (request token/ref) so fast tab-clicks don’t apply stale responses out of order.
 
-### New Endpoint Map
+3) Make valuation polling robust to backend payload differences
+- In `src/services/api.ts`, make `getStashValuationsStatus()` tolerant:
+  - handle status-style payloads (`status`, `progress`, `error`)
+  - handle valuation-style payloads (items/scanId but no status)
+- In `runValuation()` (`StashViewerTab.tsx`), stop polling when either:
+  - status indicates finished (`published`/`idle`), or
+  - payload already represents completed valuation data.
+- Always finalize by fetching `/api/v1/stash/scan/valuations/result` and merging into active tab.
 
-```text
-Old                                    New
-─────────────────────────────────────────────────────────────
-/api/v1/stash/tabs (GET, deprecated)   /api/v1/stash/scan/result (GET)
-/api/v1/stash/scan (POST, deprecated)  /api/v1/stash/scan/start (POST)
-/api/v1/stash/scan/status (GET)        (unchanged)
-/api/v1/stash/scan/valuations (POST)   /api/v1/stash/scan/valuations/start (POST)
-  (no equivalent)                      /api/v1/stash/scan/valuations/result (GET)
-  (no equivalent)                      /api/v1/stash/scan/valuations/status (GET)
-/api/v1/stash/items/{fp}/history       (unchanged)
-```
+4) Remove stale/unused valuation config wiring
+- Remove unused threshold state/UI in `StashViewerTab.tsx` (`minThreshold/maxThreshold/maxAgeDays`) since `/valuations/start` now has no body.
+- Update old code paths still calling legacy stash methods where applicable (`EconomyTab` / `stashCache`) to use `getStashScanResult` path consistently.
 
-### Changes
+5) Ensure “no median = no color/evaluation” is enforced everywhere
+- Keep/verify merge logic so evaluation fields (`priceEvaluation`, deltas, badge states) are only populated when valuation median exists.
+- If valuation entry has no median, explicitly clear evaluation fields for that item.
 
-#### 1. `src/types/api.ts` — Update `ApiService` interface
-- Add `getStashScanResult()` → replaces `getStashTabs()`
-- Add `startStashValuations(req)` (POST to `/valuations/start`)
-- Add `getStashValuationsResult()` (GET `/valuations/result`)
-- Add `getStashValuationsStatus()` (GET `/valuations/status`)
-- Keep `getStashTabs()` as deprecated fallback
-
-#### 2. `src/services/api.ts` — Implement new methods
-- `getStashScanResult()`: GET `/api/v1/stash/scan/result` — returns `StashTabsResponse`. Used on page load and tab switches.
-- `startStashValuations()`: POST to `/api/v1/stash/scan/valuations/start` — kicks off the ~1 minute computation. No request body needed per spec.
-- `getStashValuationsResult()`: GET `/api/v1/stash/scan/valuations/result` — fetches existing valuation data. Called on page load always.
-- `getStashValuationsStatus()`: GET `/api/v1/stash/scan/valuations/status` — poll during valuation run.
-- Update `getStashTabs()` to call `/api/v1/stash/scan/result` first, falling back to the deprecated `/api/v1/stash/tabs`.
-- Remove the old `startStashValuations` POST body (new `/start` endpoint takes no body).
-
-#### 3. `src/components/tabs/StashViewerTab.tsx` — Rewire the flows
-
-**On page load:**
-1. Poll status (unchanged)
-2. If connected, call `getStashScanResult()` to load tabs/items
-3. Call `getStashValuationsResult()` to fetch existing valuations and merge into items — this is instant, no computation
-
-**"Scan & Valuate" button:**
-1. POST `/api/v1/stash/scan/start` (unchanged)
-2. Poll `/api/v1/stash/scan/status` until published
-3. Reload tabs via `getStashScanResult()`
-4. POST `/api/v1/stash/scan/valuations/start` to kick off valuation
-5. Poll `/api/v1/stash/scan/valuations/status` until done
-6. Fetch final results via `getStashValuationsResult()` and merge
-
-**"Valuate Only" button:**
-1. POST `/api/v1/stash/scan/valuations/start`
-2. Poll `/api/v1/stash/scan/valuations/status` until done
-3. Fetch results via `getStashValuationsResult()` and merge
-
-**Tab switch:** Re-merge cached `valuationResult` into new tab items (unchanged logic).
-
-#### 4. `supabase/functions/api-proxy/index.ts` — No changes needed
-All `/api/v1/stash/` paths are already whitelisted as public.
-
-### Technical Details
-
-- The new `/valuations/start` is a POST with no request body (per spec). The old thresholds (`minThreshold`, `maxThreshold`, `maxAgeDays`) are removed from the client — the backend handles defaults.
-- The `/valuations/status` response uses the same `StashScanValuationsResponse` schema, so we can check a status field to know when processing is complete.
-- The `/valuations/result` is a simple GET that returns the latest computed valuations — called on every page load for instant display.
-- The `/scan/result` GET replaces the deprecated `/stash/tabs` GET for fetching published stash data.
-
+Technical details
+- Files to update:
+  - `src/services/api.ts`
+  - `src/components/tabs/StashViewerTab.tsx`
+  - `src/components/tabs/EconomyTab.tsx`
+  - `src/services/stashCache.ts`
+  - `src/types/api.ts` (status/result typing tolerance)
+  - tests:
+    - `src/components/tabs/StashViewerTab.test.tsx`
+    - `src/services/api.stash.test.ts`
+- Key regression tests:
+  - tab switch to index N returns/uses `returnedIndex=N` when backend omits index
+  - tab switching triggers fresh valuation-result fetch and merged prices update
+  - valuation polling completes for both status-shaped and result-shaped status payloads
+  - no median => no evaluation color/badge/delta
