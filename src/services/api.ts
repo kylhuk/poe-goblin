@@ -910,8 +910,7 @@ export const api: ApiService = {
   },
 
   async getStashScanStatus() {
-    const league = await primaryLeague();
-    return request<StashScanStatus>(`/api/v1/stash/scan/status?league=${encodeURIComponent(league)}&realm=pc`);
+    return request<StashScanStatus>('/api/v1/stash/scan/status');
   },
 
   async getStashItemHistory(fingerprint: string) {
