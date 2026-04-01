@@ -590,7 +590,7 @@ function normalizeStashTabsResponse(payload: unknown): StashTabsResponse {
     }
     const effectiveTabsMeta = tabsMeta.length > 0
       ? tabsMeta
-      : [{ id: tab.id, tabIndex: requestedTabIndex ?? 0, name: tab.name, type: tab.type }];
+      : [{ id: tab.id, tabIndex: 0, name: tab.name, type: tab.type }];
     const numTabs = optNumber(source.numTabs ?? source.num_tabs) ?? effectiveTabsMeta.length;
     return {
       scanId: optString(source.scanId ?? source.scan_id),
