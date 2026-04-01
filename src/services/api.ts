@@ -999,13 +999,13 @@ export const api: ApiService = {
         undefined,
         { skipErrorCodes: ['route_not_found'] },
       );
-      return normalizeStashTabsResponse(payload);
+      return normalizeStashTabsResponse(payload, tabIndex ?? undefined);
     } catch (err) {
       if (!isMissingRouteError(err)) throw err;
       const payload = await request<unknown>(
         `/api/v1/stash/tabs?league=${encodeURIComponent(league)}&realm=pc${tabParam}`,
       );
-      return normalizeStashTabsResponse(payload);
+      return normalizeStashTabsResponse(payload, tabIndex ?? undefined);
     }
   },
 
@@ -1015,7 +1015,7 @@ export const api: ApiService = {
     const payload = await request<unknown>(
       `/api/v1/stash/scan/result?league=${encodeURIComponent(league)}&realm=pc${tabParam}`,
     );
-    return normalizeStashTabsResponse(payload);
+    return normalizeStashTabsResponse(payload, tabIndex ?? undefined);
   },
 
   async startStashValuations(req: StashScanValuationsRequest) {
