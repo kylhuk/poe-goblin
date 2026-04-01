@@ -90,12 +90,6 @@ import { supabase, SUPABASE_PROJECT_ID } from '@/lib/supabaseClient';
 
 
 
-function isMissingRouteError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  return error.message.startsWith('route_not_found:') || error.message.includes('route not found');
-}
 
 async function request<T>(path: string, init?: RequestInit, options: RequestOptions = {}): Promise<T> {
   const method = init?.method || 'GET';
