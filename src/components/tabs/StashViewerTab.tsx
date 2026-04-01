@@ -221,11 +221,13 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
 
   // Race guard for tab loading — incremented on each loadTab call
   const loadTokenRef = React.useRef(0);
+  // AbortController for in-flight tab requests — abort old ones on tab switch
+  const tabAbortRef = React.useRef<AbortController | null>(null);
 
   /** Fetch existing valuation results (no computation) */
-  const fetchValuationResults = useCallback(async () => {
+  const fetchValuationResults = useCallback(async (signal?: AbortSignal) => {
     try {
-      const valResult = await api.getStashValuationsResult();
+      const valResult = await api.getStashValuationsResult(signal);
       setValuationResult(valResult);
       console.log('[Stash] Valuation result keys:', Object.keys(valResult));
       console.log('[Stash] Valuation items count:', valResult.items?.length ?? 0);
@@ -236,6 +238,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
         });
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       console.warn('[Stash] No existing valuation results:', err instanceof Error ? err.message : err);
     }
   }, []);
@@ -272,14 +275,21 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
   valuationResultRef.current = valuationResult;
 
   const loadTab = useCallback(async (tabIndex: number) => {
+    // Cancel any in-flight tab request before starting a new one
+    if (tabAbortRef.current) {
+      tabAbortRef.current.abort();
+    }
+    const ac = new AbortController();
+    tabAbortRef.current = ac;
+
     const token = ++loadTokenRef.current;
     setTabLoading(true);
     setTabMismatch(null);
     try {
       // Fetch tab data and valuations in parallel
       const [payload, valResult] = await Promise.all([
-        api.getStashScanResult(tabIndex),
-        api.getStashValuationsResult().catch(() => null),
+        api.getStashScanResult(tabIndex, ac.signal),
+        api.getStashValuationsResult(ac.signal).catch(() => null),
       ]);
       // Race guard: discard if a newer loadTab was fired
       if (token !== loadTokenRef.current) return;
@@ -314,6 +324,7 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
         setTabsMeta(payload.tabsMeta);
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       if (token !== loadTokenRef.current) return;
       toast.error(err instanceof Error ? err.message : 'Failed to load tab');
     } finally {
