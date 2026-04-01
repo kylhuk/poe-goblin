@@ -285,12 +285,10 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
     const token = ++loadTokenRef.current;
     setTabLoading(true);
     setTabMismatch(null);
+
+    // 1) Load and render tab payload first (do not block UI on valuations endpoint)
     try {
-      // Fetch tab data and valuations in parallel
-      const [payload, valResult] = await Promise.all([
-        api.getStashScanResult(tabIndex, ac.signal),
-        api.getStashValuationsResult(ac.signal).catch(() => null),
-      ]);
+      const payload = await api.getStashScanResult(tabIndex, ac.signal);
       // Race guard: discard if a newer loadTab was fired
       if (token !== loadTokenRef.current) return;
 
@@ -299,11 +297,6 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
       if (returned) {
         console.log('[Stash] Active tab items count:', returned.items.length);
         returned.items = applyTabLevelPricing(returned.items, returned.name);
-        // Merge valuations immediately
-        if (valResult?.items?.length) {
-          returned.items = mergeValuationIntoItems(returned.items, valResult.items);
-          setValuationResult(valResult);
-        }
         if (returned.items.length > 0) {
           const sample = returned.items[0];
           console.log('[Stash] Sample item fields:', {
@@ -327,9 +320,28 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
       if (err instanceof DOMException && err.name === 'AbortError') return;
       if (token !== loadTokenRef.current) return;
       toast.error(err instanceof Error ? err.message : 'Failed to load tab');
+      return;
     } finally {
       if (token === loadTokenRef.current) setTabLoading(false);
     }
+
+    // 2) Fetch valuation result in background and merge when available
+    void (async () => {
+      try {
+        const valResult = await api.getStashValuationsResult(ac.signal);
+        if (token !== loadTokenRef.current) return;
+        setValuationResult(valResult);
+        if (valResult.items?.length) {
+          setActiveTab(prev => {
+            if (!prev) return prev;
+            return { ...prev, items: mergeValuationIntoItems(prev.items, valResult.items) };
+          });
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        // Non-blocking by design: keep tab visible even if valuation endpoint is slow/failing.
+      }
+    })();
   }, []);
 
   const pollStatus = useCallback(async () => {
