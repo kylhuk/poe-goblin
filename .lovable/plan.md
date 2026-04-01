@@ -1,49 +1,52 @@
 
-Goal: Fix Stash Viewer so tab switches load the correct tab data and valuations always come from the new valuation-result flow (not stale/legacy values).
 
-1) Fix the tab-switch “same data every click” bug
-- Update `src/services/api.ts` normalization to keep the requested `tabIndex` when backend returns a single-tab payload without explicit index fields.
-- Change `normalizeStashTabsResponse(payload)` to accept `requestedTabIndex?: number`.
-- Use `requestedTabIndex` as fallback `returnedIndex` in both single-tab response branches (`stash` object and `stashTabs` length=1).
-- Pass `tabIndex` into normalizer from `getStashScanResult()` (and compatibility `getStashTabs()`).
+## Plan: Migrate All API Calls to New Spec Endpoints
 
-2) Always fetch latest valuation result on tab load
-- In `src/components/tabs/StashViewerTab.tsx`, make tab loading fetch:
-  - `/api/v1/stash/scan/result` (tab data)
-  - `/api/v1/stash/scan/valuations/result` (latest valuations)
-  in the same load flow for every tab switch.
-- Merge valuation payload into the tab items immediately after scan-result normalization.
-- Add race-guard (request token/ref) so fast tab-clicks don’t apply stale responses out of order.
+### What Changed in the Spec
 
-3) Make valuation polling robust to backend payload differences
-- In `src/services/api.ts`, make `getStashValuationsStatus()` tolerant:
-  - handle status-style payloads (`status`, `progress`, `error`)
-  - handle valuation-style payloads (items/scanId but no status)
-- In `runValuation()` (`StashViewerTab.tsx`), stop polling when either:
-  - status indicates finished (`published`/`idle`), or
-  - payload already represents completed valuation data.
-- Always finalize by fetching `/api/v1/stash/scan/valuations/result` and merging into active tab.
+Three endpoints are now **deprecated** and must be removed:
+1. `POST /api/v1/stash/scan` → use `POST /api/v1/stash/scan/start` (already exists)
+2. `GET /api/v1/stash/tabs` → use `GET /api/v1/stash/scan/result` (already exists)
+3. `POST /api/v1/stash/scan/valuations` (with body) → use `POST /api/v1/stash/scan/valuations/start` (no body)
 
-4) Remove stale/unused valuation config wiring
-- Remove unused threshold state/UI in `StashViewerTab.tsx` (`minThreshold/maxThreshold/maxAgeDays`) since `/valuations/start` now has no body.
-- Update old code paths still calling legacy stash methods where applicable (`EconomyTab` / `stashCache`) to use `getStashScanResult` path consistently.
+**Critical change**: The new scan endpoints (`/scan/result`, `/scan/start`, `/scan/status`, `/valuations/*`) take **no query parameters** — no `league`, no `realm`, no `tabIndex`. Only `/stash/status` and `/stash/items/{fp}/history` still accept `league`/`realm`.
 
-5) Ensure “no median = no color/evaluation” is enforced everywhere
-- Keep/verify merge logic so evaluation fields (`priceEvaluation`, deltas, badge states) are only populated when valuation median exists.
-- If valuation entry has no median, explicitly clear evaluation fields for that item.
+### Changes
 
-Technical details
-- Files to update:
-  - `src/services/api.ts`
-  - `src/components/tabs/StashViewerTab.tsx`
-  - `src/components/tabs/EconomyTab.tsx`
-  - `src/services/stashCache.ts`
-  - `src/types/api.ts` (status/result typing tolerance)
-  - tests:
-    - `src/components/tabs/StashViewerTab.test.tsx`
-    - `src/services/api.stash.test.ts`
-- Key regression tests:
-  - tab switch to index N returns/uses `returnedIndex=N` when backend omits index
-  - tab switching triggers fresh valuation-result fetch and merged prices update
-  - valuation polling completes for both status-shaped and result-shaped status payloads
-  - no median => no evaluation color/badge/delta
+**1. `src/services/api.ts`** — Core API cleanup
+- `getStashScanResult()`: Remove `league`, `realm`, `tabIndex` query params. No parameters at all.
+- `startStashScan()`: Call only `/api/v1/stash/scan/start` with POST, no query params, no fallback to deprecated `/stash/scan`.
+- `getStashScanStatus()`: Remove `league`/`realm` query params.
+- `startStashValuationsNew()` → rename to `startStashValuations()`: Remove `league`/`realm` query params.
+- `getStashValuationsResult()`: Remove `league`/`realm` query params.
+- `getStashValuationsStatus()`: Remove `league`/`realm` query params.
+- **Delete** old `getStashTabs()` method entirely.
+- **Delete** old `startStashValuations(req)` method (the one with body/thresholds).
+- `getStashStatus()`: Keep `league`/`realm` (still in spec).
+- `getStashItemHistory()`: Keep `league`/`realm`/`limit` (still in spec).
+- Remove `isMissingRouteError` helper (no more fallback logic).
+
+**2. `src/types/api.ts`** — Interface cleanup
+- Remove `getStashTabs` from `ApiService`.
+- Remove old `startStashValuations(req)` from `ApiService`.
+- Rename `startStashValuationsNew` → `startStashValuations`.
+- Remove `StashScanValuationsRequest` type (no longer needed — start takes no body).
+- Remove `tabIndex` param from `getStashScanResult` signature (API no longer accepts it).
+
+**3. `src/services/stashCache.ts`**
+- Replace `api.getStashTabs(tabIndex)` with `api.getStashScanResult()` in `loadAllStashItems`. Since the new endpoint returns all tabs at once (no tabIndex param), refactor to fetch once and extract items from all returned tabs.
+
+**4. `src/components/tabs/StashViewerTab.tsx`**
+- Update `loadTab` to call `api.getStashScanResult()` without tabIndex.
+- Update valuation trigger to call `api.startStashValuations()` (renamed from `startStashValuationsNew`).
+- Since there's no `tabIndex` server-side filtering, select the correct tab client-side from the full response.
+
+**5. `src/components/tabs/EconomyTab.tsx`**
+- Update `getStashScanResult` call (remove tabIndex if used).
+
+**6. `src/components/tabs/StashViewerTab.test.tsx`**
+- Update mocks: remove `getStashTabs`, rename `startStashValuations` references, update call expectations to match new signatures (no body, no tabIndex).
+
+**7. `src/services/api.stash.test.ts`**
+- Update test expectations to match new endpoint paths (no query params on scan endpoints).
+
