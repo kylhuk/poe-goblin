@@ -1,14 +1,17 @@
 import path from "node:path";
-import frontendConfig from "./frontend/vitest.config.ts";
+import { defineConfig } from "vitest/config";
 
-const frontendRoot = path.resolve(__dirname, "frontend");
-const frontendTestConfig = frontendConfig.test ?? {};
-
-export default {
-  ...frontendConfig,
-  root: frontendRoot,
-  test: {
-    ...frontendTestConfig,
-    root: frontendRoot,
+export default defineConfig({
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
   },
-};
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./src/test/setup.ts"],
+    restoreMocks: true,
+    clearMocks: true,
+  },
+});

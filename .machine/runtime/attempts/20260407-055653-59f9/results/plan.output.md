@@ -1,0 +1,9 @@
+Updated the runtime planning set and froze the task around persisted private stash scanning, V2 query paths, visible backend price judgments, and 90-day retention in [ProductSpec.md](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/ProductSpec.md), [ExecutionPlan.md](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/ExecutionPlan.md), [Runbook.md](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/Runbook.md), and [Documentation.md](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/Documentation.md). The execution plan stays within the current dirty file set and keeps backend, migration, API-contract, and frontend work explicitly bounded.
+
+I also rewrote [VerificationPlan.json](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/VerificationPlan.json) with task-specific red gates, quality gates, acceptance gates, allowed paths, and non-goals. The plan-guard failure was fixed by replacing unsupported `./node_modules/.bin/vitest ...` commands with supported `npx vitest run ...` commands.
+
+Validation completed:
+- `python3 -m json.tool .machine/runtime/VerificationPlan.json`
+- `bash .machine/runtime/verify_plan_guard.sh` -> `PLAN_GUARD_OK`
+
+I did not run the product test suite itself in this pass; this was the planning/documentation freeze and guard validation only.

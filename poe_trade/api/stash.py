@@ -298,7 +298,7 @@ def fetch_stash_item_history(
     league: str,
     realm: str,
     fingerprint: str,
-    limit: int = 20,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     try:
         return fetch_item_history(

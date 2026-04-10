@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from statistics import median
@@ -10,10 +11,23 @@ from poe_trade.db import ClickHouseClient
 from poe_trade.db.clickhouse import ClickHouseClientError
 from poe_trade.ml import workflows as ml_workflows
 from poe_trade.ml.v3.sql import TRAINING_SOURCE_TABLE, _normalized_currency_sql
+from poe_trade.stash_scan import (
+    _DEFAULT_DIVINE_TO_CHAOS_RATE,
+    _display_price_from_chaos,
+    _price_currency_is_computable,
+    price_band_for_delta_pct,
+    price_evaluation_for_band,
+)
 
 
 class ValuationBackendUnavailable(RuntimeError):
     pass
+
+
+_PRICE_NOTE_PATTERN = re.compile(
+    r"^~(?:b/o|price)\s+([0-9]+(?:\.[0-9]+)?)\s+(.+)$",
+    re.IGNORECASE,
+)
 
 
 def safe_json_rows(client: ClickHouseClient, query: str) -> list[dict[str, Any]]:
@@ -150,6 +164,28 @@ def build_stash_scan_valuations_payload(
         "daySeries": selected.get("daySeries") if selected else [],
         "items": items,
     }
+    if selected:
+        payload.update(
+            {
+                "listedPrice": selected.get("listedPrice"),
+                "listedCurrency": selected.get("listedCurrency"),
+                "listedPriceChaos": selected.get("listedPriceChaos"),
+                "estimatedPrice": selected.get("estimatedPrice"),
+                "estimatedPriceChaos": selected.get("estimatedPriceChaos"),
+                "priceDeltaChaos": selected.get("priceDeltaChaos"),
+                "priceDeltaPercent": selected.get("priceDeltaPercent"),
+                "priceBand": selected.get("priceBand"),
+                "priceEvaluation": selected.get("priceEvaluation"),
+                "priceBandVersion": selected.get("priceBandVersion"),
+                "priceRecommendationEligible": selected.get(
+                    "priceRecommendationEligible"
+                ),
+                "confidence": selected.get("confidence"),
+                "estimateTrust": selected.get("estimateTrust"),
+                "estimateWarning": selected.get("estimateWarning"),
+                "fallbackReason": selected.get("fallbackReason"),
+            }
+        )
     if selected and "affixFallbackMedians" in selected:
         payload["affixFallbackMedians"] = selected["affixFallbackMedians"]
     return payload
@@ -165,12 +201,12 @@ def normalize_chaos_price(
     if amount is None:
         return None
     normalized = _normalized_currency_label(currency)
-    if normalized in {"chaos", "chaos orb", "chaos orbs", ""}:
+    if normalized in {"chaos", "chaos orb", "chaos orbs", "c", ""}:
         return amount
-    if normalized in {"divine", "div", "divines"}:
+    if normalized in {"divine", "div", "divines", "divine orb", "divine orbs"}:
         rate = _coerce_float(fx_chaos_per_divine)
-        if rate is None:
-            return None
+        if rate is None or rate <= 0:
+            rate = _DEFAULT_DIVINE_TO_CHAOS_RATE
         return amount * rate
     return None
 
@@ -384,9 +420,26 @@ def _fetch_stash_valuation_rows(
         [
             "SELECT",
             "scan_id, account_name, league, realm, tab_id, tab_index, tab_name, tab_type,",
+            "lineage_key, item_id, item_name, base_type, item_class, rarity, x, y, w, h, listed_price,",
+            "listed_currency, listed_price_chaos, estimated_price_chaos, price_p10_chaos, price_p90_chaos,",
+            "confidence, estimate_trust, estimate_warning, fallback_reason,",
+            "icon_url, priced_at, payload_json",
+            "FROM poe_trade.account_stash_scan_items_v2",
+            "WHERE",
+            " AND ".join(clauses),
+            "ORDER BY tab_index ASC, y ASC, x ASC FORMAT JSONEachRow",
+        ]
+    )
+    rows = safe_json_rows(client, query)
+    if rows:
+        return rows
+    legacy_query = " ".join(
+        [
+            "SELECT",
+            "scan_id, account_name, league, realm, tab_id, tab_index, tab_name, tab_type,",
             "lineage_key, item_id, item_name, item_class, rarity, x, y, w, h, listed_price,",
             "currency, predicted_price, confidence, price_p10, price_p90,",
-            "price_recommendation_eligible, estimate_trust, estimate_warning, fallback_reason,",
+            "estimate_trust, estimate_warning, fallback_reason,",
             "icon_url, priced_at, payload_json",
             "FROM poe_trade.account_stash_item_valuations",
             "WHERE",
@@ -394,7 +447,7 @@ def _fetch_stash_valuation_rows(
             "ORDER BY tab_index ASC, y ASC, x ASC FORMAT JSONEachRow",
         ]
     )
-    return safe_json_rows(client, query)
+    return safe_json_rows(client, legacy_query)
 
 
 def _build_stash_item_valuation(
@@ -407,6 +460,10 @@ def _build_stash_item_valuation(
     max_age_days: int,
 ) -> dict[str, Any]:
     raw_item = _load_payload_json(row.get("payload_json"))
+    parsed_listed = _parse_listed_price(str(raw_item.get("note") or ""))
+    listed_price, listed_currency = (
+        parsed_listed if parsed_listed is not None else (None, "")
+    )
     base_type = str(
         raw_item.get("baseType")
         or raw_item.get("typeLine")
@@ -415,6 +472,48 @@ def _build_stash_item_valuation(
         or ""
     ).strip()
     affixes = extract_explicit_affixes(raw_item)
+    predicted_currency = str(row.get("currency") or row.get("listed_currency") or listed_currency or "chaos")
+    predicted_price = _coerce_float(row.get("estimated_price_chaos"))
+    if predicted_price is None:
+        predicted_price = _coerce_float(row.get("predicted_price"))
+    if predicted_price is None:
+        predicted_price = _coerce_float(row.get("estimated_price"))
+    listed_price = (
+        listed_price if listed_price is not None else _coerce_float(row.get("listed_price"))
+    )
+    listed_currency = listed_currency or str(row.get("listed_currency") or row.get("currency") or "chaos")
+    listed_price_chaos = _coerce_float(row.get("listed_price_chaos"))
+    if listed_price_chaos is None and _price_currency_is_computable(listed_currency):
+        listed_price_chaos = normalize_chaos_price(
+            listed_price,
+            currency=listed_currency,
+        )
+    estimated_price_chaos = _coerce_float(row.get("estimated_price_chaos"))
+    if estimated_price_chaos is None and _price_currency_is_computable(predicted_currency):
+        estimated_price_chaos = normalize_chaos_price(
+            predicted_price,
+            currency=predicted_currency,
+        )
+    if listed_price is None and listed_price_chaos is not None and _price_currency_is_computable(
+        listed_currency
+    ):
+        listed_price = _display_price_from_chaos(listed_price_chaos, listed_currency)
+    estimated_price = _display_price_from_chaos(estimated_price_chaos, listed_currency)
+    delta_chaos = (
+        None
+        if listed_price_chaos is None or estimated_price_chaos is None
+        else listed_price_chaos - estimated_price_chaos
+    )
+    delta_percent = (
+        None
+        if listed_price_chaos is None or estimated_price_chaos in (None, 0)
+        else ((listed_price_chaos - estimated_price_chaos) / estimated_price_chaos)
+        * 100.0
+    )
+    price_band = str(row.get("price_band") or "bad")
+    if delta_percent is not None and not row.get("price_band"):
+        price_band = price_band_for_delta_pct(delta_percent)
+    price_recommendation_eligible = price_band != "bad"
     full_query = build_comparable_query(
         league=league,
         base_type=base_type,
@@ -429,9 +528,33 @@ def _build_stash_item_valuation(
     payload: dict[str, Any] = {
         "stashId": str(row.get("scan_id") or ""),
         "itemId": str(row.get("item_id") or ""),
+        "fingerprint": str(
+            row.get("lineage_key")
+            or row.get("fingerprint")
+            or (
+                f"item:{row.get('item_id')}"
+                if str(row.get("item_id") or "").strip()
+                else ""
+            )
+        ),
         "scanDatetime": _as_iso_utc(row.get("priced_at")),
         "chaosMedian": chaos_median,
         "daySeries": day_series,
+        "listedPrice": listed_price,
+        "listedCurrency": listed_currency,
+        "listedPriceChaos": listed_price_chaos,
+        "estimatedPrice": estimated_price,
+        "estimatedPriceChaos": estimated_price_chaos,
+        "priceDeltaChaos": delta_chaos,
+        "priceDeltaPercent": delta_percent,
+        "priceBand": price_band,
+        "priceEvaluation": price_evaluation_for_band(price_band),
+        "priceBandVersion": int(row.get("price_band_version") or 1),
+        "priceRecommendationEligible": price_recommendation_eligible,
+        "confidence": _coerce_float(row.get("confidence")) or 0.0,
+        "estimateTrust": str(row.get("estimate_trust") or "normal"),
+        "estimateWarning": str(row.get("estimate_warning") or ""),
+        "fallbackReason": str(row.get("fallback_reason") or ""),
     }
     if chaos_median is None and affixes:
         fallback_medians: list[dict[str, Any]] = []
@@ -469,15 +592,24 @@ def _load_payload_json(value: Any) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _parse_listed_price(note: str) -> tuple[float, str] | None:
+    match = _PRICE_NOTE_PATTERN.match(note.strip())
+    if match is None:
+        return None
+    return float(match.group(1)), " ".join(match.group(2).split()).lower()
+
+
 def _normalized_currency_label(value: Any) -> str:
     text = str(value or "").strip().lower()
     if not text:
         return ""
-    text = text.replace("  ", " ")
-    if text in {"div", "divine", "divines"}:
+    text = " ".join(text.split())
+    if text in {"div", "divine", "divines", "divine orb", "divine orbs"}:
         return "divine"
-    if text in {"chaos", "chaos orb", "chaos orbs"}:
+    if text in {"chaos", "chaos orb", "chaos orbs", "c"}:
         return "chaos"
+    if text in {"exalted", "exalted orb", "exalted orbs", "exa", "ex"}:
+        return "exalted"
     return text
 
 

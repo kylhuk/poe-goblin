@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-04-09T15:22:22Z",
+  "containerized": true,
+  "repo_path": "/home/hal9000/docker/poe-goblin",
+  "python": true,
+  "node": true,
+  "npm": true,
+  "docker_cli": true,
+  "docker_socket": true,
+  "git_guard": true,
+  "docker_info": true,
+  "docker_compose_v2": true,
+  "docker_compose_v1": true,
+  "docker_access_mode": "host-socket",
+  "docker_compose_command": "docker compose"
+}

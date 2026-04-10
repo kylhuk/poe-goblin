@@ -1,0 +1,15 @@
+{
+  "node_id": "triage",
+  "agent": "triage",
+  "model": "gpt-5.4",
+  "reasoning": "high",
+  "sandbox": "danger-full-access",
+  "success": true,
+  "exit_code": 0,
+  "output_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/results/triage.output.json",
+  "prompt_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/artifacts/triage/prompt.md",
+  "log_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/logs/triage.log",
+  "started_at": "2026-04-07T14:00:47Z",
+  "completed_at": "2026-04-07T14:01:19Z",
+  "schema": "question_gate.schema.json"
+}

@@ -1,0 +1,555 @@
+{
+  "rows": [
+    {
+      "id": "TM-001",
+      "requirement_id": "AR-001",
+      "behavior_id": "AR-001-B01",
+      "title": "scan start returns metadata for the selected stash scope",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/vitest_cmd.sh src/services/api.stash.test.ts -t \"starts a stash scan and returns scan metadata\"",
+      "green_cmd": "bash .machine/runtime/bin/vitest_cmd.sh src/services/api.stash.test.ts -t \"starts a stash scan and returns scan metadata\"",
+      "test_paths": ["src/services/api.stash.test.ts"]
+    },
+    {
+      "id": "TM-002",
+      "requirement_id": "AR-001",
+      "behavior_id": "AR-001-B02",
+      "title": "scan status reports running progress and current published scan",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_stash_scan_status_reports_running_progress_and_current_published_scan",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_stash_scan_status_reports_running_progress_and_current_published_scan",
+      "test_paths": ["tests/unit/test_api_stash.py"]
+    },
+    {
+      "id": "TM-003",
+      "requirement_id": "AR-001",
+      "behavior_id": "AR-001-B03",
+      "title": "private scan writes v2 latest-item and history rows for every scanned item",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_writes_v2_scan_and_history_rows_for_every_item",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_writes_v2_scan_and_history_rows_for_every_item",
+      "test_paths": ["tests/unit/test_account_stash_harvester.py"]
+    },
+    {
+      "id": "TM-004",
+      "requirement_id": "AR-001",
+      "behavior_id": "AR-001-B04",
+      "title": "private scan publishes only after v2 rows are written and before legacy writes",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_publishes_after_v2_rows_before_legacy_valuations",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_publishes_after_v2_rows_before_legacy_valuations",
+      "test_paths": ["tests/unit/test_account_stash_harvester.py"]
+    },
+    {
+      "id": "TM-005",
+      "requirement_id": "AR-001",
+      "behavior_id": "AR-001-B05",
+      "title": "valuation failure during a scan preserves the last good published status",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_keeps_published_status_when_valuations_fail",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_keeps_published_status_when_valuations_fail",
+      "test_paths": ["tests/unit/test_account_stash_harvester.py"]
+    },
+    {
+      "id": "TM-006",
+      "requirement_id": "AR-001",
+      "behavior_id": "AR-001-B06",
+      "title": "v2 write failure marks the scan failed without publishing partial data",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_v2_write_failure_marks_failed_without_publish",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_v2_write_failure_marks_failed_without_publish",
+      "test_paths": ["tests/unit/test_account_stash_harvester.py"]
+    },
+    {
+      "id": "TM-007",
+      "requirement_id": "AR-002",
+      "behavior_id": "AR-002-B01",
+      "title": "valuation math normalizes non-chaos listed prices before price-band math",
+      "layer": "unit",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_valuation_helpers.py::test_stash_scan_valuations_normalize_non_chaos_prices_before_band_math",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_valuation_helpers.py::test_stash_scan_valuations_normalize_non_chaos_prices_before_band_math",
+      "test_paths": ["tests/unit/test_valuation_helpers.py"]
+    },
+    {
+      "id": "TM-008",
+      "requirement_id": "AR-002",
+      "behavior_id": "AR-002-B02",
+      "title": "absolute thresholds map to good, mediocre, and bad price bands",
+      "layer": "unit",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_price_band_for_delta_pct_uses_absolute_thresholds",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_price_band_for_delta_pct_uses_absolute_thresholds",
+      "test_paths": ["tests/unit/test_stash_scan.py"]
+    },
+    {
+      "id": "TM-009",
+      "requirement_id": "AR-002",
+      "behavior_id": "AR-002-B03",
+      "title": "published stash items expose backend price band, evaluation, and version fields",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_published_tabs_return_v2_price_fields_for_every_item",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_published_tabs_return_v2_price_fields_for_every_item",
+      "test_paths": ["tests/unit/test_api_stash.py"]
+    },
+    {
+      "id": "TM-010",
+      "requirement_id": "AR-002",
+      "behavior_id": "AR-002-B04",
+      "title": "latest valuation result payload keeps every scanned item and price quality fields",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_latest_result_includes_every_scanned_item_and_price_quality_fields",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_latest_result_includes_every_scanned_item_and_price_quality_fields",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-011",
+      "requirement_id": "AR-003",
+      "behavior_id": "AR-003-B01",
+      "title": "published stash reads resolve the latest published scan before latest-item rows",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_fetch_stash_tabs_prefers_v2_latest_scan_items_for_latest_published_scan",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_fetch_stash_tabs_prefers_v2_latest_scan_items_for_latest_published_scan",
+      "test_paths": ["tests/unit/test_api_stash.py"]
+    },
+    {
+      "id": "TM-012",
+      "requirement_id": "AR-003",
+      "behavior_id": "AR-003-B02",
+      "title": "published stash results include every published tab and every published item for the latest resolved scan",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_fetch_stash_tabs_returns_every_published_tab_and_item_for_latest_scan",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_fetch_stash_tabs_returns_every_published_tab_and_item_for_latest_scan",
+      "test_paths": ["tests/unit/test_api_stash.py"]
+    },
+    {
+      "id": "TM-013",
+      "requirement_id": "AR-003",
+      "behavior_id": "AR-003-B03",
+      "title": "published stash results preserve stored chaos values for non-computable currencies",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_published_tabs_preserve_stored_chaos_values_for_non_computable_currency",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_published_tabs_preserve_stored_chaos_values_for_non_computable_currency",
+      "test_paths": ["tests/unit/test_api_stash.py"]
+    },
+    {
+      "id": "TM-014",
+      "requirement_id": "AR-003",
+      "behavior_id": "AR-003-B04",
+      "title": "published stash falls back to legacy valuation rows only when v2 latest rows are absent",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_published_tabs_falls_back_to_legacy_valuation_rows",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_published_tabs_falls_back_to_legacy_valuation_rows",
+      "test_paths": ["tests/unit/test_stash_scan.py"]
+    },
+    {
+      "id": "TM-015",
+      "requirement_id": "AR-003",
+      "behavior_id": "AR-003-B05",
+      "title": "item history route returns lineage header metadata and entries",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_fetch_stash_item_history_returns_header_and_entries",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_fetch_stash_item_history_returns_header_and_entries",
+      "test_paths": ["tests/unit/test_api_stash.py"]
+    },
+    {
+      "id": "TM-016",
+      "requirement_id": "AR-003",
+      "behavior_id": "AR-003-B06",
+      "title": "item history reads v2 rows with the frozen 90 day retention window",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_item_history_reads_v2_history_with_90_day_retention",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_item_history_reads_v2_history_with_90_day_retention",
+      "test_paths": ["tests/unit/test_stash_scan.py"]
+    },
+    {
+      "id": "TM-017",
+      "requirement_id": "AR-003",
+      "behavior_id": "AR-003-B07",
+      "title": "item history prefers v2 rows after backfill",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_item_history_prefers_v2_rows_after_backfill",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_item_history_prefers_v2_rows_after_backfill",
+      "test_paths": ["tests/unit/test_stash_scan.py"]
+    },
+    {
+      "id": "TM-018",
+      "requirement_id": "AR-003",
+      "behavior_id": "AR-003-B08",
+      "title": "item history falls back to legacy valuation rows only when v2 history is absent",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_item_history_falls_back_to_legacy_valuation_rows",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_item_history_falls_back_to_legacy_valuation_rows",
+      "test_paths": ["tests/unit/test_stash_scan.py"]
+    },
+    {
+      "id": "TM-019",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B01",
+      "title": "valuation refresh starts from persisted rows for the current published scan without live stash access",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_uses_persisted_rows_without_oauth_token",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_uses_persisted_rows_without_oauth_token",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-020",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B02",
+      "title": "valuation refresh start deduplicates against the persisted active refresh after cache loss",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_deduplicates_against_persisted_active_scan_after_cache_loss",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_deduplicates_against_persisted_active_scan_after_cache_loss",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-021",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B03",
+      "title": "valuation refresh start evicts stale pending cache entries when the published scan changes",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_evicts_stale_pending_cache_after_published_scan_changes",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_evicts_stale_pending_cache_after_published_scan_changes",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-022",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B04",
+      "title": "valuation refresh status ignores ordinary active scans",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_ignores_ordinary_active_scan",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_ignores_ordinary_active_scan",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-023",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B05",
+      "title": "valuation refresh status ignores refresh rows tied to an older source scan",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_ignores_refresh_for_older_source_scan",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_ignores_refresh_for_older_source_scan",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-024",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B06",
+      "title": "valuation refresh status prefers persisted running progress over same-scan pending cache",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_prefers_persisted_running_progress_over_pending_cache",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_prefers_persisted_running_progress_over_pending_cache",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-025",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B07",
+      "title": "valuation refresh republishes the latest scan from persisted v2 rows",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_republishes_latest_scan_from_persisted_v2_rows",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_republishes_latest_scan_from_persisted_v2_rows",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-026",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B08",
+      "title": "valuation refresh status recovers the latest published refresh lineage after cache clear",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_recovers_published_refresh_after_cache_clear",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_recovers_published_refresh_after_cache_clear",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-027",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B09",
+      "title": "valuation refresh result reconstructs the latest published payload after cache clear",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_result_route_recovers_published_refresh_after_cache_clear",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_result_route_recovers_published_refresh_after_cache_clear",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-028",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B10",
+      "title": "valuation refresh status evicts stale completed cache entries after published scan changes",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_evicts_stale_completed_cache_after_published_scan_changes",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_evicts_stale_completed_cache_after_published_scan_changes",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-029",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B11",
+      "title": "valuation refresh result evicts stale completed cache entries after published scan changes",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_result_evicts_stale_completed_cache_after_published_scan_changes",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_result_evicts_stale_completed_cache_after_published_scan_changes",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-030",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B12",
+      "title": "failed valuation refresh status preserves the last good result payload",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_refresh_failed_status_preserves_last_good_result_payload",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_refresh_failed_status_preserves_last_good_result_payload",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-031",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B13",
+      "title": "persisted valuation refresh fails closed when recovered source rows are missing or partial",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_fails_closed_when_source_rows_are_missing tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_fails_closed_when_recovered_rows_are_partial",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_fails_closed_when_source_rows_are_missing tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_fails_closed_when_recovered_rows_are_partial",
+      "test_paths": ["tests/unit/test_account_stash_harvester.py"]
+    },
+    {
+      "id": "TM-032",
+      "requirement_id": "AR-005",
+      "behavior_id": "AR-005-B01",
+      "title": "migration 0089 defines v2 stash tables, view, and query-path TTLs",
+      "layer": "migration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_query_paths_migration_has_v2_tables_view_and_ttls",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_query_paths_migration_has_v2_tables_view_and_ttls",
+      "test_paths": ["tests/unit/test_migrations.py"]
+    },
+    {
+      "id": "TM-033",
+      "requirement_id": "AR-005",
+      "behavior_id": "AR-005-B02",
+      "title": "migration 0090 applies 90 day retention to private stash task data",
+      "layer": "migration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_retention_migration_adds_90_day_ttls",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_retention_migration_adds_90_day_ttls",
+      "test_paths": ["tests/unit/test_migrations.py"]
+    },
+    {
+      "id": "TM-034",
+      "requirement_id": "AR-005",
+      "behavior_id": "AR-005-B03",
+      "title": "migration 0091 backfill normalizes chaos values for v2 reads",
+      "layer": "migration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_v2_backfill_migration_normalizes_chaos_values",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_v2_backfill_migration_normalizes_chaos_values",
+      "test_paths": ["tests/unit/test_migrations.py"]
+    },
+    {
+      "id": "TM-035",
+      "requirement_id": "AR-005",
+      "behavior_id": "AR-005-B04",
+      "title": "migration 0092 adds backend price evaluation columns",
+      "layer": "migration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_v2_price_evaluation_migration_adds_backend_label_columns",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_v2_price_evaluation_migration_adds_backend_label_columns",
+      "test_paths": ["tests/unit/test_migrations.py"]
+    },
+    {
+      "id": "TM-036",
+      "requirement_id": "AR-005",
+      "behavior_id": "AR-005-B05",
+      "title": "migration 0093 adds valuation refresh lifecycle kind and source metadata",
+      "layer": "migration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_refresh_lifecycle_metadata_migration_adds_kind_and_source_columns",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_refresh_lifecycle_metadata_migration_adds_kind_and_source_columns",
+      "test_paths": ["tests/unit/test_migrations.py"]
+    },
+    {
+      "id": "TM-037",
+      "requirement_id": "AR-006",
+      "behavior_id": "AR-006-B01",
+      "title": "TypeScript API normalization preserves backend price judgments from stash scan results",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/vitest_cmd.sh src/services/api.stash.test.ts -t \"preserves backend price judgments from stash scan results\"",
+      "green_cmd": "bash .machine/runtime/bin/vitest_cmd.sh src/services/api.stash.test.ts -t \"preserves backend price judgments from stash scan results\"",
+      "test_paths": ["src/services/api.stash.test.ts"]
+    },
+    {
+      "id": "TM-038",
+      "requirement_id": "AR-006",
+      "behavior_id": "AR-006-B02",
+      "title": "OpenAPI includes the canonical stash lifecycle routes",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_includes_canonical_stash_lifecycle_routes",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_includes_canonical_stash_lifecycle_routes",
+      "test_paths": ["tests/unit/test_apispec_contract.py"]
+    },
+    {
+      "id": "TM-039",
+      "requirement_id": "AR-006",
+      "behavior_id": "AR-006-B03",
+      "title": "OpenAPI describes published stash result price-quality fields",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_describes_published_stash_result_fields",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_describes_published_stash_result_fields",
+      "test_paths": ["tests/unit/test_apispec_contract.py"]
+    },
+    {
+      "id": "TM-040",
+      "requirement_id": "AR-006",
+      "behavior_id": "AR-006-B04",
+      "title": "OpenAPI describes valuation refresh lifecycle metadata",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_describes_valuation_refresh_lifecycle_metadata",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_describes_valuation_refresh_lifecycle_metadata",
+      "test_paths": ["tests/unit/test_apispec_contract.py"]
+    },
+    {
+      "id": "TM-041",
+      "requirement_id": "AR-006",
+      "behavior_id": "AR-006-B05",
+      "title": "OpenAPI describes item history price-quality fields",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_describes_item_history_price_quality_fields",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_describes_item_history_price_quality_fields",
+      "test_paths": ["tests/unit/test_apispec_contract.py"]
+    },
+    {
+      "id": "TM-042",
+      "requirement_id": "AR-007",
+      "behavior_id": "AR-007-B01",
+      "title": "stash viewer keeps backend price judgments after valuation results merge into the current stash view",
+      "layer": "ui",
+      "red_cmd": "bash .machine/runtime/bin/vitest_cmd.sh src/components/tabs/StashViewerTab.test.tsx -t \"keeps backend price judgments after valuation results merge into the stash view\"",
+      "green_cmd": "bash .machine/runtime/bin/vitest_cmd.sh src/components/tabs/StashViewerTab.test.tsx -t \"keeps backend price judgments after valuation results merge into the stash view\"",
+      "test_paths": ["src/components/tabs/StashViewerTab.test.tsx"]
+    },
+    {
+      "id": "TM-043",
+      "requirement_id": "AR-007",
+      "behavior_id": "AR-007-B02",
+      "title": "stash viewer falls back to backend price band when the evaluation label is omitted",
+      "layer": "ui",
+      "red_cmd": "bash .machine/runtime/bin/vitest_cmd.sh src/components/tabs/StashViewerTab.test.tsx -t \"uses the backend price band when the evaluation label is omitted\"",
+      "green_cmd": "bash .machine/runtime/bin/vitest_cmd.sh src/components/tabs/StashViewerTab.test.tsx -t \"uses the backend price band when the evaluation label is omitted\"",
+      "test_paths": ["src/components/tabs/StashViewerTab.test.tsx"]
+    },
+    {
+      "id": "TM-044",
+      "requirement_id": "AR-007",
+      "behavior_id": "AR-007-B03",
+      "title": "item history dialog shows backend price quality",
+      "layer": "ui",
+      "red_cmd": "bash .machine/runtime/bin/vitest_cmd.sh src/components/tabs/StashViewerTab.test.tsx -t \"shows backend price quality inside the item history dialog\"",
+      "green_cmd": "bash .machine/runtime/bin/vitest_cmd.sh src/components/tabs/StashViewerTab.test.tsx -t \"shows backend price quality inside the item history dialog\"",
+      "test_paths": ["src/components/tabs/StashViewerTab.test.tsx"]
+    },
+    {
+      "id": "TM-045",
+      "requirement_id": "AR-001",
+      "behavior_id": "AR-001-B07",
+      "title": "ordinary stash scan status ignores valuation-refresh lifecycle rows",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_stash_scan_status_ignores_valuation_refresh_rows",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_stash_scan_status_ignores_valuation_refresh_rows",
+      "test_paths": ["tests/unit/test_api_stash.py"]
+    },
+    {
+      "id": "TM-046",
+      "requirement_id": "AR-003",
+      "behavior_id": "AR-003-B09",
+      "title": "published stash scanStatus ignores valuation-refresh lifecycle rows",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_published_tabs_ignores_valuation_refresh_scan_status_rows",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_published_tabs_ignores_valuation_refresh_scan_status_rows",
+      "test_paths": ["tests/unit/test_stash_scan.py"]
+    },
+    {
+      "id": "TM-047",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B14",
+      "title": "valuation refresh start rechecks the current published scan after lock before reusing pending cache",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_rechecks_published_scan_after_lock_before_reusing_pending_cache",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_rechecks_published_scan_after_lock_before_reusing_pending_cache",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-048",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B15",
+      "title": "valuation refresh status rechecks the current published scan after lock before reusing cached status",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_rechecks_published_scan_after_lock_before_using_cached_status",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_rechecks_published_scan_after_lock_before_using_cached_status",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-049",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B16",
+      "title": "valuation refresh result rechecks the current published scan after lock before reusing cached results",
+      "layer": "api",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_result_rechecks_published_scan_after_lock_before_using_cached_result",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_result_rechecks_published_scan_after_lock_before_using_cached_result",
+      "test_paths": ["tests/unit/test_api_stash_valuations.py"]
+    },
+    {
+      "id": "TM-050",
+      "requirement_id": "AR-004",
+      "behavior_id": "AR-004-B17",
+      "title": "persisted valuation refresh accepts a published valuation-refresh snapshot as the next source",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_reuses_published_refresh_rows_for_next_refresh",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_reuses_published_refresh_rows_for_next_refresh",
+      "test_paths": ["tests/unit/test_account_stash_harvester.py"]
+    }
+  ],
+  "repair_batches": [
+    {
+      "id": "RB-001",
+      "execution_order": 1,
+      "title": "Reconfirm the live chained-refresh defect before editing",
+      "goal": "Start from the current FM-003 red proof and current runtime guards, not from the historical FM-001 or FM-002 batches.",
+      "row_ids": ["TM-050"],
+      "paths": [
+        "tests/unit/test_account_stash_harvester.py",
+        ".machine/runtime/"
+      ]
+    },
+    {
+      "id": "RB-002",
+      "execution_order": 2,
+      "title": "Repair persisted valuation-refresh source resolution in one harvester batch",
+      "goal": "Allow the worker to accept the current published snapshot as either a stash_scan or valuation_refresh source while preserving fail-closed behavior for incomplete rows.",
+      "row_ids": ["TM-019", "TM-025", "TM-031", "TM-050"],
+      "paths": [
+        "poe_trade/ingestion/account_stash_harvester.py",
+        "tests/unit/test_account_stash_harvester.py"
+      ]
+    },
+    {
+      "id": "RB-003",
+      "execution_order": 3,
+      "title": "Reconfirm API refresh entry points after the harvester fix",
+      "goal": "Prove the API can still start and republish valuation refreshes from persisted rows without reopening broader lifecycle surfaces.",
+      "row_ids": ["TM-019", "TM-025"],
+      "paths": [
+        "tests/unit/test_api_stash_valuations.py"
+      ]
+    },
+    {
+      "id": "RB-004",
+      "execution_order": 4,
+      "title": "Finish on the frozen acceptance net",
+      "goal": "Run the remaining migration, contract, and stash-view proof bundle after RB-002 and RB-003 are green.",
+      "row_ids": ["TM-032", "TM-033", "TM-034", "TM-035", "TM-036", "TM-037", "TM-038", "TM-039", "TM-040", "TM-041", "TM-042", "TM-043", "TM-044"],
+      "paths": [
+        "apispec.yml",
+        "src/components/tabs/StashViewerTab.test.tsx",
+        "src/components/tabs/StashViewerTab.tsx",
+        "src/services/api.stash.test.ts",
+        "src/services/api.ts",
+        "src/types/api.ts",
+        "tests/unit/test_apispec_contract.py",
+        "tests/unit/test_migrations.py"
+      ]
+    }
+  ]
+}

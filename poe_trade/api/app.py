@@ -47,6 +47,7 @@ from .ml import (
 )
 from poe_trade.ml import workflows
 from poe_trade.ingestion.account_stash_harvester import AccountStashHarvester
+from poe_trade.ingestion.account_stash_harvester import run_persisted_valuation_refresh
 from poe_trade.ingestion.poe_client import PoeClient
 from poe_trade.ingestion.rate_limit import RateLimitPolicy
 from poe_trade.ingestion.status import StatusReporter
@@ -83,7 +84,15 @@ from .stash import (
     stash_scan_status_payload,
     stash_status_payload,
 )
-from poe_trade.stash_scan import serialize_stash_item_to_clipboard
+from poe_trade.stash_scan import (
+    StashScanBackendUnavailable,
+    fetch_active_valuation_refresh,
+    fetch_active_scan,
+    fetch_published_scan_id,
+    fetch_valuation_refresh_status_payload,
+    serialize_stash_item_to_clipboard,
+    valuation_refresh_status_payload,
+)
 from .service_control import (
     ServiceActionForbiddenError,
     ServiceActionInvalidError,
@@ -95,14 +104,27 @@ from .service_control import (
 
 
 _STASH_SCAN_START_LOCK = threading.Lock()
+_STASH_VALUATION_START_LOCK = threading.Lock()
 _ACCOUNT_STASH_AUTOSCAN_LOCK = threading.Lock()
 _account_stash_autoscan_started = False
 _PENDING_STASH_SCANS: dict[tuple[str, str, str], dict[str, object]] = {}
+_PENDING_STASH_VALUATIONS: dict[tuple[str, str, str], dict[str, object]] = {}
+_LATEST_STASH_VALUATION_RESULTS: dict[tuple[str, str, str], dict[str, object]] = {}
+_LATEST_STASH_VALUATION_STATUS: dict[tuple[str, str, str], dict[str, object]] = {}
 logger = logging.getLogger(__name__)
+_STASH_BACKEND_UNAVAILABLE_ERRORS = (
+    StashBackendUnavailable,
+    StashScanBackendUnavailable,
+)
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _api_timestamp(value: datetime | None = None) -> str:
+    moment = value or _utcnow()
+    return moment.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
 def _parse_iso_datetime(value: str) -> datetime | None:
@@ -112,6 +134,98 @@ def _parse_iso_datetime(value: str) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _stash_scan_valuation_status_payload(
+    *,
+    status: str,
+    active_scan_id: str | None,
+    source_scan_id: str | None,
+    published_scan_id: str | None,
+    started_at: str | None,
+    updated_at: str | None,
+    published_at: str | None,
+    error: str | None,
+) -> dict[str, object]:
+    return valuation_refresh_status_payload(
+        status=status,
+        active_scan_id=active_scan_id,
+        source_scan_id=source_scan_id,
+        published_scan_id=published_scan_id,
+        started_at=started_at,
+        updated_at=updated_at,
+        published_at=published_at,
+        error=error,
+    )
+
+
+def _stash_valuation_cached_scan_id(
+    payload: Mapping[str, object] | None,
+    *,
+    field: str,
+) -> str:
+    if payload is None:
+        return ""
+    return str(payload.get(field) or "").strip()
+
+
+def _stash_valuation_cache_matches_published_scan(
+    payload: Mapping[str, object] | None,
+    published_scan_id: str | None,
+    *,
+    field: str,
+) -> bool:
+    if payload is None or not published_scan_id:
+        return False
+    return _stash_valuation_cached_scan_id(payload, field=field) == published_scan_id
+
+
+def _prune_stash_valuation_cache(
+    scope: tuple[str, str, str],
+    published_scan_id: str | None,
+) -> None:
+    cached_status = _LATEST_STASH_VALUATION_STATUS.get(scope)
+    if cached_status is not None:
+        status = str(cached_status.get("status") or "")
+        status_matches = status in {"published", "failed"} and _stash_valuation_cache_matches_published_scan(
+            cached_status,
+            published_scan_id,
+            field="publishedScanId",
+        )
+        if not status_matches:
+            _LATEST_STASH_VALUATION_STATUS.pop(scope, None)
+
+    cached_result = _LATEST_STASH_VALUATION_RESULTS.get(scope)
+    if cached_result is not None:
+        result_matches = _stash_valuation_cache_matches_published_scan(
+            cached_result,
+            published_scan_id,
+            field="scanId",
+        )
+        if not result_matches:
+            _LATEST_STASH_VALUATION_RESULTS.pop(scope, None)
+
+
+def _fetch_published_scan_id_or_raise(
+    clickhouse_client: ClickHouseClient,
+    *,
+    account_name: str,
+    league: str,
+    realm: str,
+) -> str | None:
+    try:
+        return fetch_published_scan_id(
+            clickhouse_client,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+        )
+    except _STASH_BACKEND_UNAVAILABLE_ERRORS:
+        raise ApiError(
+            status=503,
+            code="backend_unavailable",
+            message="backend unavailable",
+        ) from None
 
 
 def _oauth_token_needs_refresh(token_state: Mapping[str, object]) -> bool:
@@ -383,6 +497,187 @@ def start_private_stash_scan(
         thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
         return result_holder
+
+
+def start_stash_valuations_refresh(
+    settings: Settings,
+    clickhouse_client: ClickHouseClient,
+    *,
+    account_name: str,
+    league: str,
+    realm: str,
+) -> dict[str, object]:
+    scope = (account_name, league, realm)
+    if scope in _PENDING_STASH_VALUATIONS:
+        _fetch_published_scan_id_or_raise(
+            clickhouse_client,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+        )
+    with _STASH_VALUATION_START_LOCK:
+        published_scan_id = _fetch_published_scan_id_or_raise(
+            clickhouse_client,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+        )
+        if not published_scan_id:
+            _prune_stash_valuation_cache(scope, None)
+            _PENDING_STASH_VALUATIONS.pop(scope, None)
+            return _stash_scan_valuation_status_payload(
+                status="idle",
+                active_scan_id=None,
+                source_scan_id=None,
+                published_scan_id=None,
+                started_at=None,
+                updated_at=None,
+                published_at=None,
+                error=None,
+            )
+
+        pending = _PENDING_STASH_VALUATIONS.get(scope)
+        pending_matches_published_scan = _stash_valuation_cache_matches_published_scan(
+            pending,
+            published_scan_id,
+            field="publishedScanId",
+        )
+        if pending is not None and not pending_matches_published_scan:
+            _PENDING_STASH_VALUATIONS.pop(scope, None)
+            pending = None
+        _prune_stash_valuation_cache(scope, published_scan_id)
+
+        try:
+            existing = fetch_active_valuation_refresh(
+                clickhouse_client,
+                account_name=account_name,
+                league=league,
+                realm=realm,
+                published_scan_id=published_scan_id,
+                stale_timeout_seconds=settings.account_stash_scan_stale_timeout_seconds,
+            )
+        except _STASH_BACKEND_UNAVAILABLE_ERRORS:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        if existing and existing.get("isActive"):
+            payload = _stash_scan_valuation_status_payload(
+                status="running",
+                active_scan_id=str(existing.get("scanId") or ""),
+                source_scan_id=published_scan_id,
+                published_scan_id=published_scan_id,
+                started_at=existing.get("startedAt"),
+                updated_at=existing.get("updatedAt"),
+                published_at=None,
+                error=None,
+            )
+            payload["deduplicated"] = True
+            return payload
+        if pending is not None and pending_matches_published_scan:
+            return {
+                **pending,
+                "deduplicated": True,
+            }
+
+        active_scan_id = uuid.uuid4().hex
+        started_at = _api_timestamp()
+        result_holder: dict[str, object] = {
+            **_stash_scan_valuation_status_payload(
+                status="running",
+                active_scan_id=active_scan_id,
+                source_scan_id=published_scan_id,
+                published_scan_id=published_scan_id,
+                started_at=started_at,
+                updated_at=started_at,
+                published_at=None,
+                error=None,
+            ),
+        }
+        _prune_stash_valuation_cache(scope, published_scan_id)
+        _PENDING_STASH_VALUATIONS[scope] = dict(result_holder)
+        _LATEST_STASH_VALUATION_STATUS[scope] = dict(result_holder)
+
+    def _runner() -> None:
+        try:
+            result = run_persisted_valuation_refresh(
+                clickhouse_client,
+                account_name=account_name,
+                league=league,
+                realm=realm,
+                published_scan_id=published_scan_id,
+                scan_id=active_scan_id,
+                started_at=started_at,
+                price_item=lambda raw_item: price_check_payload(
+                    clickhouse_client,
+                    league=league,
+                    item_text=serialize_stash_item_to_clipboard(raw_item),
+                ),
+            )
+            result_status = str(result.get("status") or "").strip().lower()
+            completed_scan_id = str(result.get("scanId") or active_scan_id)
+            completed_started_at = str(result.get("startedAt") or started_at)
+            if result_status == "published":
+                payload = latest_stash_scan_valuations_payload(
+                    clickhouse_client,
+                    account_name=account_name,
+                    league=league,
+                    realm=realm,
+                )
+                completed_published_at = str(
+                    result.get("publishedAt") or _api_timestamp()
+                )
+                with _STASH_VALUATION_START_LOCK:
+                    _LATEST_STASH_VALUATION_RESULTS[scope] = payload
+                    _LATEST_STASH_VALUATION_STATUS[scope] = _stash_scan_valuation_status_payload(
+                        status="published",
+                        active_scan_id=None,
+                        source_scan_id=published_scan_id,
+                        published_scan_id=completed_scan_id,
+                        started_at=completed_started_at,
+                        updated_at=_api_timestamp(),
+                        published_at=completed_published_at,
+                        error=None,
+                    )
+            else:
+                result_error = str(result.get("error") or "").strip() or "valuation refresh failed"
+                with _STASH_VALUATION_START_LOCK:
+                    _LATEST_STASH_VALUATION_STATUS[scope] = _stash_scan_valuation_status_payload(
+                        status="failed",
+                        active_scan_id=active_scan_id,
+                        source_scan_id=published_scan_id,
+                        published_scan_id=published_scan_id,
+                        started_at=completed_started_at,
+                        updated_at=_api_timestamp(),
+                        published_at=None,
+                        error=result_error,
+                    )
+        except Exception as exc:
+            logger.exception(
+                "stash valuation refresh failed account=%s league=%s realm=%s",
+                account_name,
+                league,
+                realm,
+            )
+            with _STASH_VALUATION_START_LOCK:
+                _LATEST_STASH_VALUATION_STATUS[scope] = _stash_scan_valuation_status_payload(
+                    status="failed",
+                    active_scan_id=active_scan_id,
+                    source_scan_id=published_scan_id,
+                    published_scan_id=published_scan_id,
+                    started_at=started_at,
+                    updated_at=_api_timestamp(),
+                    published_at=None,
+                    error=str(exc) or "valuation refresh failed",
+                )
+        finally:
+            with _STASH_VALUATION_START_LOCK:
+                _PENDING_STASH_VALUATIONS.pop(scope, None)
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    return result_holder
 
 
 def _start_account_stash_autoscan(
@@ -1212,7 +1507,7 @@ class ApiApp:
                     account_name=account_name,
                 )
             )
-        except StashBackendUnavailable:
+        except _STASH_BACKEND_UNAVAILABLE_ERRORS:
             raise ApiError(
                 status=503,
                 code="backend_unavailable",
@@ -1245,7 +1540,7 @@ class ApiApp:
                 enable_account_stash=self.settings.enable_account_stash,
                 session=session,
             )
-        except StashBackendUnavailable:
+        except _STASH_BACKEND_UNAVAILABLE_ERRORS:
             raise ApiError(
                 status=503,
                 code="backend_unavailable",
@@ -1287,14 +1582,14 @@ class ApiApp:
                 message="stash feature is unavailable; set POE_ENABLE_ACCOUNT_STASH=true",
             )
         account_name, league, realm = self._stash_account_scope(context)
-        result = start_private_stash_scan(
+        payload = start_stash_valuations_refresh(
             self.settings,
             self.client,
             account_name=account_name,
             league=league,
             realm=realm,
         )
-        return json_response(result, status=202)
+        return json_response(payload, status=202)
 
     def _stash_scan_valuations_status(self, context: Mapping[str, object]) -> Response:
         if not self.settings.ml_automation_enabled:
@@ -1303,14 +1598,75 @@ class ApiApp:
                 code="feature_unavailable",
                 message="ML endpoints are disabled for now",
             )
+        if not self.settings.enable_account_stash:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="stash feature is unavailable; set POE_ENABLE_ACCOUNT_STASH=true",
+            )
         account_name, league, realm = self._stash_account_scope(context)
-        payload = stash_scan_status_payload(
-            self.client,
-            account_name=account_name,
-            league=league,
-            realm=realm,
-            stale_timeout_seconds=self.settings.account_stash_scan_stale_timeout_seconds,
-        )
+        scope = (account_name, league, realm)
+        if (
+            scope in _PENDING_STASH_VALUATIONS
+            or scope in _LATEST_STASH_VALUATION_STATUS
+        ):
+            _fetch_published_scan_id_or_raise(
+                self.client,
+                account_name=account_name,
+                league=league,
+                realm=realm,
+            )
+        with _STASH_VALUATION_START_LOCK:
+            published_scan_id = _fetch_published_scan_id_or_raise(
+                self.client,
+                account_name=account_name,
+                league=league,
+                realm=realm,
+            )
+            pending = _PENDING_STASH_VALUATIONS.get(scope)
+            pending_matches_published_scan = _stash_valuation_cache_matches_published_scan(
+                pending,
+                published_scan_id,
+                field="publishedScanId",
+            )
+            if pending is not None and not pending_matches_published_scan:
+                _PENDING_STASH_VALUATIONS.pop(scope, None)
+                pending = None
+            _prune_stash_valuation_cache(scope, published_scan_id)
+            cached_status = _LATEST_STASH_VALUATION_STATUS.get(scope)
+            if pending is None and cached_status is not None:
+                return json_response(cached_status)
+        try:
+            payload = fetch_valuation_refresh_status_payload(
+                self.client,
+                account_name=account_name,
+                league=league,
+                realm=realm,
+                published_scan_id=published_scan_id,
+                stale_timeout_seconds=self.settings.account_stash_scan_stale_timeout_seconds,
+            )
+        except _STASH_BACKEND_UNAVAILABLE_ERRORS:
+            raise ApiError(
+                status=503,
+                code="backend_unavailable",
+                message="backend unavailable",
+            ) from None
+        persisted_status = str(payload.get("status") or "").strip().lower()
+        if pending is not None and pending_matches_published_scan:
+            if persisted_status in {"running", "publishing", "published", "failed"}:
+                with _STASH_VALUATION_START_LOCK:
+                    _LATEST_STASH_VALUATION_STATUS[scope] = dict(payload)
+                    if persisted_status in {"published", "failed"}:
+                        _PENDING_STASH_VALUATIONS.pop(scope, None)
+                return json_response(payload)
+            return json_response(pending)
+        if persisted_status in {"running", "publishing"}:
+            return json_response(payload)
+        if cached_status is not None:
+            return json_response(cached_status)
+        if persisted_status in {"published", "failed"}:
+            with _STASH_VALUATION_START_LOCK:
+                _LATEST_STASH_VALUATION_STATUS[scope] = dict(payload)
         return json_response(payload)
 
     def _stash_scan_valuations_result(self, context: Mapping[str, object]) -> Response:
@@ -1320,13 +1676,50 @@ class ApiApp:
                 code="feature_unavailable",
                 message="ML endpoints are disabled for now",
             )
-        account_name, league, realm = self._stash_account_scope(context)
-        payload = latest_stash_scan_valuations_payload(
-            self.client,
-            account_name=account_name,
-            league=league,
-            realm=realm,
+        if not self.settings.enable_account_stash:
+            raise ApiError(
+                status=503,
+                code="feature_unavailable",
+                message="stash feature is unavailable; set POE_ENABLE_ACCOUNT_STASH=true",
         )
+        account_name, league, realm = self._stash_account_scope(context)
+        scope = (account_name, league, realm)
+        if scope in _LATEST_STASH_VALUATION_RESULTS:
+            _fetch_published_scan_id_or_raise(
+                self.client,
+                account_name=account_name,
+                league=league,
+                realm=realm,
+            )
+        with _STASH_VALUATION_START_LOCK:
+            published_scan_id = _fetch_published_scan_id_or_raise(
+                self.client,
+                account_name=account_name,
+                league=league,
+                realm=realm,
+            )
+            _prune_stash_valuation_cache(scope, published_scan_id)
+            payload = _LATEST_STASH_VALUATION_RESULTS.get(scope)
+        if (
+            payload is None
+            or not published_scan_id
+            or str(payload.get("scanId") or "") != published_scan_id
+        ):
+            try:
+                payload = latest_stash_scan_valuations_payload(
+                    self.client,
+                    account_name=account_name,
+                    league=league,
+                    realm=realm,
+                )
+            except _STASH_BACKEND_UNAVAILABLE_ERRORS:
+                raise ApiError(
+                    status=503,
+                    code="backend_unavailable",
+                    message="backend unavailable",
+                ) from None
+            with _STASH_VALUATION_START_LOCK:
+                _LATEST_STASH_VALUATION_RESULTS[scope] = payload
         return json_response(payload)
 
     def _stash_scan_valuations(self, context: Mapping[str, object]) -> Response:
@@ -1550,15 +1943,17 @@ class ApiApp:
                 message="fingerprint is required",
             )
         params = _query_params_from_context(context)
-        limit_raw = _first_query_param(params, "limit", default="20")
-        try:
-            limit = int(limit_raw)
-        except ValueError as exc:
-            raise ApiError(
-                status=400,
-                code="invalid_input",
-                message="limit must be an integer",
-            ) from exc
+        limit_raw = _optional_query_param(params, "limit")
+        limit: int = 50
+        if limit_raw is not None:
+            try:
+                limit = max(int(limit_raw), 1)
+            except ValueError as exc:
+                raise ApiError(
+                    status=400,
+                    code="invalid_input",
+                    message="limit must be an integer",
+                ) from exc
         try:
             payload = fetch_stash_item_history(
                 self.client,
@@ -1566,7 +1961,7 @@ class ApiApp:
                 league=league,
                 realm=realm,
                 fingerprint=fingerprint,
-                limit=max(limit, 1),
+                limit=limit,
             )
         except StashBackendUnavailable:
             raise ApiError(

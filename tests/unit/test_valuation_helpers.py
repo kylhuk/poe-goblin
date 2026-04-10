@@ -74,7 +74,7 @@ def test_stash_scan_valuations_full_match_empty_runs_one_fallback_query_per_affi
         "y": 0,
         "w": 2,
         "h": 2,
-        "listed_price": None,
+        "listed_price": 40.0,
         "currency": "chaos",
         "predicted_price": 42.0,
         "confidence": 0.9,
@@ -126,6 +126,17 @@ def test_stash_scan_valuations_full_match_empty_runs_one_fallback_query_per_affi
     assert payload["chaosMedian"] is None
     assert len(payload["daySeries"]) == 10
     assert all(entry["chaosMedian"] is None for entry in payload["daySeries"])
+    assert payload["listedPrice"] == 40.0
+    assert payload["listedCurrency"] == "chaos"
+    assert payload["listedPriceChaos"] == 40.0
+    assert payload["estimatedPrice"] == 42.0
+    assert payload["estimatedPriceChaos"] == 42.0
+    assert payload["priceDeltaChaos"] == -2.0
+    assert round(payload["priceDeltaPercent"], 6) == round((-2.0 / 42.0) * 100.0, 6)
+    assert payload["priceBand"] == "good"
+    assert payload["priceEvaluation"] == "well_priced"
+    assert payload["priceBandVersion"] == 1
+    assert payload["priceRecommendationEligible"] is True
     assert payload["affixFallbackMedians"] == [
         {"affix": "+93 to maximum Life", "chaosMedian": 12.0},
         {"affix": "+30% to Fire Resistance", "chaosMedian": 24.0},
@@ -223,8 +234,11 @@ def test_day_series_from_rows_fills_missing_days_with_nulls() -> None:
     [
         (5, "chaos", None, 5.0),
         (2, "divine", 150, 300.0),
+        (2, "divine orb", 150, 300.0),
         (2, "div", 200, 400.0),
-        (2, "divine", None, None),
+        (2, "c", None, 2.0),
+        (2, "exalted orb", None, None),
+        (2, "divine", None, 400.0),
     ],
 )
 def test_normalize_chaos_price_handles_chaos_and_divine_aliases(
@@ -241,3 +255,65 @@ def test_normalize_chaos_price_handles_chaos_and_divine_aliases(
         )
         == expected
     )
+
+
+def test_stash_scan_valuations_normalize_non_chaos_prices_before_band_math() -> None:
+    scan_row = {
+        "scan_id": "scan-1",
+        "account_name": "qa-exile",
+        "league": "Mirage",
+        "realm": "pc",
+        "tab_id": "tab-1",
+        "tab_index": 0,
+        "tab_name": "Currency",
+        "tab_type": "normal",
+        "lineage_key": "item:item-1",
+        "item_id": "item-1",
+        "item_name": "Divine Test",
+        "item_class": "Helmet",
+        "rarity": "rare",
+        "x": 0,
+        "y": 0,
+        "w": 2,
+        "h": 2,
+        "listed_price": 2.0,
+        "currency": "divine",
+        "predicted_price": 1.0,
+        "confidence": 0.9,
+        "price_p10": 0.8,
+        "price_p90": 1.2,
+        "price_recommendation_eligible": 1,
+        "estimate_trust": "normal",
+        "estimate_warning": "",
+        "fallback_reason": "",
+        "icon_url": "https://example.invalid/icon.png",
+        "priced_at": "2026-03-21 12:00:00",
+        "payload_json": json.dumps(
+            {
+                "baseType": "Hubris Circlet",
+                "typeLine": "Hubris Circlet",
+            }
+        ),
+    }
+    client = _SequentialClickHouse([json.dumps(scan_row, ensure_ascii=False) + "\n"])
+
+    payload = build_stash_scan_valuations_payload(
+        client,
+        account_name="qa-exile",
+        league="Mirage",
+        realm="pc",
+        scan_id="scan-1",
+        item_id="item-1",
+        structured_mode=False,
+        min_threshold=10.0,
+        max_threshold=50.0,
+        max_age_days=30,
+    )
+
+    assert payload["listedCurrency"] == "divine"
+    assert payload["listedPriceChaos"] == 400.0
+    assert payload["estimatedPriceChaos"] == 200.0
+    assert payload["priceDeltaChaos"] == 200.0
+    assert payload["priceDeltaPercent"] == 100.0
+    assert payload["priceBand"] == "bad"
+    assert payload["priceEvaluation"] == "mispriced"

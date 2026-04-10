@@ -1,0 +1,14 @@
+{
+  "failures": [
+    {
+      "id": "FM-003",
+      "title": "Published valuation-refresh snapshots must remain usable as the persisted source for the next refresh",
+      "layer": "integration",
+      "red_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_reuses_published_refresh_rows_for_next_refresh",
+      "green_cmd": "bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_reuses_published_refresh_rows_for_next_refresh",
+      "test_paths": [
+        "tests/unit/test_account_stash_harvester.py"
+      ]
+    }
+  ]
+}

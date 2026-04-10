@@ -1,0 +1,8 @@
+Updated the planning artifacts to reflect the actual repair batch instead of the older metadata-only hypothesis.
+
+[`ExecutionPlan.md`](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/ExecutionPlan.md), [`Runbook.md`](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/Runbook.md), [`VerificationPlan.json`](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/VerificationPlan.json), and [`Documentation.md`](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/Documentation.md) now specify a concrete batched repair for:
+- stale `_PENDING_STASH_VALUATIONS` reuse before current published-scan reconciliation,
+- restart-unsafe recovery of `published` valuation-refresh status after cache loss,
+- the false-green test gap that currently misses both paths.
+
+The updated plan is implementation-ready: it names the exact backend seams to change (`poe_trade/api/app.py`, `poe_trade/stash_scan.py`), defines the new persisted published-status lookup keyed by current `scan_id`, preserves current scope/allowed paths, and keeps the frozen backend plus vitest gates. I did not run verification commands in this planning pass.

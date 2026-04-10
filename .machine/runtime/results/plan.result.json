@@ -1,0 +1,15 @@
+{
+  "node_id": "plan",
+  "agent": "architect",
+  "model": "gpt-5.4",
+  "reasoning": "high",
+  "sandbox": "danger-full-access",
+  "success": true,
+  "exit_code": 0,
+  "output_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/results/plan.output.md",
+  "prompt_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/artifacts/plan/prompt.md",
+  "log_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/logs/plan.log",
+  "started_at": "2026-04-10T02:09:01Z",
+  "completed_at": "2026-04-10T02:19:53Z",
+  "schema": null
+}

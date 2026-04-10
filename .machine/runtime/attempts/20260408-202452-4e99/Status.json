@@ -1,0 +1,26 @@
+{
+  "phase": "failed",
+  "result": "failed",
+  "task_id": "task-20260402-155839-efde",
+  "run_id": "20260408-202452-4e99",
+  "branch": "machine/poe-goblin/20260404-101114-a74c",
+  "worktree": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c",
+  "updated_at": "2026-04-08T21:28:25Z",
+  "current_agent": "",
+  "current_node": "failed",
+  "last_result": {
+    "node_id": "review",
+    "agent": "reviewer",
+    "model": "gpt-5.4",
+    "reasoning": "high",
+    "sandbox": "danger-full-access",
+    "success": true,
+    "exit_code": 0,
+    "output_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/results/review.output.json",
+    "prompt_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/artifacts/review/prompt.md",
+    "log_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/logs/review.log",
+    "started_at": "2026-04-08T21:22:11Z",
+    "completed_at": "2026-04-08T21:28:25Z",
+    "schema": "review_gate.schema.json"
+  }
+}

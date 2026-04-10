@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "recommended_next_action", "summary", "requirements", "open_issues"],
+  "properties": {
+    "status": {"type": "string", "enum": ["pass", "fail"]},
+    "recommended_next_action": {"type": "string", "enum": ["accept", "repair"]},
+    "summary": {"type": "string"},
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requirement", "status", "evidence", "notes"],
+        "properties": {
+          "requirement": {"type": "string"},
+          "status": {"type": "string", "enum": ["pass", "fail", "uncertain"]},
+          "evidence": {"type": "array", "items": {"type": "string"}},
+          "notes": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "open_issues": {"type": "array", "items": {"type": "string"}}
+  }
+}

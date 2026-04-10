@@ -144,6 +144,34 @@ function computeEvaluation(
   return 'mispriced';
 }
 
+function priceEvaluationFromBand(priceBand?: PoeItem['priceBand']): PoeItem['priceEvaluation'] | undefined {
+  switch (priceBand) {
+    case 'good':
+      return 'well_priced';
+    case 'mediocre':
+      return 'could_be_better';
+    case 'bad':
+      return 'mispriced';
+    default:
+      return undefined;
+  }
+}
+
+function formatPriceEvaluationLabel(
+  priceEvaluation?: PoeItem['priceEvaluation'],
+): string | null {
+  switch (priceEvaluation) {
+    case 'well_priced':
+      return 'Well priced';
+    case 'could_be_better':
+      return 'Could be better';
+    case 'mispriced':
+      return 'Mispriced';
+    default:
+      return null;
+  }
+}
+
 /** Merge valuation items into displayed PoeItems by id or fingerprint */
 function mergeValuationIntoItems(items: PoeItem[], valItems: Record<string, unknown>[]): PoeItem[] {
   const byFingerprint = new Map<string, Record<string, unknown>>();
@@ -169,22 +197,54 @@ function mergeValuationIntoItems(items: PoeItem[], valItems: Record<string, unkn
     // Day series for sparkline
     const daySeries = (match.daySeries ?? match.day_series) as PoeItem['daySeries'] | undefined;
 
-    const estimatedPrice = chaosMedian != null && chaosMedian > 0 ? chaosMedian : 0;
-
-    // Determine currency — prefer item's own, fall back to valuation's
-    const itemCurrency = item.currency ?? (typeof match.currency === 'string' ? match.currency : undefined);
-
-    // Compute evaluation client-side: only when chaosMedian exists
-    const priceEvaluation = chaosMedian != null && chaosMedian > 0
-      ? computeEvaluation(item.listedPrice, chaosMedian, itemCurrency)
+    const backendEstimatedPrice = typeof match.estimatedPrice === 'number' ? match.estimatedPrice : undefined;
+    const backendEstimatedPriceConfidence = typeof match.estimatedPriceConfidence === 'number'
+      ? match.estimatedPriceConfidence
       : undefined;
+    const backendPriceBand = typeof match.priceBand === 'string' ? (match.priceBand as PoeItem['priceBand']) : undefined;
+    const backendPriceEvaluation = typeof match.priceEvaluation === 'string'
+      ? (match.priceEvaluation as PoeItem['priceEvaluation'])
+      : undefined;
+    const backendPriceDeltaChaos = typeof match.priceDeltaChaos === 'number' ? match.priceDeltaChaos : undefined;
+    const backendPriceDeltaPercent = typeof match.priceDeltaPercent === 'number' ? match.priceDeltaPercent : undefined;
 
-    // Compute delta in chaos (normalise listedPrice to chaos first)
-    const listedChaos = (item.listedPrice != null) ? toChaos(item.listedPrice, itemCurrency) : null;
-    const priceDeltaChaos = (chaosMedian && chaosMedian > 0 && listedChaos != null)
-      ? Math.round(listedChaos - chaosMedian) : null;
-    const priceDeltaPercent = (chaosMedian && chaosMedian > 0 && listedChaos != null)
-      ? Math.round(((listedChaos - chaosMedian) / chaosMedian) * 100) : null;
+    const estimatedPrice = backendEstimatedPrice
+      ?? item.estimatedPrice
+      ?? (chaosMedian != null && chaosMedian > 0 ? chaosMedian : null);
+
+    // Determine currency — prefer backend values before any local fallback.
+    const itemCurrency = item.currency
+      ?? (typeof match.currency === 'string' ? match.currency : undefined);
+
+    const priceBand = backendPriceBand
+      ?? item.priceBand
+      ?? (backendPriceEvaluation === 'well_priced'
+        ? 'good'
+        : backendPriceEvaluation === 'could_be_better'
+          ? 'mediocre'
+          : backendPriceEvaluation === 'mispriced'
+            ? 'bad'
+            : undefined);
+    const priceEvaluation = backendPriceEvaluation
+      ?? priceEvaluationFromBand(backendPriceBand)
+      ?? item.priceEvaluation
+      ?? (chaosMedian != null && chaosMedian > 0
+        ? computeEvaluation(item.listedPrice, chaosMedian, itemCurrency)
+        : undefined);
+    const listedChaos = item.listedPrice != null ? toChaos(item.listedPrice, itemCurrency) : null;
+    const priceDeltaChaos = backendPriceDeltaChaos
+      ?? item.priceDeltaChaos
+      ?? ((chaosMedian && chaosMedian > 0 && listedChaos != null)
+        ? Math.round(listedChaos - chaosMedian)
+        : null);
+    const priceDeltaPercent = backendPriceDeltaPercent
+      ?? item.priceDeltaPercent
+      ?? ((chaosMedian && chaosMedian > 0 && listedChaos != null)
+        ? Math.round(((listedChaos - chaosMedian) / chaosMedian) * 100)
+        : null);
+    const estimatedPriceConfidence = backendEstimatedPriceConfidence
+      ?? item.estimatedPriceConfidence
+      ?? undefined;
 
     return {
       ...item,
@@ -192,6 +252,8 @@ function mergeValuationIntoItems(items: PoeItem[], valItems: Record<string, unkn
       chaosMedian,
       daySeries,
       affixFallbackMedians,
+      estimatedPriceConfidence,
+      priceBand,
       priceEvaluation,
       priceDeltaChaos,
       priceDeltaPercent,
@@ -675,28 +737,38 @@ const StashViewerTab = forwardRef<HTMLDivElement, Record<string, never>>(functio
                   <PriceSparkline points={historySparklinePoints} width={200} height={32} />
                 </div>
               )}
-              {historyPayload.history.map(entry => (
-                <div key={`${entry.scanId}-${entry.pricedAt}`} className="rounded border border-border p-3 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium font-mono">
-                      {entry.predictedValue}{entry.currency === 'div' ? ' div' : ' c'}
-                    </span>
-                    {entry.listedPrice != null && (
-                      <span className="text-xs text-muted-foreground font-mono">
-                        listed: {entry.listedPrice}{entry.currency === 'div' ? ' div' : ' c'}
+              {historyPayload.history.map(entry => {
+                const historyPriceEvaluation = entry.priceEvaluation ?? priceEvaluationFromBand(entry.priceBand);
+                const historyPriceLabel = formatPriceEvaluationLabel(historyPriceEvaluation);
+
+                return (
+                  <div key={`${entry.scanId}-${entry.pricedAt}`} className="rounded border border-border p-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium font-mono">
+                        {entry.predictedValue}{entry.currency === 'div' ? ' div' : ' c'}
                       </span>
+                      {entry.listedPrice != null && (
+                        <span className="text-xs text-muted-foreground font-mono">
+                          listed: {entry.listedPrice}{entry.currency === 'div' ? ' div' : ' c'}
+                        </span>
+                      )}
+                      <span className="text-xs text-muted-foreground ml-auto">{entry.pricedAt}</span>
+                    </div>
+                    {historyPriceLabel && (
+                      <div className="mt-1 text-xs font-medium text-foreground">
+                        Price quality: {historyPriceLabel}
+                      </div>
                     )}
-                    <span className="text-xs text-muted-foreground ml-auto">{entry.pricedAt}</span>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Confidence {entry.confidence}% · p10 {entry.interval.p10 ?? 'n/a'} · p90 {entry.interval.p90 ?? 'n/a'}
+                      {entry.estimateTrust ? ` · ${entry.estimateTrust}` : ''}
+                    </div>
+                    {entry.estimateWarning && (
+                      <div className="mt-0.5 text-[10px] text-warning">{entry.estimateWarning}</div>
+                    )}
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    Confidence {entry.confidence}% · p10 {entry.interval.p10 ?? 'n/a'} · p90 {entry.interval.p90 ?? 'n/a'}
-                    {entry.estimateTrust ? ` · ${entry.estimateTrust}` : ''}
-                  </div>
-                  {entry.estimateWarning && (
-                    <div className="mt-0.5 text-[10px] text-warning">{entry.estimateWarning}</div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
               {historyPayload.history.length === 0 && (
                 <p className="text-xs text-muted-foreground">No price history available for this item.</p>
               )}

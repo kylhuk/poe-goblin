@@ -1,0 +1,4 @@
+{
+  "mode": "resume_replan",
+  "reason": "existing task-owned candidate state detected but matrix/verification metadata is missing or invalid; replan against current candidate state before resuming"
+}

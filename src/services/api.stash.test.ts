@@ -5,6 +5,10 @@ const { getSessionMock } = vi.hoisted(() => ({
   getSessionMock: vi.fn(),
 }));
 
+const { getSelectedLeagueMock } = vi.hoisted(() => ({
+  getSelectedLeagueMock: vi.fn(),
+}));
+
 vi.mock('@/lib/supabaseClient', () => ({
   supabase: {
     auth: {
@@ -12,6 +16,10 @@ vi.mock('@/lib/supabaseClient', () => ({
     },
   },
   SUPABASE_PROJECT_ID: 'project-id',
+}));
+
+vi.mock('@/services/league', () => ({
+  getSelectedLeague: getSelectedLeagueMock,
 }));
 
 async function loadApi() {
@@ -24,6 +32,7 @@ describe('stash api methods', () => {
     vi.resetModules();
     vi.stubEnv('VITE_SUPABASE_PROJECT_ID', 'project-id');
     getSessionMock.mockResolvedValue({ data: { session: { access_token: 'token-123' } } });
+    getSelectedLeagueMock.mockReturnValue('Hardcore Mirage');
     clearApiErrors();
   });
 
@@ -55,12 +64,28 @@ describe('stash api methods', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.scanId).toBe('scan-2');
     expect(result.accountName).toBe('qa-exile');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      headers: expect.objectContaining({
+        'x-proxy-path': '/api/v1/stash/scan/start?league=Hardcore%20Mirage&realm=pc',
+      }),
+    });
   });
 
-  test('fetches stash scan status and item history', async () => {
+  test('scoped stash lifecycle requests include the selected league and realm', async () => {
     const fetchMock = vi
       .fn()
-      // 1st call: getStashScanStatus -> /api/v1/stash/scan/status
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: async () => ({
+          scanId: 'scan-2',
+          status: 'running',
+          startedAt: '2026-03-21T12:01:00Z',
+          accountName: 'qa-exile',
+          league: 'Hardcore Mirage',
+          realm: 'pc',
+        }),
+      } as Response)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -79,8 +104,33 @@ describe('stash api methods', () => {
           },
           error: null,
         }),
-      } as Response)
-      // 2nd call: getStashItemHistory -> /api/v1/stash/items/{fp}/history
+      } as Response);
+    const startValuationsResponse = {
+      ok: true,
+      status: 202,
+      json: async () => ({}),
+    } as Response;
+    const valuationsStatusResponse = {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: 'published',
+      }),
+    } as Response;
+    const valuationsResultResponse = {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        scanId: 'scan-2',
+        stashId: 'scan-2',
+        structuredMode: true,
+        items: [],
+      }),
+    } as Response;
+    fetchMock
+      .mockResolvedValueOnce(startValuationsResponse)
+      .mockResolvedValueOnce(valuationsStatusResponse)
+      .mockResolvedValueOnce(valuationsResultResponse)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -112,14 +162,90 @@ describe('stash api methods', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const api = await loadApi();
+    await api.startStashScan();
     const status = await api.getStashScanStatus();
+    await api.startStashValuations();
+    await api.getStashValuationsStatus();
+    await api.getStashValuationsResult();
     const history = await api.getStashItemHistory('sig:item-1');
 
     expect(status.activeScanId).toBe('scan-2');
     expect(status.progress.itemsProcessed).toBe(44);
     expect(history.item.name).toBe('Grim Bane');
     expect(history.history[0].interval.p10).toBe(39);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+
+    const requestedPaths = fetchMock.mock.calls.map(([, init]) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      return headers['x-proxy-path'];
+    });
+
+    expect(requestedPaths).toEqual([
+      '/api/v1/stash/scan/start?league=Hardcore%20Mirage&realm=pc',
+      '/api/v1/stash/scan/status?league=Hardcore%20Mirage&realm=pc',
+      '/api/v1/stash/scan/valuations/start?league=Hardcore%20Mirage&realm=pc',
+      '/api/v1/stash/scan/valuations/status?league=Hardcore%20Mirage&realm=pc',
+      '/api/v1/stash/scan/valuations/result?league=Hardcore%20Mirage&realm=pc',
+      '/api/v1/stash/items/sig%3Aitem-1/history?league=Hardcore%20Mirage&realm=pc',
+    ]);
+  });
+
+  test('preserves backend price judgments from stash scan results', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          scanId: 'scan-1',
+          publishedAt: '2026-03-21T12:00:00Z',
+          isStale: false,
+          scanStatus: null,
+          stashTabs: [
+            {
+              id: 'tab-1',
+              name: 'Currency',
+              type: 'currency',
+              items: [
+                {
+                  id: 'item-1',
+                  fingerprint: 'sig:item-1',
+                  name: 'Grim Bane',
+                  typeLine: 'Hubris Circlet',
+                  iconUrl: 'https://web.poecdn.com/item.png',
+                  x: 0,
+                  y: 0,
+                  w: 1,
+                  h: 1,
+                  frameType: 2,
+                  itemClass: 'Helmet',
+                  rarity: 'rare',
+                  listedPrice: 100,
+                  estimatedPrice: 50,
+                  estimatedPriceConfidence: 82,
+                  priceDeltaChaos: 50,
+                  priceDeltaPercent: 100,
+                  priceEvaluation: 'well_priced',
+                  currency: 'chaos',
+                },
+              ],
+            },
+          ],
+          tabsMeta: [
+            { id: 'tab-1', tabIndex: 0, name: 'Currency', type: 'CurrencyStash' },
+          ],
+          numTabs: 1,
+        }),
+      } as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const api = await loadApi();
+    const result = await api.getStashScanResult();
+
+    expect(result.stashTabs[0].items[0].estimatedPrice).toBe(50);
+    expect(result.stashTabs[0].items[0].priceDeltaChaos).toBe(50);
+    expect(result.stashTabs[0].items[0].priceDeltaPercent).toBe(100);
+    expect(result.stashTabs[0].items[0].priceEvaluation).toBe('well_priced');
   });
 
   test('derives tabsMeta from stashTabs when backend omits tab metadata (via scan/result)', async () => {

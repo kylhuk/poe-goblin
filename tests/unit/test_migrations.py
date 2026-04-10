@@ -360,6 +360,22 @@ def test_incremental_v2_fx_alias_expansion_migration_maps_common_shorthand() -> 
     assert "IN ('exa', 'exalt', 'exalted', 'exalts'), 'exalted'" in sql
 
 
+def test_private_stash_scan_v2_backfill_populates_latest_and_history_structures() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0091_private_stash_scan_v2_backfill.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "INSERT INTO poe_trade.account_stash_scan_items_v2" in sql
+    assert "INSERT INTO poe_trade.account_stash_item_history_v2" in sql
+    assert "listed_price_chaos" in sql
+    assert "price_band" in sql
+
+
 def test_v3_silver_observations_migration_creates_clickhouse_first_contract() -> None:
     migration = (
         Path(__file__).resolve().parents[2]
@@ -543,6 +559,68 @@ def test_private_stash_scan_migration_is_present() -> None:
     assert migration.exists()
 
 
+def test_private_stash_scan_query_paths_migration_has_v2_tables_view_and_ttls() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0089_private_stash_scan_query_paths.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_scan_items_v2" in sql
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_item_history_v2" in sql
+    assert "CREATE VIEW IF NOT EXISTS poe_trade.v_account_stash_latest_scan_items" in sql
+    assert "TTL priced_at + INTERVAL 90 DAY DELETE" in sql
+    assert "MODIFY TTL captured_at + INTERVAL 90 DAY DELETE" in sql
+    assert "MODIFY TTL priced_at + INTERVAL 90 DAY DELETE" in sql
+    assert "GRANT SELECT ON poe_trade.v_account_stash_latest_scan_items TO poe_api_reader" in sql
+
+
+def test_private_stash_scan_retention_migration_adds_90_day_ttls() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0090_private_stash_scan_retention.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE poe_trade.account_stash_scan_runs" in sql
+    assert "ALTER TABLE poe_trade.account_stash_active_scans" in sql
+    assert "ALTER TABLE poe_trade.account_stash_published_scans" in sql
+    assert "started_at + INTERVAL 90 DAY DELETE" in sql
+    assert "updated_at + INTERVAL 90 DAY DELETE" in sql
+    assert "published_at + INTERVAL 90 DAY DELETE" in sql
+
+
+def test_private_stash_scan_v2_backfill_migration_normalizes_chaos_values() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0091_private_stash_scan_v2_backfill.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "INSERT INTO poe_trade.account_stash_item_history_v2" in sql
+    assert "WITH" in sql
+    assert "divine_to_chaos_rate" in sql
+    assert "listed_price_chaos" in sql
+    assert "estimated_price_chaos" in sql
+    assert "price_p10_chaos" in sql
+    assert "price_p90_chaos" in sql
+    assert "price_delta_chaos" in sql
+    assert "price_delta_pct" in sql
+    assert "price_band" in sql
+    assert "price_band_version" in sql
+    assert "abs(price_delta_pct) <= 10.0" in sql
+    assert "if(abs(price_delta_pct) <= 25.0, 'mediocre', 'bad')" in sql
+
+
 def test_private_stash_scan_migration_creates_run_tab_item_and_pointer_tables() -> None:
     migration = (
         Path(__file__).resolve().parents[2]
@@ -571,6 +649,38 @@ def test_private_stash_scan_migration_relies_on_existing_poe_rw_role_grants() ->
     sql = migration.read_text(encoding="utf-8")
 
     assert "GRANT " not in sql
+
+
+def test_private_stash_scan_v2_price_evaluation_migration_adds_backend_label_columns() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0092_private_stash_scan_price_evaluation.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE poe_trade.account_stash_scan_items_v2" in sql
+    assert "ALTER TABLE poe_trade.account_stash_item_history_v2" in sql
+    assert "price_evaluation LowCardinality(String)" in sql
+
+
+def test_private_stash_refresh_lifecycle_metadata_migration_adds_kind_and_source_columns() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0093_private_stash_refresh_lifecycle_metadata.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE poe_trade.account_stash_scan_runs" in sql
+    assert "ALTER TABLE poe_trade.account_stash_active_scans" in sql
+    assert "ADD COLUMN IF NOT EXISTS scan_kind" in sql
+    assert "ADD COLUMN IF NOT EXISTS source_scan_id" in sql
+    assert "DEFAULT 'stash_scan'" in sql
 
 
 def test_scanner_opportunity_analytics_migration_adds_decision_storage() -> None:

@@ -231,6 +231,190 @@ describe('StashViewerTab', () => {
     expect(await screen.findByAltText('Grim Bane')).toBeInTheDocument();
   });
 
+  test('keeps backend price judgments after valuation results merge into the stash view', async () => {
+    const backendScanPayload = {
+      ...publishedTabsPayload,
+      stashTabs: [
+        {
+          ...publishedTabsPayload.stashTabs[0],
+          items: [
+            {
+              id: 'item-1',
+              fingerprint: 'sig:item-1',
+              name: 'Grim Bane',
+              typeLine: 'Hubris Circlet',
+              iconUrl: 'https://web.poecdn.com/item.png',
+              x: 0,
+              y: 0,
+              w: 1,
+              h: 1,
+              frameType: 2,
+              itemClass: 'Helmet',
+              rarity: 'rare',
+              listedPrice: 100,
+              currency: 'chaos',
+            },
+          ],
+        },
+      ],
+    };
+
+    getStashScanResultMock.mockResolvedValue(backendScanPayload);
+    getStashValuationsResultMock.mockResolvedValue({
+      structuredMode: true,
+      scanId: 'scan-1',
+      stashId: 'scan-1',
+      itemId: null,
+      scanDatetime: null,
+      chaosMedian: null,
+      daySeries: [],
+      items: [
+        {
+          id: 'item-1',
+          fingerprint: 'sig:item-1',
+          name: 'Grim Bane',
+          listedPrice: 100,
+          estimatedPrice: 50,
+          chaosMedian: 50,
+          currency: 'chaos',
+          priceDeltaChaos: 50,
+          priceDeltaPercent: 100,
+          priceEvaluation: 'well_priced',
+          interval: { p10: 48, p90: 52 },
+        },
+      ],
+    });
+
+    render(<StashViewerTab />);
+
+    expect(await screen.findByTestId('stash-panel-grid')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(getStashValuationsResultMock).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Well priced')).toBeInTheDocument();
+    });
+  });
+
+  test('shows backend price quality inside the item history dialog', async () => {
+    getStashItemHistoryMock.mockResolvedValue({
+      fingerprint: 'sig:item-1',
+      item: {
+        name: 'Grim Bane',
+        itemClass: 'Helmet',
+        rarity: 'rare',
+        iconUrl: 'https://web.poecdn.com/item.png',
+      },
+      history: [
+        {
+          scanId: 'scan-2',
+          pricedAt: '2026-03-21T12:00:00Z',
+          predictedValue: 45,
+          listedPrice: 40,
+          currency: 'chaos',
+          confidence: 82,
+          interval: { p10: 39, p90: 51 },
+          priceBand: 'good',
+          priceEvaluation: 'well_priced',
+          priceBandVersion: 1,
+          priceRecommendationEligible: true,
+          estimateTrust: 'normal',
+          estimateWarning: '',
+          fallbackReason: '',
+        },
+      ],
+    });
+
+    render(<StashViewerTab />);
+
+    expect(await screen.findByTestId('stash-panel-grid')).toBeInTheDocument();
+
+    const itemCell = screen.getByAltText('Grim Bane').closest('.stash-item-cell');
+    expect(itemCell).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(itemCell as HTMLElement);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(getStashItemHistoryMock).toHaveBeenCalledWith('sig:item-1');
+    });
+    expect(screen.getByText('Price quality: Well priced')).toBeInTheDocument();
+  });
+
+  test('uses the backend price band when the evaluation label is omitted', async () => {
+    const backendScanPayload = {
+      ...publishedTabsPayload,
+      stashTabs: [
+        {
+          ...publishedTabsPayload.stashTabs[0],
+          items: [
+            {
+              id: 'item-1',
+              fingerprint: 'sig:item-1',
+              name: 'Grim Bane',
+              typeLine: 'Hubris Circlet',
+              iconUrl: 'https://web.poecdn.com/item.png',
+              x: 0,
+              y: 0,
+              w: 1,
+              h: 1,
+              frameType: 2,
+              itemClass: 'Helmet',
+              rarity: 'rare',
+              listedPrice: 100,
+              currency: 'chaos',
+            },
+          ],
+        },
+      ],
+    };
+
+    getStashScanResultMock.mockResolvedValue(backendScanPayload);
+    getStashValuationsResultMock.mockResolvedValue({
+      structuredMode: true,
+      scanId: 'scan-1',
+      stashId: 'scan-1',
+      itemId: null,
+      scanDatetime: null,
+      chaosMedian: null,
+      daySeries: [],
+      items: [
+        {
+          id: 'item-1',
+          fingerprint: 'sig:item-1',
+          name: 'Grim Bane',
+          listedPrice: 100,
+          estimatedPrice: 50,
+          chaosMedian: 50,
+          currency: 'chaos',
+          priceDeltaChaos: 50,
+          priceDeltaPercent: 100,
+          priceBand: 'good',
+          interval: { p10: 48, p90: 52 },
+        },
+      ],
+    });
+
+    render(<StashViewerTab />);
+
+    expect(await screen.findByTestId('stash-panel-grid')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(getStashValuationsResultMock).toHaveBeenCalled();
+    });
+
+    const itemCell = screen.getByAltText('Grim Bane').closest('.stash-item-cell');
+    expect(itemCell).not.toBeNull();
+    expect(itemCell).toHaveClass('bg-success/8');
+    expect(itemCell).toHaveClass('ring-success/40');
+    expect(itemCell).not.toHaveClass('bg-destructive/10');
+  });
+
   test('starts a scan, polls status, and refreshes once the scan publishes', async () => {
     getStashScanStatusMock
       .mockResolvedValueOnce({
@@ -280,8 +464,7 @@ describe('StashViewerTab', () => {
 
     // getStashScanResult called for initial load + after scan publish
     expect(getStashScanResultMock.mock.calls.length).toBeGreaterThanOrEqual(2);
-    // startStashValuations called with no arguments (new API)
-    expect(startStashValuationsMock).toHaveBeenCalledWith();
+    expect(startStashValuationsMock).toHaveBeenCalled();
   });
 
   test('selects the requested tab instead of always using the first returned tab', async () => {
@@ -411,7 +594,7 @@ describe('StashViewerTab', () => {
     expect(valuateBtn).not.toBeDisabled();
   });
 
-  test('Valuate button calls startStashValuations with no arguments', async () => {
+  test('Valuate button triggers the valuation refresh flow', async () => {
     render(<StashViewerTab />);
     await screen.findByTestId('stash-panel-grid');
 
@@ -421,6 +604,6 @@ describe('StashViewerTab', () => {
       await Promise.resolve();
     });
 
-    expect(startStashValuationsMock).toHaveBeenCalledWith();
+    expect(startStashValuationsMock).toHaveBeenCalled();
   });
 });

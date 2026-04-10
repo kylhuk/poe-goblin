@@ -1,0 +1,9 @@
+{
+  "node_id": "verify",
+  "command": "bash .machine/runtime/verify.sh",
+  "success": true,
+  "exit_code": 0,
+  "log_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/logs/verify.log",
+  "started_at": "2026-04-08T21:21:42Z",
+  "completed_at": "2026-04-08T21:22:11Z"
+}

@@ -1,0 +1,61 @@
+{
+  "run_id": "20260406-141715-f12c",
+  "env": "poe-goblin",
+  "task_id": "task-20260402-155839-efde",
+  "workflow": "hardened-delivery",
+  "created_at": "2026-04-06T14:17:17Z",
+  "updated_at": "2026-04-06T16:08:02Z",
+  "baseline_dirty_files": [
+    "apispec.yml",
+    "poe_trade/api/app.py",
+    "poe_trade/api/stash.py",
+    "poe_trade/api/valuation.py",
+    "poe_trade/ingestion/account_stash_harvester.py",
+    "poe_trade/stash_scan.py",
+    "tests/unit/test_account_stash_harvester.py",
+    "tests/unit/test_api_stash.py",
+    "tests/unit/test_api_stash_valuations.py",
+    "tests/unit/test_apispec_contract.py",
+    "tests/unit/test_stash_scan.py",
+    "tests/unit/test_valuation_helpers.py",
+    ".machine/runtime/Capabilities.json",
+    ".machine/runtime/CodeReviewChecklist.md",
+    ".machine/runtime/Documentation.md",
+    ".machine/runtime/Evidence.md",
+    ".machine/runtime/ExecutionPlan.md",
+    ".machine/runtime/FailureDossier.md",
+    ".machine/runtime/FollowUpTasks.md",
+    ".machine/runtime/Notes.md",
+    ".machine/runtime/ProductSpec.md",
+    ".machine/runtime/Runbook.md",
+    ".machine/runtime/Task.md",
+    ".machine/runtime/VerificationPlan.json",
+    ".machine/runtime/acceptance_preflight.sh",
+    ".machine/runtime/red_gate.sh",
+    ".machine/runtime/schemas/acceptance_gate.schema.json",
+    ".machine/runtime/schemas/question_gate.schema.json",
+    ".machine/runtime/schemas/review_gate.schema.json",
+    ".machine/runtime/scope_guard.sh",
+    ".machine/runtime/verify.sh",
+    ".machine/runtime/verify_plan_guard.sh",
+    "schema/migrations/0089_private_stash_scan_query_paths.sql",
+    "schema/migrations/0090_private_stash_scan_retention.sql",
+    "schema/migrations/0091_private_stash_scan_v2_backfill.sql"
+  ],
+  "counters": {
+    "quality_cycle": 3,
+    "repair_passes": 4
+  },
+  "limits": {
+    "max_quality_cycles": 6,
+    "max_repair_passes": 3
+  },
+  "current_node": "failed",
+  "current_agent": "",
+  "failure_streak": {
+    "node_id": "scope_guard",
+    "fingerprint": "scope_guard:SCOPE_GUARD_FAIL: changed file outside allowed_paths: src/components/tabs/StashViewerTab.test.tsx || SCOPE_GUARD_FAIL: changed file outside allowed_paths: src/components/tabs/StashViewerTab.tsx || SCOPE_GUARD_FAIL: changed file outside allowed_paths: src/services/api.stash.test.ts || SCOPE_GUARD_FAIL: changed file outside allowed_paths: src/services/api.ts || SCOPE_GUARD_FAIL: changed file outside allowed_paths: src/types/api.ts || SCOPE_GUARD_FAIL: changed file outside allowed_paths: tests/unit/test_migrations.py || SCOPE_GUARD_FAIL: changed file outside allowed_paths: vitest.config.ts || SCOPE_GUARD_FAIL: changed file outside allowed_paths: schema/migrations/0092_private_stash_scan_price_evaluation.sql",
+    "count": 1,
+    "updated_at": "2026-04-06T16:08:02Z"
+  }
+}
