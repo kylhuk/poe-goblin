@@ -90,6 +90,226 @@ def test_fetch_stash_tabs_delegates_account_scope_to_published_helper(
     }
 
 
+def test_published_tabs_return_v2_price_fields_for_every_item() -> None:
+    class _V2ClickHouse(ClickHouseClient):
+        def __init__(self) -> None:
+            super().__init__(endpoint="http://clickhouse")
+            self.queries: list[str] = []
+
+        def execute(  # pyright: ignore[reportImplicitOverride]
+            self, query: str, settings: Mapping[str, str] | None = None
+        ) -> str:
+            del settings
+            self.queries.append(query)
+            if "account_stash_active_scans" in query:
+                return ""
+            if "account_stash_published_scans" in query:
+                return '{"scan_id":"scan-1"}\n'
+            if "account_stash_scan_runs" in query:
+                return '{"scan_id":"scan-1","status":"published","started_at":"2026-03-21T12:00:00Z","updated_at":"2026-03-21T12:05:00Z","published_at":"2026-03-21T12:05:00Z","tabs_total":1,"tabs_processed":1,"items_total":2,"items_processed":2,"error_message":""}\n'
+            if "account_stash_scan_tabs" in query:
+                return '\n'.join(
+                    [
+                        '{"tab_id":"tab-1","tab_index":0,"tab_name":"Currency","tab_type":"currency"}',
+                    ]
+                ) + '\n'
+            if "v_account_stash_latest_scan_items" in query:
+                return '\n'.join(
+                    [
+                        '{"tab_id":"tab-1","tab_index":0,"lineage_key":"sig:item-1","item_id":"item-1","item_name":"Grim Bane","base_type":"Hubris Circlet","item_class":"Helmet","rarity":"rare","x":0,"y":0,"w":2,"h":2,"listed_price":40,"listed_currency":"chaos","listed_price_chaos":40,"estimated_price_chaos":45,"price_p10_chaos":39,"price_p90_chaos":51,"price_delta_chaos":-5,"price_delta_pct":-11.1111111111,"price_band":"good","price_band_version":1,"confidence":82,"estimate_trust":"normal","estimate_warning":"","fallback_reason":"","icon_url":"https://example.invalid/icon-1.png","priced_at":"2026-03-21T12:00:00Z"}',
+                        '{"tab_id":"tab-1","tab_index":0,"lineage_key":"sig:item-2","item_id":"item-2","item_name":"Vaal Regalia","base_type":"Vaal Regalia","item_class":"Body Armour","rarity":"rare","x":2,"y":0,"w":2,"h":2,"listed_price":55,"listed_currency":"chaos","listed_price_chaos":55,"estimated_price_chaos":44,"price_p10_chaos":40,"price_p90_chaos":48,"price_delta_chaos":11,"price_delta_pct":25,"price_band":"mediocre","price_band_version":1,"confidence":73,"estimate_trust":"normal","estimate_warning":"","fallback_reason":"","icon_url":"https://example.invalid/icon-2.png","priced_at":"2026-03-21T12:00:00Z"}',
+                    ]
+                ) + '\n'
+            if "account_stash_item_valuations" in query:
+                return ""
+            if "account_stash_published_scans" in query:
+                return '{"published_at":"2026-03-21T12:05:00Z"}\n'
+            return ""
+
+    client = _V2ClickHouse()
+
+    payload = fetch_stash_tabs(
+        client,
+        league="Mirage",
+        realm="pc",
+        account_name="qa-exile",
+    )
+
+    assert payload["scanId"] == "scan-1"
+    assert payload["stashTabs"][0]["items"][0]["priceBand"] == "good"
+    assert payload["stashTabs"][0]["items"][0]["priceEvaluation"] == "well_priced"
+    assert payload["stashTabs"][0]["items"][1]["priceBand"] == "mediocre"
+    assert payload["stashTabs"][0]["items"][1]["priceEvaluation"] == "could_be_better"
+    assert all(
+        item.get("priceBand") and item.get("priceEvaluation")
+        for item in payload["stashTabs"][0]["items"]
+    )
+    assert any("v_account_stash_latest_scan_items" in query for query in client.queries)
+    assert not any(
+        "account_stash_item_valuations" in query and "v_account_stash_latest_scan_items" not in query
+        for query in client.queries
+    )
+
+
+def test_fetch_stash_tabs_returns_every_published_tab_and_item_for_latest_scan() -> None:
+    class _CompleteV2ClickHouse(ClickHouseClient):
+        def __init__(self) -> None:
+            super().__init__(endpoint="http://clickhouse")
+            self.queries: list[str] = []
+
+        def execute(  # pyright: ignore[reportImplicitOverride]
+            self, query: str, settings: Mapping[str, str] | None = None
+        ) -> str:
+            del settings
+            self.queries.append(query)
+            if "account_stash_active_scans" in query:
+                return ""
+            if "account_stash_published_scans" in query:
+                return '{"scan_id":"scan-2"}\n'
+            if "account_stash_scan_runs" in query:
+                return '{"scan_id":"scan-2","status":"published","started_at":"2026-03-21T12:00:00Z","updated_at":"2026-03-21T12:05:00Z","published_at":"2026-03-21T12:05:00Z","tabs_total":2,"tabs_processed":2,"items_total":3,"items_processed":3,"error_message":""}\n'
+            if "account_stash_scan_tabs" in query:
+                return "\n".join(
+                    [
+                        '{"tab_id":"tab-1","tab_index":0,"tab_name":"Currency","tab_type":"currency"}',
+                        '{"tab_id":"tab-2","tab_index":1,"tab_name":"Dump","tab_type":"quad"}',
+                    ]
+                ) + "\n"
+            if "v_account_stash_latest_scan_items" in query:
+                return "\n".join(
+                    [
+                        '{"tab_id":"tab-1","tab_index":0,"lineage_key":"sig:item-1","item_id":"item-1","item_name":"Chaos Orb","base_type":"Chaos Orb","item_class":"Currency","rarity":"normal","x":0,"y":0,"w":1,"h":1,"listed_price":1,"listed_currency":"chaos","listed_price_chaos":1,"estimated_price_chaos":1,"price_p10_chaos":1,"price_p90_chaos":1,"price_delta_chaos":0,"price_delta_pct":0,"price_band":"good","price_band_version":1,"confidence":100,"estimate_trust":"normal","estimate_warning":"","fallback_reason":"","icon_url":"https://example.invalid/c1.png","priced_at":"2026-03-21T12:00:00Z"}',
+                        '{"tab_id":"tab-1","tab_index":0,"lineage_key":"sig:item-2","item_id":"item-2","item_name":"Divine Orb","base_type":"Divine Orb","item_class":"Currency","rarity":"normal","x":1,"y":0,"w":1,"h":1,"listed_price":2,"listed_currency":"chaos","listed_price_chaos":2,"estimated_price_chaos":2,"price_p10_chaos":2,"price_p90_chaos":2,"price_delta_chaos":0,"price_delta_pct":0,"price_band":"good","price_band_version":1,"confidence":100,"estimate_trust":"normal","estimate_warning":"","fallback_reason":"","icon_url":"https://example.invalid/c2.png","priced_at":"2026-03-21T12:00:00Z"}',
+                        '{"tab_id":"tab-2","tab_index":1,"lineage_key":"sig:item-3","item_id":"item-3","item_name":"Grim Bane","base_type":"Hubris Circlet","item_class":"Helmet","rarity":"rare","x":4,"y":6,"w":2,"h":2,"listed_price":40,"listed_currency":"chaos","listed_price_chaos":40,"estimated_price_chaos":40,"price_p10_chaos":38,"price_p90_chaos":42,"price_delta_chaos":0,"price_delta_pct":0,"price_band":"good","price_band_version":1,"confidence":82,"estimate_trust":"normal","estimate_warning":"","fallback_reason":"","icon_url":"https://example.invalid/h1.png","priced_at":"2026-03-21T12:00:00Z"}',
+                    ]
+                ) + "\n"
+            if "account_stash_item_valuations" in query:
+                return ""
+            return ""
+
+    client = _CompleteV2ClickHouse()
+
+    payload = fetch_stash_tabs(
+        client,
+        league="Mirage",
+        realm="pc",
+        account_name="qa-exile",
+    )
+
+    assert payload["scanId"] == "scan-2"
+    assert [tab["id"] for tab in payload["stashTabs"]] == ["tab-1", "tab-2"]
+    assert [item["id"] for item in payload["stashTabs"][0]["items"]] == ["item-1", "item-2"]
+    assert [item["id"] for item in payload["stashTabs"][1]["items"]] == ["item-3"]
+    assert sum(len(tab["items"]) for tab in payload["stashTabs"]) == 3
+    assert payload["stashTabs"][1]["items"][0]["name"] == "Grim Bane"
+    assert any("v_account_stash_latest_scan_items" in query for query in client.queries)
+    assert not any(
+        "account_stash_item_valuations" in query and "v_account_stash_latest_scan_items" not in query
+        for query in client.queries
+    )
+
+
+def test_fetch_stash_tabs_prefers_v2_latest_scan_items_for_latest_published_scan() -> None:
+    class _V2LatestScanClickHouse(ClickHouseClient):
+        def __init__(self) -> None:
+            super().__init__(endpoint="http://clickhouse")
+            self.queries: list[str] = []
+
+        def execute(  # pyright: ignore[reportImplicitOverride]
+            self, query: str, settings: Mapping[str, str] | None = None
+        ) -> str:
+            del settings
+            self.queries.append(query)
+            if "account_stash_active_scans" in query:
+                return ""
+            if "account_stash_published_scans" in query:
+                return '{"scan_id":"scan-1"}\n'
+            if "account_stash_scan_runs" in query:
+                return '{"scan_id":"scan-1","status":"published","started_at":"2026-03-21T12:00:00Z","updated_at":"2026-03-21T12:05:00Z","published_at":"2026-03-21T12:05:00Z","tabs_total":1,"tabs_processed":1,"items_total":2,"items_processed":2,"error_message":""}\n'
+            if "account_stash_scan_tabs" in query:
+                return (
+                    '{"tab_id":"tab-1","tab_index":0,"tab_name":"Currency","tab_type":"currency"}\n'
+                )
+            if "v_account_stash_latest_scan_items" in query:
+                return (
+                    '{"tab_id":"tab-1","tab_index":0,"lineage_key":"sig:item-1","item_id":"item-1","item_name":"Grim Bane","base_type":"Hubris Circlet","item_class":"Helmet","rarity":"rare","x":0,"y":0,"w":2,"h":2,"listed_price":40,"listed_currency":"chaos","listed_price_chaos":40,"estimated_price_chaos":45,"price_p10_chaos":39,"price_p90_chaos":51,"price_delta_chaos":-5,"price_delta_pct":-11.1111111111,"price_band":"good","price_band_version":1,"confidence":82,"estimate_trust":"normal","estimate_warning":"","fallback_reason":"","icon_url":"https://example.invalid/icon-1.png","priced_at":"2026-03-21T12:00:00Z"}\n'
+                )
+            if "account_stash_item_valuations" in query:
+                return ""
+            return ""
+
+    client = _V2LatestScanClickHouse()
+
+    payload = fetch_stash_tabs(
+        client,
+        league="Mirage",
+        realm="pc",
+        account_name="qa-exile",
+    )
+
+    item = payload["stashTabs"][0]["items"][0]
+    assert item["priceBand"] == "good"
+    assert item["priceEvaluation"] == "well_priced"
+    assert item["priceBandVersion"] == 1
+    assert item["estimatedPriceConfidence"] == 82.0
+    assert item["estimateTrust"] == "normal"
+    assert item["estimateWarning"] == ""
+    assert item["fallbackReason"] == ""
+    assert any("v_account_stash_latest_scan_items" in query for query in client.queries)
+    assert not any(
+        "account_stash_item_valuations" in query and "v_account_stash_latest_scan_items" not in query
+        for query in client.queries
+    )
+
+
+def test_published_tabs_preserve_stored_chaos_values_for_non_computable_currency() -> None:
+    class _V2ClickHouse(ClickHouseClient):
+        def __init__(self) -> None:
+            super().__init__(endpoint="http://clickhouse")
+            self.queries: list[str] = []
+
+        def execute(  # pyright: ignore[reportImplicitOverride]
+            self, query: str, settings: Mapping[str, str] | None = None
+        ) -> str:
+            del settings
+            self.queries.append(query)
+            if "account_stash_active_scans" in query:
+                return ""
+            if "account_stash_published_scans" in query:
+                return '{"scan_id":"scan-1"}\n'
+            if "account_stash_scan_runs" in query:
+                return '{"scan_id":"scan-1","status":"published","started_at":"2026-03-21T12:00:00Z","updated_at":"2026-03-21T12:05:00Z","published_at":"2026-03-21T12:05:00Z","tabs_total":1,"tabs_processed":1,"items_total":1,"items_processed":1,"error_message":""}\n'
+            if "account_stash_scan_tabs" in query:
+                return '{"tab_id":"tab-1","tab_index":0,"tab_name":"Currency","tab_type":"currency"}\n'
+            if "v_account_stash_latest_scan_items" in query:
+                return '{"tab_id":"tab-1","tab_index":0,"lineage_key":"sig:item-1","item_id":"item-1","item_name":"Grim Bane","base_type":"Hubris Circlet","item_class":"Helmet","rarity":"rare","x":0,"y":0,"w":2,"h":2,"listed_price":2,"listed_currency":"exalted orb","listed_price_chaos":24,"estimated_price_chaos":24,"price_p10_chaos":22,"price_p90_chaos":26,"price_delta_chaos":0,"price_delta_pct":0,"price_band":"good","price_band_version":1,"confidence":82,"estimate_trust":"normal","estimate_warning":"","fallback_reason":"","icon_url":"https://example.invalid/icon-1.png","priced_at":"2026-03-21T12:00:00Z"}\n'
+            if "account_stash_item_valuations" in query:
+                return ""
+            if "account_stash_published_scans" in query:
+                return '{"published_at":"2026-03-21T12:05:00Z"}\n'
+            return ""
+
+    client = _V2ClickHouse()
+
+    payload = fetch_stash_tabs(
+        client,
+        league="Mirage",
+        realm="pc",
+        account_name="qa-exile",
+    )
+
+    item = payload["stashTabs"][0]["items"][0]
+    assert item["listedPrice"] == 2.0
+    assert item["currency"] == "exalted orb"
+    assert item["listedPriceChaos"] == 24.0
+    assert item["estimatedPrice"] is None
+    assert item["estimatedPriceChaos"] == 24.0
+    assert item["priceBand"] == "good"
+    assert item["priceEvaluation"] == "well_priced"
+    assert item["priceRecommendationEligible"] is True
+    assert any("v_account_stash_latest_scan_items" in query for query in client.queries)
+
+
 def test_stash_status_reconciles_stale_running_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -363,6 +583,65 @@ def test_stash_scan_status_uses_reconciled_latest_run_after_active_recovery(
     assert payload["error"] == "stale active scan timed out"
 
 
+def test_stash_scan_status_ignores_valuation_refresh_rows() -> None:
+    class _LifecycleKindAwareClickHouse(ClickHouseClient):
+        def __init__(self) -> None:
+            super().__init__(endpoint="http://clickhouse")
+            self.queries: list[str] = []
+
+        def execute(  # pyright: ignore[reportImplicitOverride]
+            self, query: str, settings: Mapping[str, str] | None = None
+        ) -> str:
+            del settings
+            self.queries.append(query)
+            if "FROM poe_trade.account_stash_active_scans" in query:
+                if "scan_kind = 'stash_scan'" in query:
+                    return ""
+                return (
+                    '{"scan_id":"vr-1","is_active":1,'
+                    '"started_at":"2026-03-21T12:01:00Z",'
+                    '"updated_at":"2026-03-21T12:02:00Z"}\n'
+                )
+            if "FROM poe_trade.account_stash_scan_runs" in query:
+                if "scan_kind = 'stash_scan'" in query:
+                    return ""
+                return (
+                    '{"scan_id":"vr-1","source_scan_id":"stash-1","status":"running",'
+                    '"started_at":"2026-03-21T12:01:00Z",'
+                    '"updated_at":"2026-03-21T12:02:00Z","published_at":null,'
+                    '"tabs_total":2,"tabs_processed":1,"items_total":5,"items_processed":3,'
+                    '"error_message":""}\n'
+                )
+            if "FROM poe_trade.account_stash_published_scans" in query:
+                return '{"scan_id":"stash-1"}\n'
+            return ""
+
+    client = _LifecycleKindAwareClickHouse()
+
+    payload = stash_scan_status_payload(
+        client,
+        account_name="qa-exile",
+        league="Mirage",
+        realm="pc",
+    )
+
+    assert payload == {
+        "status": "idle",
+        "activeScanId": None,
+        "publishedScanId": "stash-1",
+        "startedAt": None,
+        "updatedAt": None,
+        "publishedAt": None,
+        "progress": {
+            "tabsTotal": 0,
+            "tabsProcessed": 0,
+            "itemsTotal": 0,
+            "itemsProcessed": 0,
+        },
+        "error": None,
+    }
+
+
 def test_fetch_stash_item_history_returns_header_and_entries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -370,7 +649,7 @@ def test_fetch_stash_item_history_returns_header_and_entries(
     monkeypatch.setattr(
         stash_api,
         "fetch_item_history",
-        lambda _client, *, account_name, league, realm, lineage_key, limit=20: {
+        lambda _client, *, account_name, league, realm, lineage_key, limit=None: {
             "fingerprint": lineage_key,
             "item": {
                 "name": "Grim Bane",

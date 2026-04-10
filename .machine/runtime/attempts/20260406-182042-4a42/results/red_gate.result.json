@@ -1,0 +1,9 @@
+{
+  "node_id": "red_gate",
+  "command": "bash .machine/runtime/red_gate.sh",
+  "success": false,
+  "exit_code": 1,
+  "log_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/logs/red_gate.log",
+  "started_at": "2026-04-06T18:36:51Z",
+  "completed_at": "2026-04-06T18:37:00Z"
+}

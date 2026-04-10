@@ -179,6 +179,7 @@ export interface PricingOutliersRequest {
 }
 
 // ========== Stash Viewer ==========
+export type PriceBand = 'good' | 'mediocre' | 'bad';
 export type PriceEvaluation = 'well_priced' | 'could_be_better' | 'mispriced';
 
 // Raw PoE API item shape
@@ -237,8 +238,14 @@ export interface PoeItem {
   estimatedPriceConfidence?: number | null;
   priceDeltaChaos?: number | null;
   priceDeltaPercent?: number | null;
+  priceBand?: PriceBand;
   priceEvaluation?: PriceEvaluation;
+  priceBandVersion?: number;
   currency?: string;
+  priceRecommendationEligible?: boolean;
+  estimateTrust?: string;
+  estimateWarning?: string;
+  fallbackReason?: string;
   chaosMedian?: number | null;
   daySeries?: StashScanValuationDaySeries[];
   affixFallbackMedians?: StashScanValuationAffixFallback[];
@@ -329,6 +336,8 @@ export interface StashScanStatus {
   startedAt: string | null;
   updatedAt: string | null;
   publishedAt: string | null;
+  scanKind?: string | null;
+  sourceScanId?: string | null;
   progress: {
     tabsTotal: number;
     tabsProcessed: number;
@@ -370,10 +379,17 @@ export interface StashItemHistoryEntry {
   scanId: string;
   pricedAt: string;
   predictedValue: number;
+  predictedValueChaos?: number | null;
   listedPrice: number | null;
+  listedPriceChaos?: number | null;
   currency: string;
   confidence: number;
   interval: { p10: number | null; p90: number | null };
+  priceDeltaChaos?: number | null;
+  priceDeltaPercent?: number | null;
+  priceBand?: PriceBand;
+  priceEvaluation?: PriceEvaluation;
+  priceBandVersion?: number;
   priceRecommendationEligible: boolean;
   estimateTrust: string;
   estimateWarning: string;
@@ -387,6 +403,7 @@ export interface StashItemHistoryResponse {
     itemClass?: string;
     rarity: string;
     iconUrl?: string;
+    baseType?: string;
   };
   history: StashItemHistoryEntry[];
 }

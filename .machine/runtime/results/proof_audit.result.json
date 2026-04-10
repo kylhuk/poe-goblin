@@ -1,0 +1,15 @@
+{
+  "node_id": "proof_audit",
+  "agent": "reviewer",
+  "model": "gpt-5.4",
+  "reasoning": "high",
+  "sandbox": "danger-full-access",
+  "success": true,
+  "exit_code": 0,
+  "output_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/results/proof_audit.output.json",
+  "prompt_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/artifacts/proof_audit/prompt.md",
+  "log_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/logs/proof_audit.log",
+  "started_at": "2026-04-10T02:19:53Z",
+  "completed_at": "2026-04-10T02:21:55Z",
+  "schema": "proof_audit.schema.json"
+}

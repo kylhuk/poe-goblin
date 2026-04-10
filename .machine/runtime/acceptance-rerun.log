@@ -1,0 +1,732 @@
+=== [1/54] python3 .machine/runtime/repros/runtime_plan_guard.py test_matrix ===
+TEST_MATRIX_GUARD_OK
+PASS 0.06s
+
+=== [2/54] python3 .machine/runtime/repros/runtime_plan_guard.py verify_plan ===
+TEST_MATRIX_GUARD_OK
+PLAN_GUARD_OK
+PASS 0.13s
+
+=== [3/54] bash .machine/runtime/bin/vitest_cmd.sh src/services/api.stash.test.ts -t "starts a stash scan and returns scan metadata" ===
+
+ RUN  v3.2.4 /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+
+ ✓ src/services/api.stash.test.ts (4 tests | 3 skipped) 52ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 3 skipped (4)
+   Start at  03:57:32
+   Duration  1.03s (transform 128ms, setup 57ms, collect 52ms, tests 52ms, environment 322ms, prepare 84ms)
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+(node:176486) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/postcss.config.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+PASS 1.81s
+
+=== [4/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_stash_scan_status_reports_running_progress_and_current_published_scan ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash.py .                                           [100%]
+
+============================== 1 passed in 1.23s ===============================
+PASS 2.18s
+
+=== [5/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_writes_v2_scan_and_history_rows_for_every_item ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_account_stash_harvester.py .                             [100%]
+
+============================== 1 passed in 0.39s ===============================
+PASS 0.92s
+
+=== [6/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_publishes_after_v2_rows_before_legacy_valuations ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_account_stash_harvester.py .                             [100%]
+
+============================== 1 passed in 0.45s ===============================
+PASS 0.96s
+
+=== [7/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_keeps_published_status_when_valuations_fail ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_account_stash_harvester.py .                             [100%]
+
+============================== 1 passed in 0.37s ===============================
+PASS 0.86s
+
+=== [8/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_private_scan_v2_write_failure_marks_failed_without_publish ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_account_stash_harvester.py .                             [100%]
+
+============================== 1 passed in 0.39s ===============================
+PASS 0.78s
+
+=== [9/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_valuation_helpers.py::test_stash_scan_valuations_normalize_non_chaos_prices_before_band_math ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_valuation_helpers.py .                                   [100%]
+
+============================== 1 passed in 1.29s ===============================
+PASS 2.18s
+
+=== [10/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_price_band_for_delta_pct_uses_absolute_thresholds ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_stash_scan.py .                                          [100%]
+
+============================== 1 passed in 0.34s ===============================
+PASS 0.65s
+
+=== [11/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_published_tabs_return_v2_price_fields_for_every_item ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash.py .                                           [100%]
+
+============================== 1 passed in 1.09s ===============================
+PASS 1.85s
+
+=== [12/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_latest_result_includes_every_scanned_item_and_price_quality_fields ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 1.17s ===============================
+PASS 1.93s
+
+=== [13/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_stash_scan_status_ignores_valuation_refresh_rows ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash.py .                                           [100%]
+
+============================== 1 passed in 1.15s ===============================
+PASS 1.98s
+
+=== [14/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_fetch_stash_tabs_prefers_v2_latest_scan_items_for_latest_published_scan ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash.py .                                           [100%]
+
+============================== 1 passed in 1.23s ===============================
+PASS 2.14s
+
+=== [15/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_fetch_stash_tabs_returns_every_published_tab_and_item_for_latest_scan ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash.py .                                           [100%]
+
+============================== 1 passed in 1.16s ===============================
+PASS 1.99s
+
+=== [16/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_published_tabs_preserve_stored_chaos_values_for_non_computable_currency ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash.py .                                           [100%]
+
+============================== 1 passed in 1.15s ===============================
+PASS 1.94s
+
+=== [17/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_published_tabs_ignores_valuation_refresh_scan_status_rows ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_stash_scan.py .                                          [100%]
+
+============================== 1 passed in 0.37s ===============================
+PASS 0.73s
+
+=== [18/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_published_tabs_falls_back_to_legacy_valuation_rows ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_stash_scan.py .                                          [100%]
+
+============================== 1 passed in 0.34s ===============================
+PASS 0.69s
+
+=== [19/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash.py::test_fetch_stash_item_history_returns_header_and_entries ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash.py .                                           [100%]
+
+============================== 1 passed in 1.14s ===============================
+PASS 1.96s
+
+=== [20/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_item_history_reads_v2_history_with_90_day_retention ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_stash_scan.py .                                          [100%]
+
+============================== 1 passed in 0.34s ===============================
+PASS 0.68s
+
+=== [21/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_item_history_prefers_v2_rows_after_backfill ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_stash_scan.py .                                          [100%]
+
+============================== 1 passed in 0.35s ===============================
+PASS 0.77s
+
+=== [22/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_stash_scan.py::test_fetch_item_history_falls_back_to_legacy_valuation_rows ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_stash_scan.py .                                          [100%]
+
+============================== 1 passed in 0.30s ===============================
+PASS 0.60s
+
+=== [23/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_uses_persisted_rows_without_oauth_token ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 8.88s ===============================
+PASS 9.63s
+
+=== [24/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_deduplicates_against_persisted_active_scan_after_cache_loss ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 9.00s ===============================
+PASS 9.85s
+
+=== [25/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_evicts_stale_pending_cache_after_published_scan_changes ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 8.89s ===============================
+PASS 9.86s
+
+=== [26/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_rechecks_published_scan_after_lock_before_reusing_pending_cache ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 9.03s ===============================
+PASS 9.88s
+
+=== [27/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_ignores_ordinary_active_scan ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 9.16s ===============================
+PASS 10.07s
+
+=== [28/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_ignores_refresh_for_older_source_scan ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 9.06s ===============================
+PASS 9.89s
+
+=== [29/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_prefers_persisted_running_progress_over_pending_cache ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 8.69s ===============================
+PASS 9.54s
+
+=== [30/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_start_stash_valuations_refresh_republishes_latest_scan_from_persisted_v2_rows ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 8.90s ===============================
+PASS 9.60s
+
+=== [31/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_rechecks_published_scan_after_lock_before_using_cached_status ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 9.04s ===============================
+PASS 9.83s
+
+=== [32/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_route_recovers_published_refresh_after_cache_clear ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 1.11s ===============================
+PASS 1.90s
+
+=== [33/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_result_rechecks_published_scan_after_lock_before_using_cached_result ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 9.06s ===============================
+PASS 9.92s
+
+=== [34/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_result_route_recovers_published_refresh_after_cache_clear ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 12.89s ==============================
+PASS 13.91s
+
+=== [35/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_status_evicts_stale_completed_cache_after_published_scan_changes ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 12.95s ==============================
+PASS 13.74s
+
+=== [36/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_result_evicts_stale_completed_cache_after_published_scan_changes ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 8.98s ===============================
+PASS 9.64s
+
+=== [37/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_api_stash_valuations.py::test_stash_scan_valuations_refresh_failed_status_preserves_last_good_result_payload ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_api_stash_valuations.py .                                [100%]
+
+============================== 1 passed in 8.85s ===============================
+PASS 9.54s
+
+=== [38/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_fails_closed_when_source_rows_are_missing ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_account_stash_harvester.py .                             [100%]
+
+============================== 1 passed in 0.34s ===============================
+PASS 0.69s
+
+=== [39/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_fails_closed_when_recovered_rows_are_partial ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_account_stash_harvester.py .                             [100%]
+
+============================== 1 passed in 0.33s ===============================
+PASS 0.70s
+
+=== [40/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_republishes_empty_published_rows ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_account_stash_harvester.py .                             [100%]
+
+============================== 1 passed in 0.33s ===============================
+PASS 0.66s
+
+=== [41/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_reuses_published_refresh_rows_for_next_refresh ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_account_stash_harvester.py .                             [100%]
+
+============================== 1 passed in 0.33s ===============================
+PASS 0.61s
+
+=== [42/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_query_paths_migration_has_v2_tables_view_and_ttls ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_migrations.py .                                          [100%]
+
+============================== 1 passed in 0.32s ===============================
+PASS 0.63s
+
+=== [43/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_retention_migration_adds_90_day_ttls ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_migrations.py .                                          [100%]
+
+============================== 1 passed in 0.27s ===============================
+PASS 0.54s
+
+=== [44/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_v2_backfill_migration_normalizes_chaos_values ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_migrations.py .                                          [100%]
+
+============================== 1 passed in 0.30s ===============================
+PASS 0.63s
+
+=== [45/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_scan_v2_price_evaluation_migration_adds_backend_label_columns ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_migrations.py .                                          [100%]
+
+============================== 1 passed in 0.34s ===============================
+PASS 0.72s
+
+=== [46/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_migrations.py::test_private_stash_refresh_lifecycle_metadata_migration_adds_kind_and_source_columns ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_migrations.py .                                          [100%]
+
+============================== 1 passed in 0.31s ===============================
+PASS 0.69s
+
+=== [47/54] bash .machine/runtime/bin/vitest_cmd.sh src/services/api.stash.test.ts -t "preserves backend price judgments from stash scan results" ===
+
+ RUN  v3.2.4 /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+
+ ✓ src/services/api.stash.test.ts (4 tests | 3 skipped) 54ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 3 skipped (4)
+   Start at  04:00:33
+   Duration  1.04s (transform 124ms, setup 62ms, collect 53ms, tests 54ms, environment 335ms, prepare 80ms)
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+(node:178030) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/postcss.config.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+PASS 1.78s
+
+=== [48/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_includes_canonical_stash_lifecycle_routes ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_apispec_contract.py .                                    [100%]
+
+============================== 1 passed in 0.09s ===============================
+PASS 0.28s
+
+=== [49/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_describes_published_stash_result_fields ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_apispec_contract.py .                                    [100%]
+
+============================== 1 passed in 0.10s ===============================
+PASS 0.32s
+
+=== [50/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_describes_valuation_refresh_lifecycle_metadata ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_apispec_contract.py .                                    [100%]
+
+============================== 1 passed in 0.10s ===============================
+PASS 0.30s
+
+=== [51/54] bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_apispec_contract.py::test_apispec_describes_item_history_price_quality_fields ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+configfile: pyproject.toml
+collected 1 item
+
+tests/unit/test_apispec_contract.py .                                    [100%]
+
+============================== 1 passed in 0.09s ===============================
+PASS 0.28s
+
+=== [52/54] bash .machine/runtime/bin/vitest_cmd.sh src/components/tabs/StashViewerTab.test.tsx -t "keeps backend price judgments after valuation results merge into the stash view" ===
+
+ RUN  v3.2.4 /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+
+stdout | src/components/tabs/StashViewerTab.test.tsx > StashViewerTab > keeps backend price judgments after valuation results merge into the stash view
+[Stash] Tab payload keys: [
+  'scanId',
+  'publishedAt',
+  'isStale',
+  'scanStatus',
+  'stashTabs',
+  'tabsMeta',
+  'numTabs'
+]
+[Stash] Active tab items count: 1
+[Stash] Sample item fields: {
+  id: 'item-1',
+  fingerprint: 'sig:item-1',
+  name: 'Grim Bane',
+  estimatedPrice: undefined,
+  listedPrice: 100,
+  priceEvaluation: undefined,
+  priceDeltaChaos: undefined,
+  currency: 'chaos',
+  stackSize: undefined
+}
+
+ ✓ src/components/tabs/StashViewerTab.test.tsx (11 tests | 10 skipped) 58ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 10 skipped (11)
+   Start at  04:00:35
+   Duration  1.29s (transform 160ms, setup 49ms, collect 359ms, tests 58ms, environment 299ms, prepare 63ms)
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+(node:178371) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/postcss.config.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+PASS 1.97s
+
+=== [53/54] bash .machine/runtime/bin/vitest_cmd.sh src/components/tabs/StashViewerTab.test.tsx -t "uses the backend price band when the evaluation label is omitted" ===
+
+ RUN  v3.2.4 /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+
+stdout | src/components/tabs/StashViewerTab.test.tsx > StashViewerTab > uses the backend price band when the evaluation label is omitted
+[Stash] Tab payload keys: [
+  'scanId',
+  'publishedAt',
+  'isStale',
+  'scanStatus',
+  'stashTabs',
+  'tabsMeta',
+  'numTabs'
+]
+[Stash] Active tab items count: 1
+[Stash] Sample item fields: {
+  id: 'item-1',
+  fingerprint: 'sig:item-1',
+  name: 'Grim Bane',
+  estimatedPrice: undefined,
+  listedPrice: 100,
+  priceEvaluation: undefined,
+  priceDeltaChaos: undefined,
+  currency: 'chaos',
+  stackSize: undefined
+}
+
+ ✓ src/components/tabs/StashViewerTab.test.tsx (11 tests | 10 skipped) 51ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 10 skipped (11)
+   Start at  04:00:37
+   Duration  1.29s (transform 171ms, setup 56ms, collect 381ms, tests 51ms, environment 320ms, prepare 64ms)
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+(node:178705) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/postcss.config.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+PASS 1.99s
+
+=== [54/54] bash .machine/runtime/bin/vitest_cmd.sh src/components/tabs/StashViewerTab.test.tsx -t "shows backend price quality inside the item history dialog" ===
+
+ RUN  v3.2.4 /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c
+
+stdout | src/components/tabs/StashViewerTab.test.tsx > StashViewerTab > shows backend price quality inside the item history dialog
+[Stash] Tab payload keys: [
+  'scanId',
+  'publishedAt',
+  'isStale',
+  'scanStatus',
+  'stashTabs',
+  'tabsMeta',
+  'numTabs'
+]
+[Stash] Active tab items count: 1
+[Stash] Sample item fields: {
+  id: 'item-1',
+  fingerprint: 'sig:item-1',
+  name: 'Grim Bane',
+  estimatedPrice: 45,
+  listedPrice: 40,
+  priceEvaluation: 'mispriced',
+  priceDeltaChaos: 5,
+  currency: 'chaos',
+  stackSize: undefined
+}
+
+ ✓ src/components/tabs/StashViewerTab.test.tsx (11 tests | 10 skipped) 58ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 10 skipped (11)
+   Start at  04:00:39
+   Duration  1.32s (transform 185ms, setup 56ms, collect 399ms, tests 58ms, environment 325ms, prepare 61ms)
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+(node:179030) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/postcss.config.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+PASS 1.97s
+

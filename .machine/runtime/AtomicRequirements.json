@@ -1,0 +1,305 @@
+{
+  "requirements": [
+    {
+      "id": "AR-001",
+      "kind": "lifecycle",
+      "title": "Private stash scan publishes a complete v2-backed snapshot without losing the last good publish on failure",
+      "states": ["start", "running", "published", "recovery", "failure"],
+      "behaviors": [
+        {
+          "id": "AR-001-B01",
+          "title": "scan start returns scan metadata for the selected stash scope",
+          "state": "start"
+        },
+        {
+          "id": "AR-001-B02",
+          "title": "scan status reports running progress and the current published scan",
+          "state": "running"
+        },
+        {
+          "id": "AR-001-B03",
+          "title": "private scan writes v2 latest-item and history rows for every scanned item",
+          "state": "published"
+        },
+        {
+          "id": "AR-001-B04",
+          "title": "private scan publishes only after v2 rows are written and before legacy compatibility writes",
+          "state": "published"
+        },
+        {
+          "id": "AR-001-B05",
+          "title": "valuation failure during a scan preserves the last good published status",
+          "state": "recovery"
+        },
+        {
+          "id": "AR-001-B06",
+          "title": "v2 write failure marks the scan failed and does not publish partial data",
+          "state": "failure"
+        },
+        {
+          "id": "AR-001-B07",
+          "title": "ordinary stash scan status ignores valuation-refresh lifecycle rows",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "id": "AR-002",
+      "kind": "contract",
+      "title": "Backend price quality classification is canonical and user-visible",
+      "behaviors": [
+        {
+          "id": "AR-002-B01",
+          "title": "valuation math normalizes non-chaos listed prices before computing price bands",
+          "state": "complete"
+        },
+        {
+          "id": "AR-002-B02",
+          "title": "absolute delta thresholds map to good, mediocre, and bad price bands",
+          "state": "complete"
+        },
+        {
+          "id": "AR-002-B03",
+          "title": "published stash items expose backend price band, evaluation label, and band version",
+          "state": "complete"
+        },
+        {
+          "id": "AR-002-B04",
+          "title": "latest valuation result payload keeps every scanned item and its price quality fields",
+          "state": "complete"
+        }
+      ]
+    },
+    {
+      "id": "AR-003",
+      "kind": "integration",
+      "title": "Published stash snapshot and item history read paths prefer the optimized item-centric model",
+      "behaviors": [
+        {
+          "id": "AR-003-B01",
+          "title": "published stash reads resolve the latest published scan before reading latest-item rows",
+          "state": "complete"
+        },
+        {
+          "id": "AR-003-B02",
+          "title": "published stash results include every published tab and every published item for the resolved scan",
+          "state": "complete"
+        },
+        {
+          "id": "AR-003-B03",
+          "title": "published stash results preserve stored chaos values for non-computable currencies",
+          "state": "complete"
+        },
+        {
+          "id": "AR-003-B04",
+          "title": "published stash results fall back to legacy valuation rows only when v2 latest rows are absent",
+          "state": "complete"
+        },
+        {
+          "id": "AR-003-B05",
+          "title": "item history route returns lineage header metadata plus history entries",
+          "state": "history"
+        },
+        {
+          "id": "AR-003-B06",
+          "title": "item history reads v2 rows with the frozen 90 day retention window",
+          "state": "history"
+        },
+        {
+          "id": "AR-003-B07",
+          "title": "item history prefers v2 rows after backfill",
+          "state": "history"
+        },
+        {
+          "id": "AR-003-B08",
+          "title": "item history falls back to legacy valuation rows only when v2 history is absent",
+          "state": "history"
+        },
+        {
+          "id": "AR-003-B09",
+          "title": "published stash scanStatus ignores valuation-refresh lifecycle rows",
+          "state": "complete"
+        }
+      ]
+    },
+    {
+      "id": "AR-004",
+      "kind": "lifecycle",
+      "title": "Valuation refresh uses persisted published rows and reconciles cache entries against published scan identity",
+      "states": ["start", "running", "published", "recovery", "failure"],
+      "behaviors": [
+        {
+          "id": "AR-004-B01",
+          "title": "valuation refresh starts from persisted rows for the current published scan without requiring live stash access",
+          "state": "start"
+        },
+        {
+          "id": "AR-004-B02",
+          "title": "valuation refresh start deduplicates against the persisted active refresh after cache loss",
+          "state": "start"
+        },
+        {
+          "id": "AR-004-B03",
+          "title": "valuation refresh start evicts stale pending cache entries when the published scan changes",
+          "state": "start"
+        },
+        {
+          "id": "AR-004-B04",
+          "title": "valuation refresh status ignores ordinary active scans",
+          "state": "running"
+        },
+        {
+          "id": "AR-004-B05",
+          "title": "valuation refresh status ignores refresh rows tied to an older source scan",
+          "state": "running"
+        },
+        {
+          "id": "AR-004-B06",
+          "title": "valuation refresh status prefers persisted running progress over same-scan pending cache",
+          "state": "running"
+        },
+        {
+          "id": "AR-004-B07",
+          "title": "valuation refresh republishes the latest scan from persisted v2 rows",
+          "state": "published"
+        },
+        {
+          "id": "AR-004-B08",
+          "title": "valuation refresh status recovers the latest published refresh after cache clear",
+          "state": "recovery"
+        },
+        {
+          "id": "AR-004-B09",
+          "title": "valuation refresh result reconstructs the latest published payload after cache clear",
+          "state": "recovery"
+        },
+        {
+          "id": "AR-004-B10",
+          "title": "valuation refresh status evicts stale completed cache entries when the published scan changes",
+          "state": "recovery"
+        },
+        {
+          "id": "AR-004-B11",
+          "title": "valuation refresh result evicts stale completed cache entries when the published scan changes",
+          "state": "recovery"
+        },
+        {
+          "id": "AR-004-B12",
+          "title": "failed valuation refresh status preserves the last good result payload",
+          "state": "failure"
+        },
+        {
+          "id": "AR-004-B13",
+          "title": "persisted valuation refresh fails closed when recovered source rows are partial",
+          "state": "failure"
+        },
+        {
+          "id": "AR-004-B14",
+          "title": "valuation refresh start rechecks the current published scan after lock before reusing pending cache",
+          "state": "start"
+        },
+        {
+          "id": "AR-004-B15",
+          "title": "valuation refresh status rechecks the current published scan after lock before reusing cached status",
+          "state": "recovery"
+        },
+        {
+          "id": "AR-004-B16",
+          "title": "valuation refresh result rechecks the current published scan after lock before reusing cached results",
+          "state": "recovery"
+        },
+        {
+          "id": "AR-004-B17",
+          "title": "valuation refresh can reuse a published valuation-refresh snapshot as the persisted source for the next refresh",
+          "state": "start"
+        }
+      ]
+    },
+    {
+      "id": "AR-005",
+      "kind": "migration",
+      "title": "Schema migrations preserve the v2 query path, retention, backfill, and refresh lifecycle contract",
+      "behaviors": [
+        {
+          "id": "AR-005-B01",
+          "title": "migration 0089 defines v2 stash tables, latest-item view, and query-path TTLs",
+          "state": "complete"
+        },
+        {
+          "id": "AR-005-B02",
+          "title": "migration 0090 applies 90 day retention to private stash task data",
+          "state": "complete"
+        },
+        {
+          "id": "AR-005-B03",
+          "title": "migration 0091 backfill normalizes chaos values for v2 reads",
+          "state": "complete"
+        },
+        {
+          "id": "AR-005-B04",
+          "title": "migration 0092 adds backend price evaluation columns",
+          "state": "complete"
+        },
+        {
+          "id": "AR-005-B05",
+          "title": "migration 0093 adds valuation refresh lifecycle kind and source metadata",
+          "state": "complete"
+        }
+      ]
+    },
+    {
+      "id": "AR-006",
+      "kind": "contract",
+      "title": "API contract and client normalization preserve the stash-scan price-quality surface",
+      "behaviors": [
+        {
+          "id": "AR-006-B01",
+          "title": "TypeScript API normalization preserves backend price judgments from stash scan results",
+          "state": "complete"
+        },
+        {
+          "id": "AR-006-B02",
+          "title": "OpenAPI includes the canonical stash lifecycle routes",
+          "state": "complete"
+        },
+        {
+          "id": "AR-006-B03",
+          "title": "OpenAPI describes published stash result price-quality fields",
+          "state": "complete"
+        },
+        {
+          "id": "AR-006-B04",
+          "title": "OpenAPI describes valuation refresh lifecycle metadata",
+          "state": "complete"
+        },
+        {
+          "id": "AR-006-B05",
+          "title": "OpenAPI describes item history price-quality fields",
+          "state": "complete"
+        }
+      ]
+    },
+    {
+      "id": "AR-007",
+      "kind": "ui",
+      "title": "The stash viewer visibly preserves backend good-or-not-good judgments",
+      "behaviors": [
+        {
+          "id": "AR-007-B01",
+          "title": "stash viewer keeps backend price judgments after valuation results merge into the current stash view",
+          "state": "complete"
+        },
+        {
+          "id": "AR-007-B02",
+          "title": "stash viewer falls back to backend price band when the evaluation label is omitted",
+          "state": "complete"
+        },
+        {
+          "id": "AR-007-B03",
+          "title": "item history dialog shows backend price quality",
+          "state": "complete"
+        }
+      ]
+    }
+  ]
+}

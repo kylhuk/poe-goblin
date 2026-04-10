@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "summary", "questions"],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["proceed", "ask_user"]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "title", "body", "why_needed", "render", "options", "default"],
+        "properties": {
+          "id": {"type": ["string", "null"]},
+          "kind": {"type": "string", "enum": ["blocking", "preference", "confirmation"]},
+          "title": {"type": "string"},
+          "body": {"type": "string"},
+          "why_needed": {"type": "string"},
+          "render": {"type": "string", "enum": ["free_text", "single_choice", "multi_choice"]},
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["value", "label"],
+              "properties": {
+                "value": {"type": "string"},
+                "label": {"type": "string"}
+              }
+            }
+          },
+          "default": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}

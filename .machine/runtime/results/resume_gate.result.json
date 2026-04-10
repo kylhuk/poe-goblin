@@ -1,0 +1,9 @@
+{
+  "node_id": "resume_gate",
+  "command": "bash .machine/runtime/resume_gate.sh",
+  "success": true,
+  "exit_code": 0,
+  "log_file": "/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/logs/resume_gate.log",
+  "started_at": "2026-04-09T15:22:46Z",
+  "completed_at": "2026-04-09T15:22:47Z"
+}

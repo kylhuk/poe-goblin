@@ -347,6 +347,9 @@ paths:
       description: Returns the latest published stash scan for the connected account.
       security:
         - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/LeagueQuery'
+        - $ref: '#/components/parameters/Realm'
       responses:
         '200':
           description: Published stash tabs/items payload
@@ -387,6 +390,9 @@ paths:
       description: Starts a new latest stash scan for the connected account.
       security:
         - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/LeagueQuery'
+        - $ref: '#/components/parameters/Realm'
       responses:
         '202':
           description: Scan started
@@ -406,6 +412,9 @@ paths:
       description: Legacy alias for starting a stash scan.
       security:
         - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/LeagueQuery'
+        - $ref: '#/components/parameters/Realm'
       responses:
         '202':
           description: Scan started
@@ -424,6 +433,9 @@ paths:
       description: Returns the current/latest scan status for the connected account.
       security:
         - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/LeagueQuery'
+        - $ref: '#/components/parameters/Realm'
       responses:
         '200':
           description: Scan status payload
@@ -448,6 +460,7 @@ paths:
         - in: query
           name: limit
           schema: { type: integer, minimum: 1 }
+          description: Optional row cap for debugging; omit to use the default bounded 50-row window within the 90-day retention period.
       responses:
         '200':
           description: Item history payload
@@ -464,7 +477,7 @@ paths:
     post:
       summary: Valuate stash scan items (legacy alias)
       deprecated: true
-      description: Legacy alias that prices scanned stash items against historical comparables.
+      description: Legacy alias that reloads the latest published valuation snapshot for scanned stash items.
       security:
         - sessionCookie: []
       parameters:
@@ -494,17 +507,20 @@ paths:
 
   /api/v1/stash/scan/valuations/start:
     post:
-      summary: Start latest stash valuation refresh
-      description: Starts a new stash scan/valuation refresh for the connected account.
+      summary: Start persisted stash valuation refresh
+      description: Starts a persisted private-stash valuation refresh for the connected stash scope while keeping the current published scan visible until the new attempt publishes.
       security:
         - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/LeagueQuery'
+        - $ref: '#/components/parameters/Realm'
       responses:
         '202':
-          description: Valuation accepted
+          description: Valuation refresh started
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StashScanValuationsResponse'
+                $ref: '#/components/schemas/StashScanStatusResponse'
         '400':
           $ref: '#/components/responses/ApiError'
         '401':
@@ -520,13 +536,16 @@ paths:
       description: Returns the latest valuation status for the connected account.
       security:
         - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/LeagueQuery'
+        - $ref: '#/components/parameters/Realm'
       responses:
         '200':
-          description: Valuation payload
+          description: Current scan status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StashScanValuationsResponse'
+                $ref: '#/components/schemas/StashScanStatusResponse'
         '400':
           $ref: '#/components/responses/ApiError'
         '401':
@@ -542,6 +561,9 @@ paths:
       description: Returns the latest published valuation payload for the connected account.
       security:
         - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/LeagueQuery'
+        - $ref: '#/components/parameters/Realm'
       responses:
         '200':
           description: Valuation payload
@@ -943,7 +965,32 @@ components:
 
     StashTabsResponse:
       type: object
-      additionalProperties: true
+      properties:
+        scanId:
+          type: string
+          nullable: true
+        publishedAt:
+          type: string
+          nullable: true
+        isStale:
+          type: boolean
+        scanStatus:
+          allOf:
+            - $ref: '#/components/schemas/StashScanStatusResponse'
+          nullable: true
+        stashTabs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        tabsMeta:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        numTabs:
+          type: integer
+      required: [scanId, publishedAt, isStale, scanStatus, stashTabs, tabsMeta, numTabs]
 
     StashStatusResponse:
       type: object
@@ -955,11 +1002,119 @@ components:
 
     StashScanStatusResponse:
       type: object
-      additionalProperties: true
+      properties:
+        status:
+          type: string
+        activeScanId:
+          type: string
+          nullable: true
+        publishedScanId:
+          type: string
+          nullable: true
+        startedAt:
+          type: string
+          nullable: true
+        updatedAt:
+          type: string
+          nullable: true
+        publishedAt:
+          type: string
+          nullable: true
+        scanKind:
+          type: string
+          nullable: true
+        sourceScanId:
+          type: string
+          nullable: true
+        progress:
+          type: object
+          properties:
+            tabsTotal:
+              type: integer
+            tabsProcessed:
+              type: integer
+            itemsTotal:
+              type: integer
+            itemsProcessed:
+              type: integer
+        error:
+          type: string
+          nullable: true
 
     StashItemHistoryResponse:
       type: object
-      additionalProperties: true
+      properties:
+        fingerprint:
+          type: string
+        item:
+          type: object
+          properties:
+            name:
+              type: string
+            itemClass:
+              type: string
+            rarity:
+              type: string
+            iconUrl:
+              type: string
+            baseType:
+              type: string
+        history:
+          type: array
+          items:
+            type: object
+            properties:
+              scanId:
+                type: string
+              pricedAt:
+                type: string
+              predictedValue:
+                type: number
+              predictedValueChaos:
+                type: number
+                nullable: true
+              listedPrice:
+                type: number
+                nullable: true
+              listedPriceChaos:
+                type: number
+                nullable: true
+              currency:
+                type: string
+              confidence:
+                type: number
+              interval:
+                type: object
+                properties:
+                  p10:
+                    type: number
+                    nullable: true
+                  p90:
+                    type: number
+                    nullable: true
+              priceDeltaChaos:
+                type: number
+                nullable: true
+              priceDeltaPercent:
+                type: number
+                nullable: true
+              priceBand:
+                type: string
+                nullable: true
+              priceEvaluation:
+                type: string
+                nullable: true
+              priceBandVersion:
+                type: integer
+                nullable: true
+              priceRecommendationEligible:
+                type: boolean
+              estimateTrust:
+                type: string
+              estimateWarning:
+                type: string
+              fallbackReason:
+                type: string
 
     StashScanValuationsRequest:
       type: object
@@ -1005,6 +1160,51 @@ components:
           nullable: true
         chaosMedian:
           type: number
+          nullable: true
+        listedPrice:
+          type: number
+          nullable: true
+        listedCurrency:
+          type: string
+          nullable: true
+        listedPriceChaos:
+          type: number
+          nullable: true
+        estimatedPrice:
+          type: number
+          nullable: true
+        estimatedPriceChaos:
+          type: number
+          nullable: true
+        priceDeltaChaos:
+          type: number
+          nullable: true
+        priceDeltaPercent:
+          type: number
+          nullable: true
+        priceBand:
+          type: string
+          nullable: true
+        priceEvaluation:
+          type: string
+          nullable: true
+        priceBandVersion:
+          type: integer
+          nullable: true
+        priceRecommendationEligible:
+          type: boolean
+          nullable: true
+        confidence:
+          type: number
+          nullable: true
+        estimateTrust:
+          type: string
+          nullable: true
+        estimateWarning:
+          type: string
+          nullable: true
+        fallbackReason:
+          type: string
           nullable: true
         daySeries:
           type: array

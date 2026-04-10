@@ -1,0 +1,12 @@
+Added one deterministic red proof for the live review finding in [test_account_stash_harvester.py](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/tests/unit/test_account_stash_harvester.py). The new selector is `test_run_persisted_valuation_refresh_reuses_published_refresh_rows_for_next_refresh`, which exercises the chained case where `published_scan_id` is itself a prior valuation-refresh snapshot.
+
+I also updated the runtime source-of-truth files to carry that defect explicitly: [AtomicRequirements.json](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/AtomicRequirements.json), [TestMatrix.json](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/TestMatrix.json), [FailureMatrix.json](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/FailureMatrix.json), [VerificationPlan.json](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/VerificationPlan.json), [ExecutionPlan.md](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/ExecutionPlan.md), [Runbook.md](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/Runbook.md), and [Documentation.md](/home/hal9000/docker/codex_machine_foundation_release/data/environments/poe-goblin/worktrees/20260404-101114-a74c/.machine/runtime/Documentation.md). No production source files were modified in this pass.
+
+Verification:
+- `bash .machine/runtime/bin/pytest_cmd.sh tests/unit/test_account_stash_harvester.py::test_run_persisted_valuation_refresh_reuses_published_refresh_rows_for_next_refresh`
+  - failed as intended: current code returned `status == "failed"` with `persisted_source_incomplete` when `published_scan_id="refresh-1"`.
+- `bash .machine/runtime/test_matrix_guard.sh`
+  - `TEST_MATRIX_GUARD_OK`
+- `bash .machine/runtime/verify_plan_guard.sh`
+  - `TEST_MATRIX_GUARD_OK`
+  - `PLAN_GUARD_OK`

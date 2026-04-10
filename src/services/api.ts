@@ -167,6 +167,11 @@ async function primaryLeague(): Promise<string> {
   return getSelectedLeague();
 }
 
+async function stashScopeQuery(): Promise<string> {
+  const league = await primaryLeague();
+  return `league=${encodeURIComponent(league)}&realm=pc`;
+}
+
 export async function getAnalyticsIngestion() {
   const payload = await request<{ rows: IngestionRow[] }>('/api/v1/ops/analytics/ingestion');
   return payload.rows;
@@ -499,13 +504,19 @@ function normalizePoeItem(raw: unknown): PoeItem {
     flavourText: Array.isArray(item.flavourText ?? item.flavour_text) ? (item.flavourText ?? item.flavour_text) as string[] : undefined,
     sockets: Array.isArray(item.sockets) ? item.sockets as PoeItem['sockets'] : undefined,
     listedPrice: optNumber(item.listedPrice ?? item.listed_price),
-    // Pricing fields intentionally omitted from scan result normalization.
-    // They are only populated via mergeValuationIntoItems from the /valuations/result endpoint.
-    estimatedPrice: undefined,
-    estimatedPriceConfidence: undefined,
-    priceDeltaChaos: undefined,
-    priceDeltaPercent: undefined,
-    priceEvaluation: undefined,
+    estimatedPrice: optNumber(item.estimatedPrice ?? item.estimated_price),
+    estimatedPriceConfidence: optNumber(item.estimatedPriceConfidence ?? item.estimated_price_confidence),
+    priceDeltaChaos: optNumber(item.priceDeltaChaos ?? item.price_delta_chaos),
+    priceDeltaPercent: optNumber(item.priceDeltaPercent ?? item.price_delta_percent),
+    priceBand: optString(item.priceBand ?? item.price_band) as PoeItem['priceBand'] | undefined,
+    priceBandVersion: optNumber(item.priceBandVersion ?? item.price_band_version) ?? undefined,
+    priceEvaluation: optString(item.priceEvaluation ?? item.price_evaluation) as PoeItem['priceEvaluation'] | undefined,
+    priceRecommendationEligible: typeof (item.priceRecommendationEligible ?? item.price_recommendation_eligible) === 'boolean'
+      ? (item.priceRecommendationEligible ?? item.price_recommendation_eligible) as boolean
+      : undefined,
+    estimateTrust: optString(item.estimateTrust ?? item.estimate_trust) ?? undefined,
+    estimateWarning: optString(item.estimateWarning ?? item.estimate_warning) ?? undefined,
+    fallbackReason: optString(item.fallbackReason ?? item.fallback_reason) ?? undefined,
     currency: optString(item.currency) ?? undefined,
   };
 }
@@ -895,24 +906,26 @@ export const api: ApiService = {
   },
 
   async getStashStatus() {
-    const league = await primaryLeague();
-    return request<StashStatus>(`/api/v1/stash/status?league=${encodeURIComponent(league)}&realm=pc`);
+    const scopeQuery = await stashScopeQuery();
+    return request<StashStatus>(`/api/v1/stash/status?${scopeQuery}`);
   },
 
   async startStashScan() {
-    return request<StashScanStartResponse>('/api/v1/stash/scan/start', {
+    const scopeQuery = await stashScopeQuery();
+    return request<StashScanStartResponse>(`/api/v1/stash/scan/start?${scopeQuery}`, {
       method: 'POST',
     });
   },
 
   async getStashScanStatus() {
-    return request<StashScanStatus>('/api/v1/stash/scan/status');
+    const scopeQuery = await stashScopeQuery();
+    return request<StashScanStatus>(`/api/v1/stash/scan/status?${scopeQuery}`);
   },
 
   async getStashItemHistory(fingerprint: string) {
-    const league = await primaryLeague();
+    const scopeQuery = await stashScopeQuery();
     return request<StashItemHistoryResponse>(
-      `/api/v1/stash/items/${encodeURIComponent(fingerprint)}/history?league=${encodeURIComponent(league)}&realm=pc`
+      `/api/v1/stash/items/${encodeURIComponent(fingerprint)}/history?${scopeQuery}`
     );
   },
 
@@ -978,29 +991,33 @@ export const api: ApiService = {
   },
 
   async getStashScanResult(signal?: AbortSignal) {
+    const scopeQuery = await stashScopeQuery();
     const payload = await request<unknown>(
-      '/api/v1/stash/scan/result',
+      `/api/v1/stash/scan/result?${scopeQuery}`,
       signal ? { signal } : undefined,
     );
     return normalizeStashTabsResponse(payload);
   },
 
   async startStashValuations() {
-    await request<unknown>('/api/v1/stash/scan/valuations/start', {
+    const scopeQuery = await stashScopeQuery();
+    await request<unknown>(`/api/v1/stash/scan/valuations/start?${scopeQuery}`, {
       method: 'POST',
     });
   },
 
   async getStashValuationsResult(signal?: AbortSignal) {
+    const scopeQuery = await stashScopeQuery();
     return request<StashScanValuationsResponse>(
-      '/api/v1/stash/scan/valuations/result',
+      `/api/v1/stash/scan/valuations/result?${scopeQuery}`,
       signal ? { signal } : undefined,
     );
   },
 
   async getStashValuationsStatus() {
+    const scopeQuery = await stashScopeQuery();
     const raw = await request<Record<string, unknown>>(
-      '/api/v1/stash/scan/valuations/status',
+      `/api/v1/stash/scan/valuations/status?${scopeQuery}`,
     );
     // Backend may return a status-shaped payload or a valuation-result-shaped payload.
     // Normalise both into StashScanStatus so polling works either way.

@@ -12,10 +12,18 @@ from typing import Any
 from poe_trade.config import constants
 from poe_trade.config.constants import FEED_KIND_ACCOUNT_STASH
 from poe_trade.db import ClickHouseClient
+from poe_trade.ingestion.rate_limit import RateLimitPolicy
 from poe_trade.stash_scan import (
     content_signature_for_item,
+    _display_price_from_chaos,
+    _escape_sql_literal,
+    fetch_latest_published_valuation_refresh_run,
+    fetch_latest_scan_run,
     lineage_key_for_item,
     normalize_stash_prediction,
+    normalize_chaos_price,
+    price_band_for_delta_pct,
+    price_evaluation_for_band,
     StashPrediction,
 )
 
@@ -26,7 +34,7 @@ from .sync_contract import queue_key
 logger = logging.getLogger(__name__)
 
 _PRICE_NOTE_PATTERN = re.compile(
-    r"^~(?:b/o|price)\s+([0-9]+(?:\.[0-9]+)?)\s+([A-Za-z]+)$",
+    r"^~(?:b/o|price)\s+([0-9]+(?:\.[0-9]+)?)\s+(.+)$",
     re.IGNORECASE,
 )
 
@@ -134,15 +142,19 @@ class AccountStashHarvester:
         effective_price_item = (
             price_item if price_item is not None else self._price_item
         )
-        pending_item_rows: list[tuple[dict[str, Any], int, dict[str, Any]]] = []
+        pending_scan_item_rows: list[dict[str, Any]] = []
+        pending_normalized_item_rows: list[dict[str, Any]] = []
+        pending_legacy_item_rows: list[dict[str, Any]] = []
         terminal_state: tuple[str, str, str] | None = None
+        terminal_written = False
 
         def _finalize_scan_state(
             *,
             status: str,
             terminal_at: str,
             error_message: str,
-        ) -> None:
+        ) -> bool:
+            ok = True
             try:
                 self._write_scan_run(
                     scan_id=effective_scan_id,
@@ -162,6 +174,7 @@ class AccountStashHarvester:
                     error_message=error_message,
                 )
             except Exception:
+                ok = False
                 logger.exception(
                     "Failed to write terminal scan run account=%s realm=%s league=%s",
                     account_name,
@@ -179,47 +192,58 @@ class AccountStashHarvester:
                     updated_at=terminal_at,
                 )
             except Exception:
+                ok = False
                 logger.exception(
                     "Failed to clear active scan account=%s realm=%s league=%s",
                     account_name,
                     realm,
                     league,
                 )
-            if status != "published":
-                return
-            try:
-                self._write_published_scan(
-                    account_name=account_name,
-                    league=league,
-                    realm=realm,
-                    scan_id=effective_scan_id,
-                    published_at=terminal_at,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to write published scan marker account=%s realm=%s league=%s",
-                    account_name,
-                    realm,
-                    league,
-                )
+            if status == "published":
+                try:
+                    self._write_published_scan(
+                        account_name=account_name,
+                        league=league,
+                        realm=realm,
+                        scan_id=effective_scan_id,
+                        published_at=terminal_at,
+                    )
+                except Exception:
+                    ok = False
+                    logger.exception(
+                        "Failed to write published scan marker account=%s realm=%s league=%s",
+                        account_name,
+                        realm,
+                        league,
+                    )
+            return ok
 
         def _build_item_row(
             tab: dict[str, Any], tab_index: int, raw_item: dict[str, Any]
-        ) -> dict[str, Any]:
-            listed = parse_listed_price(str(raw_item.get("note") or ""))
+        ) -> tuple[dict[str, Any], dict[str, Any]]:
+            listed = parse_listed_price(str(raw_item.get("note") or "")) or parse_listed_price(
+                str(tab.get("name") or "")
+            )
             listed_price = listed[0] if listed else None
-            currency = str(listed[1] if listed else "chaos")
-            prediction = _fallback_prediction(currency=currency)
+            listed_currency = str(listed[1] if listed else "chaos")
+            prediction = _fallback_prediction(currency=listed_currency)
             if effective_price_item is not None:
                 try:
                     price_payload = effective_price_item(raw_item)
                     if _has_concrete_prediction(price_payload):
                         prediction = normalize_stash_prediction(price_payload)
-                        currency = str(
-                            prediction.currency or (listed[1] if listed else "chaos")
-                        )
                     elif isinstance(price_payload, dict):
-                        currency = str(price_payload.get("currency") or currency)
+                        prediction = StashPrediction(
+                            predicted_price=prediction.predicted_price,
+                            currency=str(price_payload.get("currency") or prediction.currency),
+                            confidence=prediction.confidence,
+                            price_p10=prediction.price_p10,
+                            price_p90=prediction.price_p90,
+                            price_recommendation_eligible=prediction.price_recommendation_eligible,
+                            estimate_trust=prediction.estimate_trust,
+                            estimate_warning=prediction.estimate_warning,
+                            fallback_reason=prediction.fallback_reason,
+                        )
                 except Exception:
                     logger.exception(
                         "Valuation lookup failed account=%s realm=%s league=%s",
@@ -227,7 +251,42 @@ class AccountStashHarvester:
                         realm,
                         league,
                     )
-            return {
+            estimated_currency = str(prediction.currency or listed_currency or "chaos")
+            listed_price_chaos = normalize_chaos_price(
+                listed_price,
+                currency=listed_currency,
+            )
+            estimated_price_chaos = normalize_chaos_price(
+                prediction.predicted_price,
+                currency=estimated_currency,
+            )
+            if estimated_price_chaos is None and estimated_currency.lower() in {
+                "chaos",
+                "chaos orb",
+                "chaos orbs",
+                "c",
+            }:
+                estimated_price_chaos = float(prediction.predicted_price or 0.0)
+            if listed_price_chaos is None and listed_price is not None and listed_currency.lower() in {
+                "chaos",
+                "chaos orb",
+                "chaos orbs",
+                "c",
+            }:
+                listed_price_chaos = float(listed_price)
+            price_delta_chaos = (
+                None
+                if listed_price_chaos is None or estimated_price_chaos is None
+                else listed_price_chaos - estimated_price_chaos
+            )
+            price_delta_pct = (
+                None
+                if listed_price_chaos is None or estimated_price_chaos in (None, 0)
+                else ((listed_price_chaos - estimated_price_chaos) / estimated_price_chaos)
+                * 100.0
+            )
+            price_band = price_band_for_delta_pct(price_delta_pct)
+            normalized_row = {
                 "scan_id": effective_scan_id,
                 "account_name": account_name,
                 "league": league,
@@ -245,6 +304,12 @@ class AccountStashHarvester:
                 "item_name": str(
                     raw_item.get("name") or raw_item.get("typeLine") or "Unknown"
                 ),
+                "base_type": str(
+                    raw_item.get("baseType")
+                    or raw_item.get("typeLine")
+                    or raw_item.get("name")
+                    or "Unknown"
+                ),
                 "item_class": str(raw_item.get("itemClass") or "Unknown"),
                 "rarity": _rarity_from_frame_type(raw_item.get("frameType")),
                 "x": int(raw_item.get("x") or 0),
@@ -252,7 +317,55 @@ class AccountStashHarvester:
                 "w": int(raw_item.get("w") or 1),
                 "h": int(raw_item.get("h") or 1),
                 "listed_price": listed_price,
-                "currency": currency,
+                "listed_currency": listed_currency,
+                "listed_price_chaos": listed_price_chaos,
+                "estimated_price_chaos": estimated_price_chaos,
+                "price_p10_chaos": normalize_chaos_price(
+                    prediction.price_p10,
+                    currency=estimated_currency,
+                ),
+                "price_p90_chaos": normalize_chaos_price(
+                    prediction.price_p90,
+                    currency=estimated_currency,
+                ),
+                "price_delta_chaos": price_delta_chaos,
+                "price_delta_pct": price_delta_pct,
+                "price_band": price_band,
+                "price_evaluation": price_evaluation_for_band(price_band),
+                "price_band_version": 1,
+                "confidence": prediction.confidence,
+                "estimate_trust": prediction.estimate_trust,
+                "estimate_warning": prediction.estimate_warning,
+                "fallback_reason": prediction.fallback_reason,
+                "explicit_mods_json": json.dumps(
+                    raw_item.get("explicitMods") or [], ensure_ascii=False
+                ),
+                "icon_url": str(raw_item.get("icon") or ""),
+                "priced_at": _timestamp_utc(),
+                "payload_json": json.dumps(raw_item, ensure_ascii=False),
+            }
+            legacy_row = {
+                "scan_id": effective_scan_id,
+                "account_name": account_name,
+                "league": league,
+                "realm": realm,
+                "tab_id": str(tab.get("id") or ""),
+                "tab_index": tab_index,
+                "tab_name": str(tab.get("name") or ""),
+                "tab_type": str(tab.get("type") or "normal"),
+                "lineage_key": normalized_row["lineage_key"],
+                "content_signature": normalized_row["content_signature"],
+                "item_position_key": normalized_row["item_position_key"],
+                "item_id": normalized_row["item_id"],
+                "item_name": normalized_row["item_name"],
+                "item_class": normalized_row["item_class"],
+                "rarity": normalized_row["rarity"],
+                "x": normalized_row["x"],
+                "y": normalized_row["y"],
+                "w": normalized_row["w"],
+                "h": normalized_row["h"],
+                "listed_price": listed_price,
+                "currency": str(prediction.currency or listed_currency),
                 "predicted_price": prediction.predicted_price,
                 "confidence": prediction.confidence,
                 "price_p10": prediction.price_p10,
@@ -262,9 +375,10 @@ class AccountStashHarvester:
                 "estimate_warning": prediction.estimate_warning,
                 "fallback_reason": prediction.fallback_reason,
                 "icon_url": str(raw_item.get("icon") or ""),
-                "priced_at": _timestamp_utc(),
-                "payload_json": json.dumps(raw_item, ensure_ascii=False),
+                "priced_at": normalized_row["priced_at"],
+                "payload_json": normalized_row["payload_json"],
             }
+            return normalized_row, legacy_row
 
         try:
             self._set_bearer_token()
@@ -314,7 +428,12 @@ class AccountStashHarvester:
                 for raw_item in items:
                     if not isinstance(raw_item, dict):
                         continue
-                    pending_item_rows.append((dict(tab), tab_index, raw_item))
+                    normalized_row, legacy_row = _build_item_row(
+                        dict(tab), tab_index, raw_item
+                    )
+                    pending_scan_item_rows.append(normalized_row)
+                    pending_normalized_item_rows.append(normalized_row)
+                    pending_legacy_item_rows.append(legacy_row)
                 self._write_scan_tabs([current_tab_row])
                 items_processed += len(items)
                 self._write_scan_run(
@@ -336,19 +455,35 @@ class AccountStashHarvester:
                 )
                 tabs_processed = tab_number
 
+            self._write_scan_item_rows(pending_scan_item_rows)
+            self._write_scan_item_history_v2(pending_normalized_item_rows)
             published_at = _timestamp_utc()
-            terminal_state = ("published", published_at, "")
-            _finalize_scan_state(
+            published_finalized = _finalize_scan_state(
                 status="published",
                 terminal_at=published_at,
                 error_message="",
             )
+            if not published_finalized:
+                failed_at = _timestamp_utc()
+                error_message = "failed to publish scan marker"
+                _finalize_scan_state(
+                    status="failed",
+                    terminal_at=failed_at,
+                    error_message=error_message,
+                )
+                terminal_written = True
+                return {
+                    "scanId": effective_scan_id,
+                    "status": "failed",
+                    "startedAt": effective_started_at,
+                    "accountName": account_name,
+                    "league": league,
+                    "realm": realm,
+                    "error": error_message,
+                }
+            terminal_written = True
             try:
-                current_item_rows = [
-                    _build_item_row(tab, tab_index, raw_item)
-                    for tab, tab_index, raw_item in pending_item_rows
-                ]
-                self._write_scan_item_valuations(current_item_rows)
+                self._write_scan_item_valuations(pending_legacy_item_rows)
             except Exception:
                 logger.exception(
                     "Private stash valuation write failed account=%s realm=%s league=%s",
@@ -385,7 +520,7 @@ class AccountStashHarvester:
                 "error": error_message,
             }
         finally:
-            if terminal_state is not None:
+            if terminal_state is not None and not terminal_written:
                 status, terminal_at, error_message = terminal_state
                 _finalize_scan_state(
                     status=status,
@@ -621,12 +756,16 @@ class AccountStashHarvester:
         items_total: int,
         items_processed: int,
         error_message: str,
+        scan_kind: str = "stash_scan",
+        source_scan_id: str = "",
     ) -> None:
         row = {
             "scan_id": scan_id,
             "account_name": account_name,
             "league": league,
             "realm": realm,
+            "scan_kind": scan_kind,
+            "source_scan_id": source_scan_id,
             "status": status,
             "started_at": started_at,
             "updated_at": updated_at,
@@ -641,7 +780,7 @@ class AccountStashHarvester:
         }
         query = (
             "INSERT INTO poe_trade.account_stash_scan_runs "
-            "(scan_id, account_name, league, realm, status, started_at, updated_at, completed_at, published_at, failed_at, tabs_total, tabs_processed, items_total, items_processed, error_message)\n"
+            "(scan_id, account_name, league, realm, scan_kind, source_scan_id, status, started_at, updated_at, completed_at, published_at, failed_at, tabs_total, tabs_processed, items_total, items_processed, error_message)\n"
             "FORMAT JSONEachRow\n"
             f"{json.dumps(row, ensure_ascii=False)}"
         )
@@ -657,19 +796,23 @@ class AccountStashHarvester:
         is_active: bool,
         started_at: str,
         updated_at: str,
+        scan_kind: str = "stash_scan",
+        source_scan_id: str = "",
     ) -> None:
         row = {
             "account_name": account_name,
             "league": league,
             "realm": realm,
             "scan_id": scan_id,
+            "scan_kind": scan_kind,
+            "source_scan_id": source_scan_id,
             "is_active": _bool_to_uint8(is_active),
             "started_at": started_at,
             "updated_at": updated_at,
         }
         query = (
             "INSERT INTO poe_trade.account_stash_active_scans "
-            "(account_name, league, realm, scan_id, is_active, started_at, updated_at)\n"
+            "(account_name, league, realm, scan_id, scan_kind, source_scan_id, is_active, started_at, updated_at)\n"
             "FORMAT JSONEachRow\n"
             f"{json.dumps(row, ensure_ascii=False)}"
         )
@@ -681,6 +824,28 @@ class AccountStashHarvester:
         query = (
             "INSERT INTO poe_trade.account_stash_scan_tabs "
             "(scan_id, account_name, league, realm, tab_id, tab_index, tab_name, tab_type, captured_at, tab_meta_json, payload_json)\n"
+            "FORMAT JSONEachRow\n"
+            f"{_json_each_row_payload(rows)}"
+        )
+        self._clickhouse.execute(query)
+
+    def _write_scan_item_rows(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        query = (
+            "INSERT INTO poe_trade.account_stash_scan_items_v2 "
+            "(scan_id, account_name, league, realm, tab_id, tab_index, tab_name, tab_type, lineage_key, content_signature, item_position_key, item_id, item_name, base_type, item_class, rarity, x, y, w, h, listed_price, listed_currency, listed_price_chaos, estimated_price_chaos, price_p10_chaos, price_p90_chaos, price_delta_chaos, price_delta_pct, price_band, price_evaluation, price_band_version, confidence, estimate_trust, estimate_warning, fallback_reason, explicit_mods_json, icon_url, priced_at, payload_json)\n"
+            "FORMAT JSONEachRow\n"
+            f"{_json_each_row_payload(rows)}"
+        )
+        self._clickhouse.execute(query)
+
+    def _write_scan_item_history_v2(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        query = (
+            "INSERT INTO poe_trade.account_stash_item_history_v2 "
+            "(scan_id, account_name, league, realm, tab_id, tab_index, tab_name, tab_type, lineage_key, content_signature, item_position_key, item_id, item_name, base_type, item_class, rarity, x, y, w, h, listed_price, listed_currency, listed_price_chaos, estimated_price_chaos, price_p10_chaos, price_p90_chaos, price_delta_chaos, price_delta_pct, price_band, price_evaluation, price_band_version, confidence, estimate_trust, estimate_warning, fallback_reason, explicit_mods_json, icon_url, priced_at, payload_json)\n"
             "FORMAT JSONEachRow\n"
             f"{_json_each_row_payload(rows)}"
         )
@@ -720,6 +885,576 @@ class AccountStashHarvester:
             f"{json.dumps(row, ensure_ascii=False)}"
         )
         self._clickhouse.execute(query)
+
+
+def run_persisted_valuation_refresh(
+    clickhouse: ClickHouseClient,
+    *,
+    account_name: str,
+    league: str,
+    realm: str,
+    published_scan_id: str,
+    scan_id: str | None = None,
+    started_at: str | None = None,
+    price_item: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    policy = RateLimitPolicy(0, 0.0, 0.0, 0.0)
+    poe_client = PoeClient("http://poe.invalid", policy, "ua", 1.0)
+    reporter = StatusReporter(clickhouse, "account_stash_harvester")
+    writer = AccountStashHarvester(
+        poe_client,
+        clickhouse,
+        reporter,
+        service_name="account_stash_harvester",
+        account_name=account_name,
+    )
+
+    def _coerce_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    if not account_name.strip():
+        raise ValueError("account_name is required for private stash scans")
+    if not published_scan_id.strip():
+        raise ValueError("published_scan_id is required for valuation refresh")
+
+    effective_scan_id = scan_id or uuid.uuid4().hex
+    effective_started_at = started_at or _timestamp_utc()
+    effective_price_item = price_item
+
+    def _load_rows(query: str) -> list[dict[str, Any]]:
+        try:
+            payload = clickhouse.execute(query).strip()
+        except Exception as exc:
+            raise RuntimeError("persisted valuation backend unavailable") from exc
+        if not payload:
+            return []
+        return [json.loads(line) for line in payload.splitlines() if line.strip()]
+
+    def _load_persisted_source_rows() -> tuple[
+        dict[str, Any] | None,
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+    ]:
+        source_run = fetch_latest_scan_run(
+            clickhouse,
+            account_name=account_name,
+            league=league,
+            realm=realm,
+            scan_id=published_scan_id,
+        )
+        if source_run is None:
+            source_run = fetch_latest_published_valuation_refresh_run(
+                clickhouse,
+                account_name=account_name,
+                league=league,
+                realm=realm,
+                published_scan_id=published_scan_id,
+            )
+        if source_run is None:
+            raise RuntimeError("persisted_source_incomplete")
+        progress = source_run.get("progress") if isinstance(source_run, dict) else {}
+        if str(source_run.get("status") or "").strip().lower() != "published":
+            raise RuntimeError("persisted_source_incomplete")
+        tabs_total_value = int(
+            progress.get("tabsTotal") if isinstance(progress, dict) else 0
+        )
+        items_total_value = int(
+            progress.get("itemsTotal") if isinstance(progress, dict) else 0
+        )
+        if tabs_total_value <= 0 or items_total_value < 0:
+            raise RuntimeError("persisted_source_incomplete")
+
+        tabs_query = (
+            "SELECT scan_id, account_name, league, realm, tab_id, tab_index, tab_name, tab_type, captured_at, tab_meta_json, payload_json "
+            "FROM poe_trade.account_stash_scan_tabs "
+            f"WHERE account_name = '{_escape_sql_literal(account_name)}' "
+            f"AND league = '{_escape_sql_literal(league)}' "
+            f"AND realm = '{_escape_sql_literal(realm)}' "
+            f"AND scan_id = '{_escape_sql_literal(published_scan_id)}' "
+            "ORDER BY tab_index ASC FORMAT JSONEachRow"
+        )
+        items_query = (
+            "SELECT scan_id, account_name, league, realm, tab_id, tab_index, tab_name, tab_type, "
+            "lineage_key, content_signature, item_position_key, item_id, item_name, base_type, item_class, rarity, x, y, w, h, "
+            "listed_price, listed_currency, listed_price_chaos, estimated_price_chaos, price_p10_chaos, price_p90_chaos, "
+            "price_delta_chaos, price_delta_pct, price_band, price_band_version, confidence, estimate_trust, estimate_warning, fallback_reason, "
+            "explicit_mods_json, icon_url, priced_at, payload_json "
+            "FROM poe_trade.account_stash_scan_items_v2 "
+            f"WHERE account_name = '{_escape_sql_literal(account_name)}' "
+            f"AND league = '{_escape_sql_literal(league)}' "
+            f"AND realm = '{_escape_sql_literal(realm)}' "
+            f"AND scan_id = '{_escape_sql_literal(published_scan_id)}' "
+            "ORDER BY tab_index ASC, y ASC, x ASC FORMAT JSONEachRow"
+        )
+        legacy_items_query = (
+            "SELECT scan_id, account_name, league, realm, tab_id, tab_index, tab_name, tab_type, "
+            "lineage_key, item_id, item_name, item_class, rarity, x, y, w, h, listed_price, currency, predicted_price, confidence, price_p10, price_p90, "
+            "estimate_trust, estimate_warning, fallback_reason, icon_url, priced_at, payload_json "
+            "FROM poe_trade.account_stash_item_valuations "
+            f"WHERE account_name = '{_escape_sql_literal(account_name)}' "
+            f"AND league = '{_escape_sql_literal(league)}' "
+            f"AND realm = '{_escape_sql_literal(realm)}' "
+            f"AND scan_id = '{_escape_sql_literal(published_scan_id)}' "
+            "ORDER BY tab_index ASC, y ASC, x ASC FORMAT JSONEachRow"
+        )
+
+        tabs = _load_rows(tabs_query)
+        item_rows = _load_rows(items_query)
+        if not item_rows:
+            item_rows = _load_rows(legacy_items_query)
+        if len(tabs) != tabs_total_value or len(item_rows) != items_total_value:
+            raise RuntimeError("persisted_source_incomplete")
+        return source_run, tabs, item_rows
+
+    def _finalize_refresh_state(
+        *,
+        status: str,
+        terminal_at: str,
+        error_message: str,
+    ) -> bool:
+        ok = True
+        try:
+            writer._write_scan_run(
+                scan_id=effective_scan_id,
+                status=status,
+                account_name=account_name,
+                league=league,
+                realm=realm,
+                started_at=effective_started_at,
+                updated_at=terminal_at,
+                completed_at=terminal_at if status == "published" else None,
+                published_at=terminal_at if status == "published" else None,
+                failed_at=terminal_at if status == "failed" else None,
+                tabs_total=tabs_total,
+                tabs_processed=tabs_processed,
+                items_total=items_total,
+                items_processed=items_processed,
+                error_message=error_message,
+                scan_kind="valuation_refresh",
+                source_scan_id=published_scan_id,
+            )
+        except Exception:
+            ok = False
+            logger.exception(
+                "Failed to write persisted refresh scan run account=%s realm=%s league=%s",
+                account_name,
+                realm,
+                league,
+            )
+        try:
+            writer._write_active_scan(
+                account_name=account_name,
+                league=league,
+                realm=realm,
+                scan_id=effective_scan_id,
+                is_active=False,
+                started_at=effective_started_at,
+                updated_at=terminal_at,
+                scan_kind="valuation_refresh",
+                source_scan_id=published_scan_id,
+            )
+        except Exception:
+            ok = False
+            logger.exception(
+                "Failed to clear persisted refresh active scan account=%s realm=%s league=%s",
+                account_name,
+                realm,
+                league,
+            )
+        if status == "published":
+            try:
+                writer._write_published_scan(
+                    account_name=account_name,
+                    league=league,
+                    realm=realm,
+                    scan_id=effective_scan_id,
+                    published_at=terminal_at,
+                )
+            except Exception:
+                ok = False
+                logger.exception(
+                    "Failed to write persisted refresh published marker account=%s realm=%s league=%s",
+                    account_name,
+                    realm,
+                    league,
+                )
+        return ok
+
+    tabs_total = 0
+    tabs_processed = 0
+    items_total = 0
+    items_processed = 0
+    terminal_state: tuple[str, str, str] | None = None
+    terminal_written = False
+
+    writer._write_scan_run(
+        scan_id=effective_scan_id,
+        status="running",
+        account_name=account_name,
+        league=league,
+        realm=realm,
+        started_at=effective_started_at,
+        updated_at=effective_started_at,
+        completed_at=None,
+        published_at=None,
+        failed_at=None,
+        tabs_total=0,
+        tabs_processed=0,
+        items_total=0,
+        items_processed=0,
+        error_message="",
+        scan_kind="valuation_refresh",
+        source_scan_id=published_scan_id,
+    )
+    writer._write_active_scan(
+        account_name=account_name,
+        league=league,
+        realm=realm,
+        scan_id=effective_scan_id,
+        is_active=True,
+        started_at=effective_started_at,
+        updated_at=effective_started_at,
+        scan_kind="valuation_refresh",
+        source_scan_id=published_scan_id,
+    )
+
+    try:
+        _, tabs, item_rows = _load_persisted_source_rows()
+
+        tabs_total = len(tabs)
+        items_total = len(item_rows)
+        tabs_processed = tabs_total
+        items_processed = items_total
+
+        copied_tabs = [
+            {
+                **row,
+                "scan_id": effective_scan_id,
+                "account_name": account_name,
+                "league": league,
+                "realm": realm,
+                "captured_at": row.get("captured_at") or effective_started_at,
+                "tab_meta_json": row.get("tab_meta_json") or row.get("payload_json") or "{}",
+                "payload_json": row.get("payload_json") or row.get("tab_meta_json") or "{}",
+            }
+            for row in tabs
+        ]
+        writer._write_scan_tabs(copied_tabs)
+
+        tab_by_id = {str(row.get("tab_id") or ""): row for row in tabs}
+        pending_scan_item_rows: list[dict[str, Any]] = []
+        pending_normalized_item_rows: list[dict[str, Any]] = []
+        pending_legacy_item_rows: list[dict[str, Any]] = []
+
+        def _item_row_tab(row: dict[str, Any]) -> dict[str, Any]:
+            tab_id = str(row.get("tab_id") or "")
+            tab = tab_by_id.get(tab_id)
+            if tab is not None:
+                return tab
+            return {
+                "tab_id": tab_id,
+                "tab_index": row.get("tab_index") or 0,
+                "tab_name": row.get("tab_name") or "",
+                "tab_type": row.get("tab_type") or "normal",
+            }
+
+        def _build_item_rows(
+            tab: dict[str, Any],
+            tab_index: int,
+            raw_item: dict[str, Any],
+            source_row: dict[str, Any],
+        ) -> tuple[dict[str, Any], dict[str, Any]]:
+            listed = parse_listed_price(str(raw_item.get("note") or "")) or parse_listed_price(
+                str(tab.get("tab_name") or tab.get("name") or "")
+            )
+            listed_price = (
+                listed[0] if listed is not None else _coerce_float(source_row.get("listed_price"))
+            )
+            listed_currency = str(
+                listed[1]
+                if listed is not None
+                else source_row.get("listed_currency")
+                or source_row.get("currency")
+                or "chaos"
+            ).strip().lower()
+
+            prediction = _fallback_prediction(currency=listed_currency)
+            if effective_price_item is not None:
+                try:
+                    price_payload = effective_price_item(raw_item)
+                    if _has_concrete_prediction(price_payload):
+                        prediction = normalize_stash_prediction(price_payload)
+                    elif isinstance(price_payload, dict):
+                        prediction = StashPrediction(
+                            predicted_price=prediction.predicted_price,
+                            currency=str(price_payload.get("currency") or prediction.currency),
+                            confidence=prediction.confidence,
+                            price_p10=prediction.price_p10,
+                            price_p90=prediction.price_p90,
+                            price_recommendation_eligible=prediction.price_recommendation_eligible,
+                            estimate_trust=prediction.estimate_trust,
+                            estimate_warning=prediction.estimate_warning,
+                            fallback_reason=prediction.fallback_reason,
+                        )
+                except Exception:
+                    logger.exception(
+                        "Persisted valuation lookup failed account=%s realm=%s league=%s",
+                        account_name,
+                        realm,
+                        league,
+                    )
+
+            predicted_currency = str(
+                prediction.currency
+                or source_row.get("currency")
+                or listed_currency
+                or "chaos"
+            ).strip().lower()
+            listed_price_chaos = _coerce_float(source_row.get("listed_price_chaos"))
+            if listed_price_chaos is None and listed_price is not None:
+                listed_price_chaos = normalize_chaos_price(
+                    listed_price,
+                    currency=listed_currency,
+                )
+            estimated_price_chaos = _coerce_float(source_row.get("estimated_price_chaos"))
+            if estimated_price_chaos is None:
+                estimated_price_chaos = normalize_chaos_price(
+                    prediction.predicted_price,
+                    currency=predicted_currency,
+                )
+            if estimated_price_chaos is None:
+                estimated_price_chaos = _coerce_float(source_row.get("predicted_price"))
+            if estimated_price_chaos is None:
+                estimated_price_chaos = _coerce_float(source_row.get("estimated_price"))
+            price_p10_chaos = _coerce_float(source_row.get("price_p10_chaos"))
+            if price_p10_chaos is None:
+                price_p10_chaos = normalize_chaos_price(
+                    prediction.price_p10,
+                    currency=predicted_currency,
+                )
+            if price_p10_chaos is None:
+                price_p10_chaos = _coerce_float(source_row.get("price_p10"))
+            price_p90_chaos = _coerce_float(source_row.get("price_p90_chaos"))
+            if price_p90_chaos is None:
+                price_p90_chaos = normalize_chaos_price(
+                    prediction.price_p90,
+                    currency=predicted_currency,
+                )
+            if price_p90_chaos is None:
+                price_p90_chaos = _coerce_float(source_row.get("price_p90"))
+            if listed_price is None and listed_price_chaos is not None:
+                listed_display = _display_price_from_chaos(listed_price_chaos, listed_currency)
+                listed_price = _coerce_float(listed_display)
+            price_delta_chaos = (
+                None
+                if listed_price_chaos is None or estimated_price_chaos is None
+                else listed_price_chaos - estimated_price_chaos
+            )
+            price_delta_pct = (
+                None
+                if listed_price_chaos is None or estimated_price_chaos in (None, 0)
+                else ((listed_price_chaos - estimated_price_chaos) / estimated_price_chaos)
+                * 100.0
+            )
+            price_band = str(source_row.get("price_band") or "bad")
+            if price_delta_pct is not None and not source_row.get("price_band"):
+                price_band = price_band_for_delta_pct(price_delta_pct)
+            confidence = _coerce_float(source_row.get("confidence"))
+            if confidence is None:
+                confidence = prediction.confidence
+            tab_id = str(tab.get("tab_id") or tab.get("id") or source_row.get("tab_id") or "")
+            normalized_row = {
+                "scan_id": effective_scan_id,
+                "account_name": account_name,
+                "league": league,
+                "realm": realm,
+                "tab_id": tab_id,
+                "tab_index": tab_index,
+                "tab_name": str(tab.get("tab_name") or tab.get("name") or source_row.get("tab_name") or ""),
+                "tab_type": str(tab.get("tab_type") or tab.get("type") or source_row.get("tab_type") or "normal"),
+                "lineage_key": str(source_row.get("lineage_key") or lineage_key_for_item(raw_item)),
+                "content_signature": str(source_row.get("content_signature") or content_signature_for_item(raw_item)),
+                "item_position_key": str(
+                    source_row.get("item_position_key")
+                    or _item_position_key(tab_id, raw_item)
+                ),
+                "item_id": str(source_row.get("item_id") or raw_item.get("id") or ""),
+                "item_name": str(
+                    source_row.get("item_name")
+                    or raw_item.get("name")
+                    or raw_item.get("typeLine")
+                    or "Unknown"
+                ),
+                "base_type": str(
+                    source_row.get("base_type")
+                    or raw_item.get("baseType")
+                    or raw_item.get("typeLine")
+                    or raw_item.get("itemTypeLine")
+                    or raw_item.get("name")
+                    or "Unknown"
+                ),
+                "item_class": str(source_row.get("item_class") or raw_item.get("itemClass") or "Unknown"),
+                "rarity": str(source_row.get("rarity") or _rarity_from_frame_type(raw_item.get("frameType"))),
+                "x": int(source_row.get("x") or raw_item.get("x") or 0),
+                "y": int(source_row.get("y") or raw_item.get("y") or 0),
+                "w": int(source_row.get("w") or raw_item.get("w") or 1),
+                "h": int(source_row.get("h") or raw_item.get("h") or 1),
+                "listed_price": listed_price,
+                "listed_currency": listed_currency,
+                "listed_price_chaos": listed_price_chaos,
+                "estimated_price_chaos": estimated_price_chaos,
+                "price_p10_chaos": price_p10_chaos,
+                "price_p90_chaos": price_p90_chaos,
+                "price_delta_chaos": price_delta_chaos,
+                "price_delta_pct": price_delta_pct,
+                "price_band": price_band,
+                "price_evaluation": price_evaluation_for_band(price_band),
+                "price_band_version": int(source_row.get("price_band_version") or 1),
+                "confidence": confidence,
+                "estimate_trust": str(prediction.estimate_trust or source_row.get("estimate_trust") or "normal"),
+                "estimate_warning": str(prediction.estimate_warning or source_row.get("estimate_warning") or ""),
+                "fallback_reason": str(prediction.fallback_reason or source_row.get("fallback_reason") or ""),
+                "explicit_mods_json": str(
+                    source_row.get("explicit_mods_json")
+                    or json.dumps(raw_item.get("explicitMods") or [], ensure_ascii=False)
+                ),
+                "icon_url": str(source_row.get("icon_url") or raw_item.get("icon") or ""),
+                "priced_at": _timestamp_utc(),
+                "payload_json": json.dumps(raw_item, ensure_ascii=False),
+            }
+            legacy_row = {
+                "scan_id": effective_scan_id,
+                "account_name": account_name,
+                "league": league,
+                "realm": realm,
+                "tab_id": tab_id,
+                "tab_index": tab_index,
+                "tab_name": normalized_row["tab_name"],
+                "tab_type": normalized_row["tab_type"],
+                "lineage_key": normalized_row["lineage_key"],
+                "content_signature": normalized_row["content_signature"],
+                "item_position_key": normalized_row["item_position_key"],
+                "item_id": normalized_row["item_id"],
+                "item_name": normalized_row["item_name"],
+                "item_class": normalized_row["item_class"],
+                "rarity": normalized_row["rarity"],
+                "x": normalized_row["x"],
+                "y": normalized_row["y"],
+                "w": normalized_row["w"],
+                "h": normalized_row["h"],
+                "listed_price": normalized_row["listed_price"],
+                "currency": predicted_currency,
+                "predicted_price": prediction.predicted_price,
+                "confidence": normalized_row["confidence"],
+                "price_p10": prediction.price_p10,
+                "price_p90": prediction.price_p90,
+                "price_recommendation_eligible": prediction.price_recommendation_eligible,
+                "estimate_trust": normalized_row["estimate_trust"],
+                "estimate_warning": normalized_row["estimate_warning"],
+                "fallback_reason": normalized_row["fallback_reason"],
+                "icon_url": normalized_row["icon_url"],
+                "priced_at": normalized_row["priced_at"],
+                "payload_json": normalized_row["payload_json"],
+            }
+            return normalized_row, legacy_row
+
+        for source_row in item_rows:
+            raw_item = _load_payload_json(source_row.get("payload_json"))
+            if not isinstance(raw_item, dict):
+                raw_item = {}
+            tab = _item_row_tab(source_row)
+            tab_index = int(source_row.get("tab_index") or tab.get("tab_index") or 0)
+            normalized_row, legacy_row = _build_item_rows(tab, tab_index, raw_item, source_row)
+            pending_scan_item_rows.append(normalized_row)
+            pending_normalized_item_rows.append(normalized_row)
+            pending_legacy_item_rows.append(legacy_row)
+
+        writer._write_scan_item_rows(pending_scan_item_rows)
+        writer._write_scan_item_history_v2(pending_normalized_item_rows)
+        published_at = _timestamp_utc()
+        published_finalized = _finalize_refresh_state(
+            status="published",
+            terminal_at=published_at,
+            error_message="",
+        )
+        if not published_finalized:
+            failed_at = _timestamp_utc()
+            error_message = "failed to publish scan marker"
+            _finalize_refresh_state(
+                status="failed",
+                terminal_at=failed_at,
+                error_message=error_message,
+            )
+            terminal_written = True
+            return {
+                "scanId": effective_scan_id,
+                "status": "failed",
+                "startedAt": effective_started_at,
+                "accountName": account_name,
+                "league": league,
+                "realm": realm,
+                "error": error_message,
+            }
+
+        terminal_written = True
+        try:
+            writer._write_scan_item_valuations(pending_legacy_item_rows)
+        except Exception:
+            logger.exception(
+                "Persisted valuation compatibility write failed account=%s realm=%s league=%s",
+                account_name,
+                realm,
+                league,
+            )
+
+        return {
+            "scanId": effective_scan_id,
+            "status": "published",
+            "startedAt": effective_started_at,
+            "publishedAt": published_at,
+            "accountName": account_name,
+            "league": league,
+            "realm": realm,
+        }
+    except Exception as exc:
+        failed_at = _timestamp_utc()
+        error_message = _friendly_scan_error_message(exc)
+        terminal_state = ("failed", failed_at, error_message)
+        logger.exception(
+            "Persisted valuation refresh failed account=%s realm=%s league=%s",
+            account_name,
+            realm,
+            league,
+        )
+        return {
+            "scanId": effective_scan_id,
+            "status": "failed",
+            "startedAt": effective_started_at,
+            "accountName": account_name,
+            "league": league,
+            "realm": realm,
+            "error": error_message,
+        }
+    finally:
+        if terminal_state is not None and not terminal_written:
+            status, terminal_at, error_message = terminal_state
+            _finalize_refresh_state(
+                status=status,
+                terminal_at=terminal_at,
+                error_message=error_message,
+            )
 
 
 def _tab_rows_from_payload(payload: Any) -> list[dict[str, Any]]:
@@ -815,6 +1550,19 @@ def _json_each_row_payload(rows: list[dict[str, Any]]) -> str:
     return "\n".join(json.dumps(row, ensure_ascii=False) for row in rows)
 
 
+def _load_payload_json(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _bool_to_uint8(value: bool) -> int:
     return 1 if value else 0
 
@@ -850,7 +1598,7 @@ def parse_listed_price(note: str) -> tuple[float, str] | None:
     match = _PRICE_NOTE_PATTERN.match(note.strip())
     if not match:
         return None
-    return float(match.group(1)), match.group(2).lower()
+    return float(match.group(1)), " ".join(match.group(2).split()).lower()
 
 
 def _rarity_from_frame_type(frame_type: Any) -> str:
