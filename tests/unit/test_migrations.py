@@ -360,7 +360,9 @@ def test_incremental_v2_fx_alias_expansion_migration_maps_common_shorthand() -> 
     assert "IN ('exa', 'exalt', 'exalted', 'exalts'), 'exalted'" in sql
 
 
-def test_private_stash_scan_v2_backfill_populates_latest_and_history_structures() -> None:
+def test_private_stash_scan_v2_backfill_populates_latest_and_history_structures() -> (
+    None
+):
     migration = (
         Path(__file__).resolve().parents[2]
         / "schema"
@@ -571,11 +573,16 @@ def test_private_stash_scan_query_paths_migration_has_v2_tables_view_and_ttls() 
 
     assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_scan_items_v2" in sql
     assert "CREATE TABLE IF NOT EXISTS poe_trade.account_stash_item_history_v2" in sql
-    assert "CREATE VIEW IF NOT EXISTS poe_trade.v_account_stash_latest_scan_items" in sql
+    assert (
+        "CREATE VIEW IF NOT EXISTS poe_trade.v_account_stash_latest_scan_items" in sql
+    )
     assert "TTL priced_at + INTERVAL 90 DAY DELETE" in sql
     assert "MODIFY TTL captured_at + INTERVAL 90 DAY DELETE" in sql
     assert "MODIFY TTL priced_at + INTERVAL 90 DAY DELETE" in sql
-    assert "GRANT SELECT ON poe_trade.v_account_stash_latest_scan_items TO poe_api_reader" in sql
+    assert (
+        "GRANT SELECT ON poe_trade.v_account_stash_latest_scan_items TO poe_api_reader"
+        in sql
+    )
 
 
 def test_private_stash_scan_retention_migration_adds_90_day_ttls() -> None:
@@ -651,7 +658,9 @@ def test_private_stash_scan_migration_relies_on_existing_poe_rw_role_grants() ->
     assert "GRANT " not in sql
 
 
-def test_private_stash_scan_v2_price_evaluation_migration_adds_backend_label_columns() -> None:
+def test_private_stash_scan_v2_price_evaluation_migration_adds_backend_label_columns() -> (
+    None
+):
     migration = (
         Path(__file__).resolve().parents[2]
         / "schema"
@@ -666,7 +675,9 @@ def test_private_stash_scan_v2_price_evaluation_migration_adds_backend_label_col
     assert "price_evaluation LowCardinality(String)" in sql
 
 
-def test_private_stash_refresh_lifecycle_metadata_migration_adds_kind_and_source_columns() -> None:
+def test_private_stash_refresh_lifecycle_metadata_migration_adds_kind_and_source_columns() -> (
+    None
+):
     migration = (
         Path(__file__).resolve().parents[2]
         / "schema"
@@ -681,6 +692,42 @@ def test_private_stash_refresh_lifecycle_metadata_migration_adds_kind_and_source
     assert "ADD COLUMN IF NOT EXISTS scan_kind" in sql
     assert "ADD COLUMN IF NOT EXISTS source_scan_id" in sql
     assert "DEFAULT 'stash_scan'" in sql
+
+
+def test_bronze_public_stash_mirage_migration_creates_table_and_mv() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0094_bronze_public_stash_mirage.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.bronze_public_stash_mirage" in sql
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "poe_trade.mv_raw_public_stash_to_bronze_public_stash_mirage" in sql
+    )
+    assert "WHERE base.league = 'Mirage'" in sql
+    assert "row_type LowCardinality(String)" in sql
+    assert "CODEC(Delta(8), ZSTD(3))" in sql
+    assert "CODEC(ZSTD(3))" in sql
+
+
+def test_bronze_public_stash_mirage_backfill_migration_inserts_from_raw_pages() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0095_bronze_public_stash_mirage_backfill.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "INSERT INTO poe_trade.bronze_public_stash_mirage" in sql
+    assert "FROM poe_trade.raw_public_stash_pages AS base" in sql
+    assert "WHERE base.league = 'Mirage'" in sql
 
 
 def test_scanner_opportunity_analytics_migration_adds_decision_storage() -> None:

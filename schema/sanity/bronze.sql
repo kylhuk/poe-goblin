@@ -8,6 +8,26 @@ GROUP BY league
 ORDER BY league;
 
 SELECT
+    count() AS mirage_flat_rows,
+    max(ingested_at) AS latest_mirage_flat_row,
+    countIf(league != 'Mirage') AS non_mirage_rows
+FROM poe_trade.bronze_public_stash_mirage;
+
+SELECT
+    (
+        SELECT count()
+        FROM poe_trade.bronze_public_stash_mirage
+        WHERE row_type = 'item'
+    ) AS flat_item_rows,
+    (
+        SELECT count()
+        FROM poe_trade.raw_public_stash_pages AS base
+        ARRAY JOIN JSONExtractArrayRaw(base.payload_json, 'items') AS item_json
+        WHERE base.league = 'Mirage'
+    ) AS raw_item_rows,
+    flat_item_rows - raw_item_rows AS item_row_delta;
+
+SELECT
     league,
     max(captured_at) AS latest_snapshot
 FROM poe_trade.raw_account_stash_snapshot

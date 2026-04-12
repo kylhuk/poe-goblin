@@ -28,7 +28,7 @@
 			<networks>
 				<ip>::/0</ip>
 			</networks>
-			<password_sha256_hex>054d7465e0d98a8e64c0016cd2a90e13d2676858d65a672b0055e361cfeedfe4</password_sha256_hex>
+			<password_sha256_hex>44f64269f994f210cec3a85f0febc1a402234544ceda4e17917d6750948c8fdc</password_sha256_hex>
 			<quota>default</quota>
 			<grants>
 				<query>GRANT admin</query>
