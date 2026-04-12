@@ -1,0 +1,313 @@
+--- a/src/services/api.ts
++++ b/src/services/api.ts
+@@ -213,6 +213,39 @@
+   return request<ReportAnalytics>('/api/v1/ops/analytics/report');
+ }
+ 
++
++function normalizeMlPredictOneResponse(payload: unknown): MlPredictOneResponse {
++  const source = (payload && typeof payload === 'object') ? payload as Record<string, unknown> : {};
++  const intervalSource = (source.interval && typeof source.interval === 'object')
++    ? source.interval as Record<string, unknown>
++    : {};
++  const p10 = typeof intervalSource.p10 === 'number'
++    ? intervalSource.p10
++    : (typeof source.price_p10 === 'number' ? source.price_p10 : null);
++  const p90 = typeof intervalSource.p90 === 'number'
++    ? intervalSource.p90
++    : (typeof source.price_p90 === 'number' ? source.price_p90 : null);
++  return {
++    predictedValue: typeof source.predictedValue === 'number'
++      ? source.predictedValue
++      : (typeof source.price_p50 === 'number' ? source.price_p50 : 0),
++    currency: typeof source.currency === 'string' && source.currency.trim() ? source.currency : 'chaos',
++    confidence: typeof source.confidence === 'number'
++      ? source.confidence
++      : (typeof source.confidence_percent === 'number' ? source.confidence_percent : 0),
++    interval: { p10, p90 },
++    saleProbabilityPercent: typeof source.saleProbabilityPercent === 'number'
++      ? source.saleProbabilityPercent
++      : (typeof source.sale_probability_percent === 'number' ? source.sale_probability_percent : null),
++    priceRecommendationEligible: typeof source.priceRecommendationEligible === 'boolean'
++      ? source.priceRecommendationEligible
++      : Boolean(source.price_recommendation_eligible),
++    fallbackReason: typeof source.fallbackReason === 'string'
++      ? source.fallbackReason
++      : (typeof source.fallback_reason === 'string' ? source.fallback_reason : ''),
++  };
++}
++
+ function buildQueryString(params: Record<string, string | number | undefined>): string {
+   const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== '');
+   if (entries.length === 0) return '';
+@@ -246,7 +279,10 @@
+       query.set('strategy_id', requestParams.strategyId);
+     }
+     if (requestParams?.minConfidence !== undefined) {
+-      query.set('min_confidence', String(requestParams.minConfidence));
++      const normalizedConfidence = requestParams.minConfidence > 1
++        ? requestParams.minConfidence / 100
++        : requestParams.minConfidence;
++      query.set('min_confidence', String(normalizedConfidence));
+     }
+     const queryString = query.toString();
+     const path = queryString
+@@ -370,10 +406,15 @@
+ 
+   async mlPredictOne(req) {
+     const league = await primaryLeague();
+-    return request<MlPredictOneResponse>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/predict-one`, {
+-      method: 'POST',
+-      body: JSON.stringify(req),
+-    });
++    const payload = await request<Record<string, unknown>>(`/api/v1/ml/leagues/${encodeURIComponent(league)}/predict-one`, {
++      method: 'POST',
++      body: JSON.stringify({
++        input_format: 'poe-clipboard',
++        payload: req.clipboard,
++        output_mode: 'json',
++      }),
++    });
++    return normalizeMlPredictOneResponse(payload);
+   },
+ 
+   async getStashTabs() {
+--- a/src/services/auth.tsx
++++ b/src/services/auth.tsx
+@@ -142,6 +142,21 @@
+ 
+   useEffect(() => {
+     refreshSession().finally(() => setIsLoading(false));
++  }, [refreshSession]);
++
++  useEffect(() => {
++    const onMessage = (event: MessageEvent) => {
++      if (event.origin !== window.location.origin) {
++        return;
++      }
++      const data = event.data;
++      if (!data || typeof data !== 'object' || data.type !== 'poe_auth_callback_complete') {
++        return;
++      }
++      void refreshSession();
++    };
++    window.addEventListener('message', onMessage);
++    return () => window.removeEventListener('message', onMessage);
+   }, [refreshSession]);
+ 
+   const login = useCallback(async (poeSessionId: string): Promise<boolean> => {
+--- a/src/pages/AuthCallback.tsx
++++ b/src/pages/AuthCallback.tsx
+@@ -4,10 +4,13 @@
+   useEffect(() => {
+     const params = new URLSearchParams(window.location.search);
+     const status = params.get('status') || 'success';
+-    if (window.opener) {
+-      window.opener.postMessage({ type: 'poe_auth_callback_complete', status }, window.location.origin);
++    const reason = params.get('reason') || '';
++    if (window.opener && !window.opener.closed) {
++      window.opener.postMessage({ type: 'poe_auth_callback_complete', status, reason }, window.location.origin);
+       window.close();
++      return;
+     }
++    window.location.replace(`/${status === 'success' ? '' : `?poe_auth_status=${encodeURIComponent(status)}&reason=${encodeURIComponent(reason)}`}`);
+   }, []);
+ 
+   return (
+--- a/src/components/tabs/PriceCheckTab.tsx
++++ b/src/components/tabs/PriceCheckTab.tsx
+@@ -2,21 +2,18 @@
+ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+ import { Button } from '@/components/ui/button';
+ import { Textarea } from '@/components/ui/textarea';
+-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+-import { ConfidenceBadge, CurrencyValue } from '@/components/shared/StatusIndicators';
++import { ConfidenceBadge } from '@/components/shared/StatusIndicators';
+ import { api } from '@/services/api';
+-import type { PriceCheckResponse, MlPredictOneResponse } from '@/types/api';
+-import { Search, Brain } from 'lucide-react';
++import type { MlPredictOneResponse } from '@/types/api';
++import { Brain } from 'lucide-react';
+ import { RenderState } from '@/components/shared/RenderState';
+ import { useMouseGlow } from '@/hooks/useMouseGlow';
+ 
+ const PriceCheckTab = forwardRef<HTMLDivElement, Record<string, never>>(function PriceCheckTab(_props, ref) {
+   const [text, setText] = useState('');
+-  const [result, setResult] = useState<PriceCheckResponse | null>(null);
+-  const [mlResult, setMlResult] = useState<MlPredictOneResponse | null>(null);
++  const [result, setResult] = useState<MlPredictOneResponse | null>(null);
+   const [loading, setLoading] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+-  const [mode, setMode] = useState<'price-check' | 'ml-predict'>('price-check');
+   const mouseGlow = useMouseGlow();
+ 
+   const check = async () => {
+@@ -26,110 +23,73 @@
+     }
+     setLoading(true);
+     setResult(null);
+-    setMlResult(null);
+     try {
+-      if (mode === 'ml-predict') {
+-        const r = await api.mlPredictOne({ clipboard: text });
+-        setMlResult(r);
+-      } else {
+-        const r = await api.priceCheck({ itemText: text });
+-        setResult(r);
+-      }
++      const nextResult = await api.mlPredictOne({ clipboard: text });
++      setResult(nextResult);
+       setError(null);
+     } catch (err: unknown) {
+-      setError(err instanceof Error ? err.message : 'Price check failed');
++      setError(err instanceof Error ? err.message : 'Price prediction failed');
+     } finally {
+       setLoading(false);
+     }
+   };
+ 
+-  const activeResult = mode === 'ml-predict' ? mlResult : result;
+-
+   return (
+     <div ref={ref} className="max-w-2xl mx-auto space-y-6" data-testid="panel-pricecheck-root">
+       <div className="space-y-3">
+-        <h2 className="text-lg font-semibold font-sans text-foreground">Price Check</h2>
+-
+-        <Tabs value={mode} onValueChange={v => { setMode(v as 'price-check' | 'ml-predict'); setResult(null); setMlResult(null); setError(null); }}>
+-          <TabsList className="h-8 bg-secondary/50">
+-            <TabsTrigger value="price-check" className="text-xs gap-1.5 tab-game">
+-              <Search className="h-3 w-3" /> Ops Price Check
+-            </TabsTrigger>
+-            <TabsTrigger value="ml-predict" className="text-xs gap-1.5 tab-game">
+-              <Brain className="h-3 w-3" /> ML Predict
+-            </TabsTrigger>
+-          </TabsList>
+-
+-          <TabsContent value="price-check">
+-            <p className="text-xs text-muted-foreground">Paste item text from PoE (Ctrl+C on item) and submit for price prediction.</p>
+-          </TabsContent>
+-          <TabsContent value="ml-predict">
+-            <p className="text-xs text-muted-foreground">Paste raw clipboard text. Uses the ML model's direct prediction endpoint for fastest results.</p>
+-          </TabsContent>
+-        </Tabs>
++        <h2 className="text-lg font-semibold font-sans text-foreground">ML Price Prediction</h2>
++        <p className="text-xs text-muted-foreground">
++          Paste PoE clipboard text. The value shown here is produced by the trained ML pricing route.
++        </p>
+ 
+         <Textarea
+           data-testid="pricecheck-input"
+           value={text}
+           onChange={e => setText(e.target.value)}
+-          placeholder={`Rarity: Rare\nGrim Bane\nHubris Circlet\n--------\nQuality: +20%\n+2 to Level of Socketed Minion Gems\n+93 to maximum Life\n...`}
++          placeholder={`Rarity: Rare
++Grim Bane
++Hubris Circlet
++--------
++Quality: +20%
+++2 to Level of Socketed Minion Gems
+++93 to maximum Life
++...`}
+           className="min-h-[160px] font-mono text-xs focus:shadow-[0_0_12px_-3px_hsl(38,55%,42%,0.3)] transition-shadow"
+         />
+         <Button data-testid="pricecheck-submit" onClick={check} disabled={loading} className="gap-2 w-full sm:w-auto btn-game">
+-          {mode === 'ml-predict' ? <Brain className="h-4 w-4" /> : <Search className="h-4 w-4" />}
+-          {loading ? 'Checking...' : mode === 'ml-predict' ? 'ML Predict' : 'Price Check'}
++          <Brain className="h-4 w-4" />
++          {loading ? 'Predicting...' : 'Predict Value'}
+         </Button>
+         {error && <RenderState kind="invalid_input" message={error} />}
+       </div>
+ 
+-      {activeResult && (
++      {result && (
+         <Card className="glow-gold card-game animate-scale-fade-in" onMouseMove={mouseGlow}>
+           <CardHeader className="pb-2">
+             <div className="flex items-center justify-between">
+-              <CardTitle className="text-sm font-sans">
+-                {mode === 'ml-predict' ? 'ML Prediction' : 'Prediction'}
+-              </CardTitle>
+-              <ConfidenceBadge value={activeResult.confidence} />
++              <CardTitle className="text-sm font-sans">ML Prediction</CardTitle>
++              <ConfidenceBadge value={result.confidence} />
+             </div>
+           </CardHeader>
+           <CardContent className="space-y-4">
+             <div className="text-center py-4">
+               <p className="text-3xl font-mono font-semibold gold-shimmer-text">
+-                {activeResult.predictedValue} <span className="text-lg text-muted-foreground">{activeResult.currency}</span>
++                {result.predictedValue} <span className="text-lg text-muted-foreground">{result.currency}</span>
+               </p>
+-              {activeResult.interval && (
++              {result.interval && (
+                 <p className="text-xs text-muted-foreground mt-1 font-mono">
+-                  p10 {activeResult.interval.p10 ?? 'n/a'} - p90 {activeResult.interval.p90 ?? 'n/a'}
++                  p10 {result.interval.p10 ?? 'n/a'} - p90 {result.interval.p90 ?? 'n/a'}
+                 </p>
+               )}
+-              {typeof activeResult.saleProbabilityPercent === 'number' && (
++              {typeof result.saleProbabilityPercent === 'number' && (
+                 <p className="text-xs text-muted-foreground mt-1">
+-                  Sale Probability: {activeResult.saleProbabilityPercent}%
++                  Sale Probability: {result.saleProbabilityPercent}%
+                 </p>
+               )}
+-              {activeResult.fallbackReason && (
+-                <p className="text-xs text-warning mt-1">Fallback: {activeResult.fallbackReason}</p>
++              {result.fallbackReason && (
++                <p className="text-xs text-warning mt-1">Fallback: {result.fallbackReason}</p>
+               )}
+             </div>
+-
+-            {/* Comparables only for ops price-check */}
+-            {mode === 'price-check' && result && (
+-              <div>
+-                <p className="text-xs text-muted-foreground mb-2">Comparable Items</p>
+-                {result.comparables && result.comparables.length > 0 ? (
+-                  <div className="space-y-2">
+-                    {result.comparables.map((c) => (
+-                      <div key={`${c.name}-${c.price}-${c.currency}`} className="flex items-center justify-between bg-secondary/50 rounded p-2 text-xs transition-colors hover:bg-secondary">
+-                        <span className="text-foreground">{c.name}</span>
+-                        <CurrencyValue value={c.price} currency={c.currency} />
+-                      </div>
+-                    ))}
+-                  </div>
+-                ) : (
+-                  <p className="text-xs text-muted-foreground italic">No comparables available</p>
+-                )}
+-              </div>
+-            )}
+           </CardContent>
+         </Card>
+       )}
+--- a/src/types/api.ts
++++ b/src/types/api.ts
+@@ -155,6 +155,7 @@
+   interval?: { p10: number | null; p90: number | null };
+   saleProbabilityPercent?: number | null;
+   fallbackReason?: string;
++  priceRecommendationEligible?: boolean;
+ }
+ 
+ // ========== Stash Viewer ==========
+@@ -194,7 +195,7 @@
+ }
+ 
+ export interface ScannerSummary {
+-  status: 'ok' | 'empty';
++  status: 'ok' | 'empty' | 'stale';
+   lastRunAt: string | null;
+   recommendationCount: number;
+ }
+--- a/src/pages/Index.tsx
++++ b/src/pages/Index.tsx
+@@ -45,7 +45,7 @@
+               <BarChart3 className="h-3.5 w-3.5" /> Analytics
+             </TabsTrigger>
+             <TabsTrigger data-testid="tab-pricecheck" value="pricecheck" className="tab-game gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+-              <Search className="h-3.5 w-3.5" /> Price Check
++              <Search className="h-3.5 w-3.5" /> ML Price
+             </TabsTrigger>
+             <TabsTrigger data-testid="tab-stash" value="stash" className="tab-game gap-1.5 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+               <Grid3X3 className="h-3.5 w-3.5" /> Stash Viewer
+
