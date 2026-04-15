@@ -730,6 +730,53 @@ def test_bronze_public_stash_mirage_backfill_migration_inserts_from_raw_pages() 
     assert "WHERE base.league = 'Mirage'" in sql
 
 
+def test_bronze_public_stash_mirage_schema_repair_migration_adds_missing_columns() -> (
+    None
+):
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0094a_bronze_public_stash_mirage_schema_repair.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE poe_trade.bronze_public_stash_mirage" in sql
+    assert (
+        "ADD COLUMN IF NOT EXISTS realm LowCardinality(String) AFTER ingested_at" in sql
+    )
+    assert "ADD COLUMN IF NOT EXISTS league LowCardinality(String) AFTER realm" in sql
+    assert (
+        "ADD COLUMN IF NOT EXISTS stash_json_id Nullable(String) CODEC(ZSTD(3)) "
+        "AFTER stash_id" in sql
+    )
+    assert (
+        "ADD COLUMN IF NOT EXISTS next_change_id String CODEC(ZSTD(3)) "
+        "AFTER checkpoint" in sql
+    )
+
+
+def test_silver_items_mirage_pipeline_migration_creates_table_and_mv() -> None:
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "schema"
+        / "migrations"
+        / "0096_silver_items_from_bronze_public_stash_mirage.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS poe_trade.silver_items" in sql
+    assert (
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+        "poe_trade.mv_bronze_public_stash_mirage_to_silver_items" in sql
+    )
+    assert "TO poe_trade.silver_items AS" in sql
+    assert "FROM poe_trade.bronze_public_stash_mirage" in sql
+    assert "effective_price_note Nullable(String) CODEC(ZSTD(3))" in sql
+
+
 def test_scanner_opportunity_analytics_migration_adds_decision_storage() -> None:
     migration = (
         Path(__file__).resolve().parents[2]
