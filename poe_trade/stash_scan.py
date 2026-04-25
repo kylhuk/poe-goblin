@@ -5,7 +5,8 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
-from typing import Any, Literal
+from collections.abc import Mapping
+from typing import Any, Literal, cast
 
 from poe_trade.db import ClickHouseClient
 from poe_trade.db.clickhouse import ClickHouseClientError
@@ -166,6 +167,12 @@ def price_evaluation_for_band(price_band: PriceBand | None) -> str:
     return mapping.get(price_band or "bad", "mispriced")
 
 
+def _coerce_price_band(value: object) -> PriceBand:
+    if isinstance(value, str) and value in {"good", "mediocre", "bad"}:
+        return cast(PriceBand, value)
+    return "bad"
+
+
 def valuation_refresh_status_payload(
     *,
     status: str,
@@ -235,6 +242,7 @@ def _fetch_latest_scan_run_row(
     scan_id: str | None = None,
     scan_kind: str | None = None,
     source_scan_id: str | None = None,
+    include_source_scan_id: bool = True,
 ) -> dict[str, Any] | None:
     scan_id_filter = (
         f"AND scan_id = '{_escape_sql_literal(scan_id)}' " if scan_id else ""
@@ -247,8 +255,13 @@ def _fetch_latest_scan_run_row(
         if source_scan_id
         else ""
     )
+    select_columns = (
+        "scan_id, source_scan_id, status, started_at, updated_at, published_at, tabs_total, tabs_processed, items_total, items_processed, error_message "
+        if include_source_scan_id
+        else "scan_id, status, started_at, updated_at, published_at, tabs_total, tabs_processed, items_total, items_processed, error_message "
+    )
     query = (
-        "SELECT scan_id, source_scan_id, status, started_at, updated_at, published_at, tabs_total, tabs_processed, items_total, items_processed, error_message "
+        f"SELECT {select_columns}"
         "FROM poe_trade.account_stash_scan_runs "
         f"WHERE account_name = '{_escape_sql_literal(account_name)}' "
         f"AND league = '{_escape_sql_literal(league)}' "
@@ -496,6 +509,7 @@ def fetch_latest_published_valuation_refresh_run(
         realm=realm,
         scan_id=published_scan_id,
         scan_kind="valuation_refresh",
+        include_source_scan_id=False,
     )
 
 
@@ -878,13 +892,15 @@ def fetch_item_history(
                 },
                 "priceDeltaChaos": _opt_float(row.get("price_delta_chaos")),
                 "priceDeltaPercent": _opt_float(row.get("price_delta_pct")),
-                "priceBand": str(row.get("price_band") or "bad"),
+                "priceBand": _coerce_price_band(row.get("price_band")),
                 "priceEvaluation": str(
                     row.get("price_evaluation")
-                    or price_evaluation_for_band(str(row.get("price_band") or "bad"))
+                    or price_evaluation_for_band(
+                        _coerce_price_band(row.get("price_band"))
+                    )
                 ),
                 "priceBandVersion": int(row.get("price_band_version") or _PRICE_BAND_VERSION),
-                "priceRecommendationEligible": str(row.get("price_band") or "bad")
+                "priceRecommendationEligible": _coerce_price_band(row.get("price_band"))
                 != "bad",
                 "estimateTrust": str(row.get("estimate_trust") or "normal"),
                 "estimateWarning": str(row.get("estimate_warning") or ""),
@@ -971,7 +987,7 @@ def _to_api_item(row: dict[str, Any]) -> dict[str, Any]:
         if listed_chaos is None or estimated_chaos in (None, 0)
         else ((listed_chaos - estimated_chaos) / estimated_chaos) * 100.0
     )
-    price_band = str(row.get("price_band") or "bad")
+    price_band = _coerce_price_band(row.get("price_band"))
     if delta_percent is not None and not row.get("price_band"):
         price_band = price_band_for_delta_pct(delta_percent)
     evaluation = price_evaluation_for_band(price_band)
@@ -1055,7 +1071,7 @@ def _normalize_history_row(row: dict[str, Any]) -> dict[str, Any]:
         else ((listed_price_chaos - estimated_price_chaos) / estimated_price_chaos)
         * 100.0
     )
-    price_band = str(row.get("price_band") or "bad")
+    price_band = _coerce_price_band(row.get("price_band"))
     if price_delta_pct is not None and not row.get("price_band"):
         price_band = price_band_for_delta_pct(price_delta_pct)
     normalized = dict(row)
