@@ -11,8 +11,10 @@ import urllib.request
 import io
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import pandas as pd
+if TYPE_CHECKING:
+    import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +113,10 @@ class ClickHouseClient:
     def query_df(
         self, query: str, settings: Mapping[str, str] | None = None
     ) -> pd.DataFrame:
+        try:
+            import pandas as pd
+        except ModuleNotFoundError as exc:  # pragma: no cover - environment dependent
+            raise RuntimeError("pandas is required for ClickHouseClient.query_df()") from exc
         normalized = query.strip().rstrip(";")
         if " FORMAT " not in normalized.upper():
             normalized = f"{normalized} FORMAT JSONEachRow"
