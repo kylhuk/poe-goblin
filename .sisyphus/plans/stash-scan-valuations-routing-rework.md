@@ -97,7 +97,7 @@ Wave 2: OpenAPI/spec update + regression/contract tests
 > Implementation + Test = ONE task. Never separate.
 > EVERY task MUST have: Agent Profile + Parallelization + QA Scenarios.
 
-- [ ] 1. `poe_trade/api/app.py` + `poe_trade/api/stash.py` + `poe_trade/api/valuation.py` + `poe_trade/api/ops.py`: rework the stash route map into canonical lifecycle endpoints and keep the current aliases
+- [x] 1. `poe_trade/api/app.py` + `poe_trade/api/stash.py` + `poe_trade/api/valuation.py` + `poe_trade/api/ops.py`: rework the stash route map into canonical lifecycle endpoints and keep the current aliases
 
   **What to do**: Add the canonical stash lifecycle route set in `ApiApp._register_routes()` and wire the handlers to the existing payload builders. Preserve current aliases while introducing the canonical paths:
   - `POST /api/v1/stash/scan/start` and legacy `POST /api/v1/stash/scan`
@@ -154,7 +154,7 @@ Wave 2: OpenAPI/spec update + regression/contract tests
 
   **Commit**: NO | Message: none | Files: [poe_trade/api/app.py, poe_trade/api/stash.py, poe_trade/api/valuation.py, poe_trade/api/ops.py, tests/unit/test_api_ops_routes.py, tests/unit/test_api_stash.py, tests/unit/test_api_stash_valuations.py]
 
-- [ ] 2. `apispec.yml`: document the canonical stash lifecycle routes, keep deprecated aliases, and align schemas/response codes with the new route shape
+- [x] 2. `apispec.yml`: document the canonical stash lifecycle routes, keep deprecated aliases, and align schemas/response codes with the new route shape
 
   **What to do**: Update the OpenAPI spec so it reflects the new canonical lifecycle endpoints and the kept legacy aliases. Reuse the current stash auth/parameter patterns (`sessionCookie`, `LeagueQuery`, `Realm`) and keep the response codes aligned with the handler behavior.
 
@@ -207,7 +207,7 @@ Wave 2: OpenAPI/spec update + regression/contract tests
 
   **Commit**: NO | Message: none | Files: [apispec.yml, tests/unit/test_apispec_contract.py (if needed)]
 
-- [ ] 3. `tests/unit/test_api_ops_routes.py` + `tests/unit/test_api_stash.py` + `tests/unit/test_api_stash_valuations.py` (and any small new contract file if needed): expand regression coverage for the new canonical routes and preserved aliases
+- [x] 3. `tests/unit/test_api_ops_routes.py` + `tests/unit/test_api_stash.py` + `tests/unit/test_api_stash_valuations.py` (and any small new contract file if needed): expand regression coverage for the new canonical routes and preserved aliases
 
   **What to do**: Add or adjust the route and payload tests so they prove the canonical routes, legacy aliases, and error/status semantics all line up with the new routing plan.
 
@@ -263,10 +263,10 @@ Wave 2: OpenAPI/spec update + regression/contract tests
 > 4 review agents run in PARALLEL. ALL must APPROVE. Present consolidated results to user and get explicit "okay" before completing.
 > **Do NOT auto-proceed after verification. Wait for user's explicit approval before marking work complete.**
 > **Never mark F1-F4 as checked before getting user's okay.** Rejection or user feedback -> fix -> re-run -> present again -> wait for okay.
-- [ ] F1. Plan Compliance Audit — oracle
-- [ ] F2. Code Quality Review — unspecified-high
-- [ ] F3. Real Manual QA — unspecified-high (+ playwright if UI)
-- [ ] F4. Scope Fidelity Check — deep
+- [x] F1. Plan Compliance Audit — oracle
+- [x] F2. Code Quality Review — unspecified-high
+- [x] F3. Real Manual QA — unspecified-high (+ playwright if UI)
+- [x] F4. Scope Fidelity Check — deep
 
 ## Commit Strategy
 - Keep the implementation in two atomic waves if commits are used at all: route/handler work first, then OpenAPI/docs/tests.

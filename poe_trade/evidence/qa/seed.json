@@ -47,12 +47,12 @@
     "cli_proof_artifacts": {
       "research_backtest": {
         "artifact_path": "poe_trade/evidence/qa/cli/seed-research-backtest.txt",
-        "command": "/home/hal9000/docker/poe_trade/.venv/bin/python -m poe_trade.cli research backtest --strategy bulk_essence --league Mirage --days 14",
+        "command": "/home/hal9000/docker/poe-goblin/.venv/bin/python -m poe_trade.cli research backtest --strategy bulk_essence --league Mirage --days 14",
         "exit_code": 0
       },
       "scan_plan": {
         "artifact_path": "poe_trade/evidence/qa/cli/seed-scan-plan.txt",
-        "command": "/home/hal9000/docker/poe_trade/.venv/bin/python -m poe_trade.cli scan plan --league Mirage --limit 20",
+        "command": "/home/hal9000/docker/poe-goblin/.venv/bin/python -m poe_trade.cli scan plan --league Mirage --limit 20",
         "exit_code": 0
       }
     },

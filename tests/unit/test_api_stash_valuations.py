@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import os
 from io import BytesIO
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import cast
 from unittest import mock
 
 import pytest
@@ -70,6 +71,23 @@ def _request_headers(body: bytes) -> dict[str, str]:
         "Cookie": "poe_session=test-session",
         "Content-Length": str(len(body)),
     }
+
+
+def _captured_run_refresh_scan_id(
+    captured: dict[str, object],
+    default: str,
+) -> str:
+    run_refresh = cast(dict[str, object], captured.get("run_refresh", {}))
+    return cast(str, run_refresh.get("scan_id", default))
+
+
+def _captured_run_refresh(captured: dict[str, object]) -> dict[str, object]:
+    return cast(dict[str, object], captured["run_refresh"])
+
+
+def _run_captured_thread_target(captured: dict[str, object]) -> None:
+    thread_target = cast(Callable[[], None], captured["thread_target"])
+    thread_target()
 
 
 @pytest.fixture(autouse=True)
@@ -142,6 +160,7 @@ def test_stash_scan_valuations_route_returns_single_item_payload(
     assert body["items"][0]["itemId"] == "item-1"
     assert body["priceBand"] == "good"
     assert body["priceEvaluation"] == "well_priced"
+    assert response.headers.get("Access-Control-Allow-Origin") == "https://app.example.com"
     assert captured == {
         "account_name": "qa-exile",
         "league": "Mirage",
@@ -207,6 +226,7 @@ def test_stash_scan_valuations_route_accepts_stash_id_alias(
     assert response.status == 200
     assert body["scanId"] == "scan-1"
     assert body["stashId"] == "scan-1"
+    assert response.headers.get("Access-Control-Allow-Origin") == "https://app.example.com"
     assert captured["scan_id"] == "scan-1"
 
 
@@ -391,6 +411,24 @@ def test_stash_scan_valuations_result_route_translates_lookup_backend_unavailabl
     assert exc.value.code == "backend_unavailable"
     assert exc.value.message == "backend unavailable"
     assert latest_payload.call_count == 0
+
+
+def test_stash_scan_valuations_result_route_requires_auth() -> None:
+    app = ApiApp(
+        _settings_with_stash_enabled(),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+
+    with pytest.raises(ApiError) as exc:
+        app.handle(
+            method="GET",
+            raw_path="/api/v1/stash/scan/valuations/result",
+            headers={"Origin": "https://app.example.com"},
+            body_reader=BytesIO(b""),
+    )
+
+    assert exc.value.status == 401
+    assert exc.value.code == "auth_required"
 
 
 def test_stash_scan_valuations_start_route_translates_backend_unavailable(
@@ -706,8 +744,12 @@ def test_start_stash_valuations_refresh_ignores_ordinary_active_scan(
             captured.update({"latest_payload": kwargs})
             or {
                 "structuredMode": True,
-                "scanId": captured.get("run_refresh", {}).get("scan_id", "scan-new"),
-                "stashId": captured.get("run_refresh", {}).get("scan_id", "scan-new"),
+                "scanId": cast(dict[str, object], captured.get("run_refresh", {})).get(
+                    "scan_id", "scan-new"
+                ),
+                "stashId": cast(dict[str, object], captured.get("run_refresh", {})).get(
+                    "scan_id", "scan-new"
+                ),
                 "itemId": None,
                 "scanDatetime": None,
                 "chaosMedian": None,
@@ -804,8 +846,8 @@ def test_start_stash_valuations_refresh_ignores_refresh_for_older_source_scan(
             captured.update({"latest_payload": kwargs})
             or {
                 "structuredMode": True,
-                "scanId": captured.get("run_refresh", {}).get("scan_id", "scan-next"),
-                "stashId": captured.get("run_refresh", {}).get("scan_id", "scan-next"),
+                "scanId": _captured_run_refresh_scan_id(captured, "scan-next"),
+                "stashId": _captured_run_refresh_scan_id(captured, "scan-next"),
                 "itemId": None,
                 "scanDatetime": None,
                 "chaosMedian": None,
@@ -906,8 +948,8 @@ def test_start_stash_valuations_refresh_evicts_stale_pending_cache_after_publish
             captured.update({"latest_payload": kwargs})
             or {
                 "structuredMode": True,
-                "scanId": captured.get("run_refresh", {}).get("scan_id", "scan-next"),
-                "stashId": captured.get("run_refresh", {}).get("scan_id", "scan-next"),
+                "scanId": _captured_run_refresh_scan_id(captured, "scan-next"),
+                "stashId": _captured_run_refresh_scan_id(captured, "scan-next"),
                 "itemId": None,
                 "scanDatetime": None,
                 "chaosMedian": None,
@@ -1554,8 +1596,8 @@ def test_start_stash_valuations_refresh_uses_persisted_rows_without_oauth_token(
             captured.update({"latest_payload": kwargs})
             or {
                 "structuredMode": True,
-                "scanId": captured.get("run_refresh", {}).get("scan_id", "scan-2"),
-                "stashId": captured.get("run_refresh", {}).get("scan_id", "scan-2"),
+                "scanId": _captured_run_refresh_scan_id(captured, "scan-2"),
+                "stashId": _captured_run_refresh_scan_id(captured, "scan-2"),
                 "itemId": None,
                 "scanDatetime": None,
                 "chaosMedian": None,
@@ -1587,11 +1629,12 @@ def test_start_stash_valuations_refresh_uses_persisted_rows_without_oauth_token(
         assert captured["thread_started"] is True
         assert "latest_payload" not in captured
 
-        captured["thread_target"]()
+        _run_captured_thread_target(captured)
 
-        assert captured["run_refresh"]["scan_id"] == payload["activeScanId"]
-        assert captured["run_refresh"]["published_scan_id"] == "scan-1"
-        assert callable(captured["run_refresh"]["price_item"])
+        run_refresh = _captured_run_refresh(captured)
+        assert cast(str, run_refresh["scan_id"]) == payload["activeScanId"]
+        assert cast(str, run_refresh["published_scan_id"]) == "scan-1"
+        assert callable(run_refresh["price_item"])
         assert captured["latest_payload"] == {
             "account_name": "qa-exile",
             "league": "Mirage",
@@ -1746,8 +1789,8 @@ def test_start_stash_valuations_refresh_republishes_latest_scan_from_persisted_v
             captured.update({"latest_payload": kwargs})
             or {
                 "structuredMode": True,
-                "scanId": captured.get("run_refresh", {}).get("scan_id", "scan-2"),
-                "stashId": captured.get("run_refresh", {}).get("scan_id", "scan-2"),
+                "scanId": _captured_run_refresh_scan_id(captured, "scan-2"),
+                "stashId": _captured_run_refresh_scan_id(captured, "scan-2"),
                 "itemId": None,
                 "scanDatetime": None,
                 "chaosMedian": None,
@@ -1779,11 +1822,12 @@ def test_start_stash_valuations_refresh_republishes_latest_scan_from_persisted_v
         assert captured["thread_started"] is True
         assert "latest_payload" not in captured
 
-        captured["thread_target"]()
+        _run_captured_thread_target(captured)
 
-        assert captured["run_refresh"]["scan_id"] == payload["activeScanId"]
-        assert captured["run_refresh"]["published_scan_id"] == "scan-1"
-        assert callable(captured["run_refresh"]["price_item"])
+        run_refresh = _captured_run_refresh(captured)
+        assert cast(str, run_refresh["scan_id"]) == payload["activeScanId"]
+        assert cast(str, run_refresh["published_scan_id"]) == "scan-1"
+        assert callable(run_refresh["price_item"])
         assert captured["latest_payload"] == {
             "account_name": "qa-exile",
             "league": "Mirage",
@@ -2213,7 +2257,7 @@ def test_stash_scan_valuations_refresh_failed_status_preserves_last_good_result_
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     scope = ("qa-exile", "Mirage", "pc")
-    cached_payload = {
+    cached_payload: dict[str, object] = {
         "structuredMode": True,
         "scanId": "scan-1",
         "stashId": "scan-1",
@@ -2333,7 +2377,7 @@ def test_stash_scan_valuations_refresh_exception_preserves_last_good_result_payl
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     scope = ("qa-exile", "Mirage", "pc")
-    cached_payload = {
+    cached_payload: dict[str, object] = {
         "structuredMode": True,
         "scanId": "scan-1",
         "stashId": "scan-1",

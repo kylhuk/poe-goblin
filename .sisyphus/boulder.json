@@ -1,5 +1,5 @@
 {
-  "active_plan": "/home/hal9000/docker/poe_trade/.sisyphus/plans/stash-scan-valuations-routing-rework.md",
+  "active_plan": "/home/hal9000/docker/poe-goblin/.sisyphus/plans/stash-scan-valuations-routing-rework.md",
   "started_at": "2026-03-31T15:36:14.087Z",
   "session_ids": [
     "ses_2bbdf8079ffeMU89vz98cy5p3t",
@@ -7,8 +7,59 @@
     "ses_2bad32409ffeLShDjuZDiuK6yF",
     "ses_2bad0da9affeU85MlaeyIVayp2",
     "ses_2bad0d6f3ffeYkuTqH0wI7IJ7M",
-    "ses_2b5e9566fffejRo7tiw3FfwM0M"
+    "ses_2b5e9566fffejRo7tiw3FfwM0M",
+    "ses_23a18ed8bffeJ7HPqOk5GCpGE4",
+    "ses_239fd397dffeVISLeEp9mcKoTn",
+    "ses_239fd38e1ffeX8RLjH8prDggap",
+    "ses_239a125e1ffeCE4zVsJOZxr5aJ",
+    "ses_239a0d7f1ffeusITxJrSQz5a14",
+    "ses_239a0d7d5ffe1IoyN832BDFBoi"
   ],
   "plan_name": "stash-scan-valuations-routing-rework",
-  "task_sessions": {}
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "`poe_trade/api/app.py` + `poe_trade/api/stash.py` + `poe_trade/api/valuation.py` + `poe_trade/api/ops.py`: rework the stash route map into canonical lifecycle endpoints and keep the current aliases",
+      "session_id": "ses_239fad164ffe7CLdN1GjHbWP7P",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-25T19:05:58.704Z"
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "`apispec.yml`: document the canonical stash lifecycle routes, keep deprecated aliases, and align schemas/response codes with the new route shape",
+      "session_id": "ses_239f45882ffe6KXnlKQdN46TNA",
+      "agent": "Sisyphus-Junior",
+      "category": "writing",
+      "updated_at": "2026-04-25T19:10:28.299Z"
+    },
+    "todo:3": {
+      "task_key": "todo:3",
+      "task_label": "3",
+      "task_title": "`tests/unit/test_api_ops_routes.py` + `tests/unit/test_api_stash.py` + `tests/unit/test_api_stash_valuations.py` (and any small new contract file if needed): expand regression coverage for the new canonical routes and preserved aliases",
+      "session_id": "ses_239f2364fffe1mh6kwZi4YABC5",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-04-25T19:14:17.378Z"
+    },
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "Plan Compliance Audit — oracle",
+      "session_id": "ses_23999acf2ffeliK9WQvv53PeGL",
+      "agent": "Sisyphus-Junior",
+      "category": "ultrabrain",
+      "updated_at": "2026-04-25T20:52:44.066Z"
+    }
+  },
+  "session_origins": {
+    "ses_239fd397dffeVISLeEp9mcKoTn": "appended",
+    "ses_239fd38e1ffeX8RLjH8prDggap": "appended",
+    "ses_239a125e1ffeCE4zVsJOZxr5aJ": "direct",
+    "ses_239a0d7f1ffeusITxJrSQz5a14": "appended",
+    "ses_239a0d7d5ffe1IoyN832BDFBoi": "appended"
+  },
+  "agent": "atlas"
 }

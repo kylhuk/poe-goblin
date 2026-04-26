@@ -28,8 +28,8 @@
     - Count check: scanner=1, backtest=1, delta=0, keys_match=True.
   - Journal-gated backtest: strategy `high_dim_jewels`, run `b660fe7b45e14a3cb72217067931c4ff`, status `no_opportunities`, opportunities=0.
     - Summary: source data exists but all candidates require journal state
-  - CLI proof `research_backtest`: command `/home/hal9000/docker/poe_trade/.venv/bin/python -m poe_trade.cli research backtest --strategy high_dim_jewels --league Mirage --days 14`, exit_code=0, artifact `poe_trade/evidence/qa/cli/seed-journal-research-backtest.txt`.
-  - CLI proof `scan_plan`: command `/home/hal9000/docker/poe_trade/.venv/bin/python -m poe_trade.cli scan plan --league Mirage --limit 5`, exit_code=0, artifact `poe_trade/evidence/qa/cli/seed-journal-scan-plan.txt`.
+  - CLI proof `research_backtest`: command `/home/hal9000/docker/poe-goblin/.venv/bin/python -m poe_trade.cli research backtest --strategy high_dim_jewels --league Mirage --days 14`, exit_code=0, artifact `poe_trade/evidence/qa/cli/seed-journal-research-backtest.txt`.
+  - CLI proof `scan_plan`: command `/home/hal9000/docker/poe-goblin/.venv/bin/python -m poe_trade.cli scan plan --league Mirage --limit 5`, exit_code=0, artifact `poe_trade/evidence/qa/cli/seed-journal-scan-plan.txt`.
   - State fixtures referenced: `poe_trade/evidence/qa/state/auth-session.json`, `poe_trade/evidence/qa/state/faults.json`.
 
 - `poe_trade/evidence/qa/seed.json` seeds league `Mirage` / realm `pc` at `2026-03-15T15:23:27.836856Z`; 1 scanner recommendations, 2 scanner alerts, 1 ML train runs, 1 ML promotion audits, 3 stash items, 2 stash tabs.
@@ -49,8 +49,8 @@
     - Count check: scanner=1, backtest=1, delta=0, keys_match=True.
   - Journal-gated backtest: strategy `high_dim_jewels`, run `fbbd47e2637645489c9d8977ff724052`, status `no_opportunities`, opportunities=0.
     - Summary: source data exists but all candidates require journal state
-  - CLI proof `research_backtest`: command `/home/hal9000/docker/poe_trade/.venv/bin/python -m poe_trade.cli research backtest --strategy bulk_essence --league Mirage --days 14`, exit_code=0, artifact `poe_trade/evidence/qa/cli/seed-research-backtest.txt`.
-  - CLI proof `scan_plan`: command `/home/hal9000/docker/poe_trade/.venv/bin/python -m poe_trade.cli scan plan --league Mirage --limit 20`, exit_code=0, artifact `poe_trade/evidence/qa/cli/seed-scan-plan.txt`.
+  - CLI proof `research_backtest`: command `/home/hal9000/docker/poe-goblin/.venv/bin/python -m poe_trade.cli research backtest --strategy bulk_essence --league Mirage --days 14`, exit_code=0, artifact `poe_trade/evidence/qa/cli/seed-research-backtest.txt`.
+  - CLI proof `scan_plan`: command `/home/hal9000/docker/poe-goblin/.venv/bin/python -m poe_trade.cli scan plan --league Mirage --limit 20`, exit_code=0, artifact `poe_trade/evidence/qa/cli/seed-scan-plan.txt`.
   - State fixtures referenced: `poe_trade/evidence/qa/state/auth-session.json`, `poe_trade/evidence/qa/state/faults.json`.
 
 ## Status context

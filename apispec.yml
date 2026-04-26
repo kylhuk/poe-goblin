@@ -315,8 +315,9 @@ paths:
 
   /api/v1/stash/tabs:
     get:
-      summary: Published stash tabs
+      summary: Get stash scan result (legacy alias)
       deprecated: true
+      description: Legacy alias for the latest published stash scan result.
       security:
         - sessionCookie: []
       parameters:
@@ -475,9 +476,9 @@ paths:
 
   /api/v1/stash/scan/valuations:
     post:
-      summary: Valuate stash scan items (legacy alias)
+      summary: Get stash valuation result (legacy alias)
       deprecated: true
-      description: Legacy alias that reloads the latest published valuation snapshot for scanned stash items.
+      description: Legacy alias for the latest published stash valuation result.
       security:
         - sessionCookie: []
       parameters:

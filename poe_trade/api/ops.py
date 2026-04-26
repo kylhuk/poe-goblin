@@ -31,6 +31,21 @@ class OpsBackendUnavailable(RuntimeError):
     pass
 
 
+def _stash_routes_payload() -> dict[str, str]:
+    return {
+        "stash_status": "/api/v1/stash/status?league={league}&realm={realm}",
+        "stash_scan_start": "/api/v1/stash/scan/start",
+        "stash_scan_start_legacy": "/api/v1/stash/scan",
+        "stash_scan_status": "/api/v1/stash/scan/status",
+        "stash_scan_result": "/api/v1/stash/scan/result",
+        "stash_scan_result_legacy": "/api/v1/stash/tabs",
+        "stash_scan_valuations_start": "/api/v1/stash/scan/valuations/start",
+        "stash_scan_valuations_status": "/api/v1/stash/scan/valuations/status",
+        "stash_scan_valuations_result": "/api/v1/stash/scan/valuations/result",
+        "stash_scan_valuations_legacy": "/api/v1/stash/scan/valuations",
+    }
+
+
 _MISSING_TABLE_ERROR_PATTERNS = (
     re.compile(r"table\s+([a-z0-9_.]+)\s+does(?:n't| not)\s+exist"),
     re.compile(r"unknown\s+table\s+(?:expression|identifier)?\s*([a-z0-9_.]+)"),
@@ -69,22 +84,13 @@ def contract_payload(
             "ops_pricing_outliers": "/api/v1/ops/analytics/pricing-outliers",
             "service_action": "/api/v1/actions/services/{service_id}/{verb}",
             "ml_predict_one": "/api/v1/ml/leagues/{league}/predict-one",
-            "stash_tabs": "/api/v1/stash/tabs?league={league}&realm={realm}",
-            "stash_status": "/api/v1/stash/status?league={league}&realm={realm}",
-            "stash_scan_start": "/api/v1/stash/scan/start",
-            "stash_scan_legacy": "/api/v1/stash/scan",
-            "stash_scan_result": "/api/v1/stash/scan/result",
-            "stash_scan_status": "/api/v1/stash/scan/status",
-            "stash_scan_valuations_start": "/api/v1/stash/scan/valuations/start",
-            "stash_scan_valuations_status": "/api/v1/stash/scan/valuations/status",
-            "stash_scan_valuations_result": "/api/v1/stash/scan/valuations/result",
-            "stash_scan_valuations": "/api/v1/stash/scan/valuations",
             "auth_login": "/api/v1/auth/login",
             "auth_callback": "/api/v1/auth/callback",
             "auth_session": "/api/v1/auth/session",
             "auth_logout": "/api/v1/auth/logout",
             "ml_automation_status": "/api/v1/ml/leagues/{league}/automation/status",
             "ml_automation_history": "/api/v1/ml/leagues/{league}/automation/history",
+            **_stash_routes_payload(),
         },
         "tabs": [
             "dashboard",

@@ -120,9 +120,10 @@ def test_ops_contract_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     assert body["primary_league"] == "Mirage"
     assert "/api/v1/ops/services" == body["routes"]["ops_services"]
     assert body["routes"]["stash_scan_start"] == "/api/v1/stash/scan/start"
-    assert body["routes"]["stash_scan_legacy"] == "/api/v1/stash/scan"
-    assert body["routes"]["stash_scan_result"] == "/api/v1/stash/scan/result"
+    assert body["routes"]["stash_scan_start_legacy"] == "/api/v1/stash/scan"
     assert body["routes"]["stash_scan_status"] == "/api/v1/stash/scan/status"
+    assert body["routes"]["stash_scan_result"] == "/api/v1/stash/scan/result"
+    assert body["routes"]["stash_scan_result_legacy"] == "/api/v1/stash/tabs"
     assert (
         body["routes"]["stash_scan_valuations_start"]
         == "/api/v1/stash/scan/valuations/start"
@@ -135,7 +136,11 @@ def test_ops_contract_shape(monkeypatch: pytest.MonkeyPatch) -> None:
         body["routes"]["stash_scan_valuations_result"]
         == "/api/v1/stash/scan/valuations/result"
     )
-    assert body["routes"]["stash_scan_valuations"] == "/api/v1/stash/scan/valuations"
+    assert (
+        body["routes"]["stash_scan_valuations_legacy"]
+        == "/api/v1/stash/scan/valuations"
+    )
+    assert body["routes"]["stash_status"] == "/api/v1/stash/status?league={league}&realm={realm}"
     assert body["visible_service_ids"] == ["market_harvester", "api"]
     assert body["controllable_service_ids"] == ["market_harvester"]
     assert "opportunities" in body["tabs"]
@@ -269,6 +274,71 @@ def test_stash_route_is_explicitly_unavailable() -> None:
     assert exc.value.code == "feature_unavailable"
 
 
+def test_stash_scan_result_route_is_explicitly_unavailable() -> None:
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+    with pytest.raises(ApiError) as exc:
+        app.handle(
+            method="GET",
+            raw_path="/api/v1/stash/scan/result?league=Mirage&realm=pc",
+            headers=_auth_headers(),
+            body_reader=BytesIO(b""),
+        )
+
+    assert exc.value.status == 503
+    assert exc.value.code == "feature_unavailable"
+
+
+def test_stash_scan_result_route_requires_auth() -> None:
+    app = ApiApp(
+        _settings_with_stash_enabled(),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+
+    with pytest.raises(ApiError) as exc:
+        app.handle(
+            method="GET",
+            raw_path="/api/v1/stash/scan/result?league=Mirage&realm=pc",
+            headers={"Origin": "https://app.example.com"},
+            body_reader=BytesIO(b""),
+    )
+
+    assert exc.value.status == 401
+    assert exc.value.code == "auth_required"
+
+
+def test_stash_scan_result_route_translates_backend_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.get_session",
+        lambda _settings, *, session_id: _connected_session(session_id),
+    )
+    monkeypatch.setattr(
+        "poe_trade.api.app.fetch_stash_tabs",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            api_app_module.StashBackendUnavailable("down")
+        ),
+    )
+    app = ApiApp(
+        _settings_with_stash_enabled(),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+
+    with pytest.raises(ApiError) as exc:
+        app.handle(
+            method="GET",
+            raw_path="/api/v1/stash/scan/result?league=Mirage&realm=pc",
+            headers={
+                "Origin": "https://app.example.com",
+                "Cookie": "poe_session=test-session",
+            },
+            body_reader=BytesIO(b""),
+        )
+
+    assert exc.value.status == 503
+    assert exc.value.code == "backend_unavailable"
+
+
 def test_stash_scan_start_returns_accepted_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -304,6 +374,42 @@ def test_stash_scan_start_returns_accepted_payload(
     assert body["scanId"] == "scan-9"
     assert body["status"] == "running"
     assert body["league"] == "Mirage"
+
+
+def test_stash_scan_result_returns_cors_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.get_session",
+        lambda _settings, *, session_id: _connected_session(session_id),
+    )
+    monkeypatch.setattr(
+        "poe_trade.api.app.fetch_stash_tabs",
+        lambda _client, *, league, realm, account_name, stale_timeout_seconds=0: {
+            "scanId": "scan-1",
+            "publishedAt": "2026-03-21T12:00:00Z",
+            "isStale": False,
+            "scanStatus": None,
+            "stashTabs": [],
+        },
+    )
+    app = ApiApp(
+        _settings_with_stash_enabled(),
+        clickhouse_client=ClickHouseClient(endpoint="http://ch"),
+    )
+
+    response = app.handle(
+        method="GET",
+        raw_path="/api/v1/stash/scan/result",
+        headers={
+            "Origin": "https://app.example.com",
+            "Cookie": "poe_session=test-session",
+        },
+        body_reader=BytesIO(b""),
+    )
+
+    assert response.status == 200
+    assert response.headers.get("Access-Control-Allow-Origin") == "https://app.example.com"
 
 
 def test_private_stash_harvester_builder_wires_price_item_callback(

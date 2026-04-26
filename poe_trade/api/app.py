@@ -810,16 +810,15 @@ class ApiApp:
             ("POST", "OPTIONS"),
             self._price_check,
         )
-        self.router.add("/api/v1/stash/tabs", ("GET", "OPTIONS"), self._stash_tabs)
+        self.router.add(
+            "/api/v1/stash/tabs",
+            ("GET", "OPTIONS"),
+            self._stash_tabs,
+        )
         self.router.add(
             "/api/v1/stash/status",
             ("GET", "OPTIONS"),
             self._stash_status,
-        )
-        self.router.add(
-            "/api/v1/stash/scan",
-            ("POST", "OPTIONS"),
-            self._stash_scan_start,
         )
         self.router.add(
             "/api/v1/stash/scan/start",
@@ -827,9 +826,19 @@ class ApiApp:
             self._stash_scan_start,
         )
         self.router.add(
+            "/api/v1/stash/scan/status",
+            ("GET", "OPTIONS"),
+            self._stash_scan_status,
+        )
+        self.router.add(
             "/api/v1/stash/scan/result",
             ("GET", "OPTIONS"),
             self._stash_scan_result,
+        )
+        self.router.add(
+            "/api/v1/stash/scan",
+            ("POST", "OPTIONS"),
+            self._stash_scan_start,
         )
         self.router.add(
             "/api/v1/stash/scan/valuations/start",
@@ -850,11 +859,6 @@ class ApiApp:
             "/api/v1/stash/scan/valuations",
             ("POST", "OPTIONS"),
             self._stash_scan_valuations,
-        )
-        self.router.add(
-            "/api/v1/stash/scan/status",
-            ("GET", "OPTIONS"),
-            self._stash_scan_status,
         )
         self.router.add(
             "/api/v1/stash/items/{fingerprint}/history",

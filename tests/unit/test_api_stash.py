@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from io import BytesIO
+import os
+from unittest import mock
 
 import pytest
 
 import poe_trade.api.stash as stash_api
 import poe_trade.stash_scan as stash_scan
+from poe_trade.api.app import ApiApp
+from poe_trade.api.responses import ApiError
 from poe_trade.api.stash import (
     fetch_stash_item_history,
     fetch_stash_tabs,
     stash_scan_status_payload,
     stash_status_payload,
 )
+from poe_trade.config.settings import Settings
 from poe_trade.db import ClickHouseClient
 
 
@@ -25,6 +31,25 @@ class _StubClickHouse(ClickHouseClient):
     ) -> str:
         self.queries.append(query)
         return ""
+
+
+def _settings() -> Settings:
+    env = {
+        "POE_API_OPERATOR_TOKEN": "phase1-token",
+        "POE_API_CORS_ORIGINS": "https://app.example.com",
+        "POE_API_MAX_BODY_BYTES": "32768",
+        "POE_API_LEAGUE_ALLOWLIST": "Mirage",
+        "POE_ML_AUTOMATION_ENABLED": "true",
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        return Settings.from_env()
+
+
+def _auth_headers() -> dict[str, str]:
+    return {
+        "Authorization": "Bearer phase1-token",
+        "Origin": "https://app.example.com",
+    }
 
 
 def test_fetch_stash_tabs_returns_empty_metadata_when_no_published_scan(
@@ -776,3 +801,29 @@ def test_stash_status_feature_unavailable_explains_flag() -> None:
     assert payload["connected"] is False
     assert payload["reason"] == "set POE_ENABLE_ACCOUNT_STASH=true to enable stash APIs"
     assert payload["featureFlag"] == "POE_ENABLE_ACCOUNT_STASH"
+
+
+def test_stash_scan_status_route_is_explicitly_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "poe_trade.api.app.get_session",
+        lambda _settings, *, session_id: {
+            "session_id": session_id,
+            "status": "connected",
+            "account_name": "qa-exile",
+            "expires_at": "2099-01-01T00:00:00Z",
+        },
+    )
+    app = ApiApp(_settings(), clickhouse_client=ClickHouseClient(endpoint="http://ch"))
+
+    with pytest.raises(ApiError) as exc:
+        app.handle(
+            method="GET",
+            raw_path="/api/v1/stash/scan/status?league=Mirage&realm=pc",
+            headers={**_auth_headers(), "Cookie": "poe_session=test-session"},
+            body_reader=BytesIO(b""),
+    )
+
+    assert exc.value.status == 503
+    assert exc.value.code == "backend_unavailable"
